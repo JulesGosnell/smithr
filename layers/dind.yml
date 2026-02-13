@@ -1,0 +1,54 @@
+# layers/dind.yml
+#
+# Docker-in-Docker Layer - Isolated Docker daemon
+#
+# Provides a completely isolated Docker daemon. All containers started
+# inside this DinD instance have their own port space, network namespace,
+# and container names. Zero collision with the host or other DinD instances.
+#
+# This is the foundation of both sandbox and CI isolation.
+#
+# Usage:
+#   docker compose -f layers/dind.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX          - Container name prefix (default: smithr)
+#   SMITHR_DIND_PORT       - DinD Docker daemon TCP port (default: 2375)
+#
+# Lifecycle:
+#   Startup: DinD daemon starts → health check confirms Docker API ready
+#   Shutdown: DinD daemon stops → all inner containers destroyed automatically
+#
+# For consumers: set DOCKER_HOST=tcp://dind:2375 in your containers
+# to route Docker commands to this isolated daemon.
+
+services:
+  dind:
+    image: docker:dind
+    container_name: ${SMITHR_PREFIX:-smithr}-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["dockerd", "--host=tcp://0.0.0.0:2375", "--host=unix:///var/run/docker.sock", "--tls=false"]
+    volumes:
+      - dind-data:/var/lib/docker
+    healthcheck:
+      test: ["CMD", "docker", "-H", "tcp://127.0.0.1:2375", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    ulimits:
+      nofile:
+        soft: 524288
+        hard: 524288
+    restart: unless-stopped
+
+volumes:
+  dind-data:
+    name: ${SMITHR_PREFIX:-smithr}-dind-data
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

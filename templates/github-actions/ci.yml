@@ -1,0 +1,143 @@
+# Smithr CI Template — Copy to your project's .github/workflows/
+#
+# This workflow:
+# 1. Builds server, Android APK, and iOS app in parallel
+# 2. Starts a shared server environment (once)
+# 3. Runs E2E tests in parallel, each acquiring a phone from the warm pool
+# 4. Deploys on success (main branch only)
+#
+# Prerequisites:
+# - Self-hosted runners with Smithr installed
+# - smithr.yml in project root
+# - Phone pool pre-warmed (via systemd or manual smithr phone warm)
+#
+# Customise the TODOs below for your project.
+
+name: Build, Test & Deploy
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # Don't cancel running builds
+
+env:
+  SMITHR_ROOT: /path/to/smithr  # TODO: Set to your Smithr installation path
+  ARTIFACT_DIR: /srv/shared/${{ github.repository_owner }}-ci/${{ github.run_id }}
+
+jobs:
+  # ─── Build Phase (Parallel) ───────────────────────────────────────
+  build-server:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create artifact directory
+        run: mkdir -p "$ARTIFACT_DIR"
+
+      - name: Build server
+        run: |
+          # TODO: Replace with your server build commands
+          echo "Building server..."
+          # docker build -t myapp-api:${{ github.run_id }} .
+          # docker save myapp-api:${{ github.run_id }} | gzip > "$ARTIFACT_DIR/server.tar.gz"
+
+  build-android:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Android APK
+        run: |
+          # TODO: Replace with your Android build commands
+          echo "Building Android APK..."
+          # pnpm mobile:build:android
+          # cp app-release.apk "$ARTIFACT_DIR/"
+
+  build-ios:
+    runs-on: [self-hosted, linux]
+    if: false  # TODO: Enable when iOS build is ready
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build iOS app
+        run: |
+          # TODO: Replace with your iOS build commands
+          echo "Building iOS app..."
+
+  # ─── Server Setup (Once) ──────────────────────────────────────────
+  start-server:
+    needs: [build-server]
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start shared server
+        run: $SMITHR_ROOT/bin/smithr server ensure
+
+      - name: Run database setup
+        run: |
+          # TODO: Replace with your DB setup commands
+          echo "Running migrations and seed..."
+          # pnpm db:migrate && pnpm db:seed
+
+  # ─── Test Phase (Parallel Matrix) ─────────────────────────────────
+  e2e-test:
+    needs: [start-server, build-android]
+    runs-on: [self-hosted, linux]
+    strategy:
+      fail-fast: false  # Run all tests even if one fails
+      matrix:
+        test:
+          - documents
+          - profile
+          - notifications
+          - schedule
+        # TODO: Add iOS when ready
+        # platform: [android, ios]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire phone
+        id: phone
+        run: |
+          HANDLE=$($SMITHR_ROOT/bin/smithr phone get --type pixel_7)
+          echo "handle=$HANDLE" >> $GITHUB_OUTPUT
+
+      - name: Run E2E test (${{ matrix.test }})
+        run: |
+          # TODO: Replace with your test runner
+          echo "Running ${{ matrix.test }} test on ${{ steps.phone.outputs.handle }}..."
+          # ./bin/run-${{ matrix.test }}-test.sh --device ${{ steps.phone.outputs.handle }}
+
+      - name: Release phone
+        if: always()
+        run: $SMITHR_ROOT/bin/smithr phone release ${{ steps.phone.outputs.handle }}
+
+  # ─── Deploy Phase ─────────────────────────────────────────────────
+  deploy:
+    needs: [e2e-test]
+    runs-on: [self-hosted, linux]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        run: |
+          # TODO: Replace with your deployment commands
+          echo "Deploying to production..."
+
+  # ─── Cleanup ──────────────────────────────────────────────────────
+  cleanup:
+    needs: [e2e-test]
+    runs-on: [self-hosted, linux]
+    if: always()
+    steps:
+      - name: Clean up artifacts
+        run: |
+          rm -rf "$ARTIFACT_DIR" || true
+          echo "Cleaned up build artifacts"

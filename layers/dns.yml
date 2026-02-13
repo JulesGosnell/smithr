@@ -1,0 +1,43 @@
+# layers/dns.yml
+#
+# DNS Layer - dnsmasq for service discovery
+#
+# Provides DNS resolution so phones and services can find each other
+# by name. Resolves the configured domain to the TLS proxy IP.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/dns.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX         - Container name prefix (default: smithr)
+#   SMITHR_DOMAIN         - Domain to resolve (default: app.local)
+#   SMITHR_TLS_PROXY_IP   - IP of the TLS proxy (default: 10.21.0.50)
+#   SMITHR_DNS_IP         - IP for this DNS server (default: 10.21.0.100)
+
+services:
+  dns:
+    image: andyshinn/dnsmasq:latest
+    container_name: ${SMITHR_PREFIX:-smithr}-dns
+    command: >
+      --address=/${SMITHR_DOMAIN:-app.local}/${SMITHR_TLS_PROXY_IP:-10.21.0.50}
+      --server=8.8.8.8
+      --server=8.8.4.4
+      --no-resolv
+      --log-queries
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD-SHELL", "nslookup ${SMITHR_DOMAIN:-app.local} 127.0.0.1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      default:
+        ipv4_address: ${SMITHR_DNS_IP:-10.21.0.100}
+    restart: unless-stopped
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

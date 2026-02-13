@@ -1,0 +1,54 @@
+appId: dev.smithr.demo
+name: "Login and Sign Out"
+---
+# Wait for login screen
+- extendedWaitUntil:
+    visible:
+        id: "input-email"
+    timeout: 15000
+
+# Enter credentials
+- tapOn:
+    id: "input-email"
+- inputText: "demo@smithr.dev"
+
+- hideKeyboard
+
+- tapOn:
+    id: "input-password"
+- inputText: "password123"
+
+- hideKeyboard
+
+# Sign in
+- tapOn:
+    id: "button-sign-in"
+
+# Wait for home screen (use testID, not text)
+- extendedWaitUntil:
+    visible:
+        id: "screen-home"
+    timeout: 30000
+
+# Verify welcome text is visible
+- assertVisible:
+    id: "text-welcome"
+
+# Navigate to Profile tab
+- tapOn: "Profile"
+
+# Wait for profile screen
+- extendedWaitUntil:
+    visible:
+        id: "screen-profile"
+    timeout: 10000
+
+# Sign out
+- tapOn:
+    id: "button-sign-out"
+
+# Verify we're back at login
+- extendedWaitUntil:
+    visible:
+        id: "input-email"
+    timeout: 10000

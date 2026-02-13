@@ -1,0 +1,77 @@
+# layers/database.yml
+#
+# Database Layer - PostgreSQL and Redis
+#
+# Foundation data layer. Other layers depend on these services being healthy
+# before they start. Health checks gate dependent service startup.
+#
+# Services:
+#   postgres  - PostgreSQL database (default port 5432)
+#   redis     - Redis cache/queue (default port 6379)
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/database.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX          - Container name prefix (default: smithr)
+#   POSTGRES_VERSION       - PostgreSQL version (default: 16)
+#   POSTGRES_PORT          - Host port for PostgreSQL (default: 5432)
+#   POSTGRES_USER          - Database user (default: smithr)
+#   POSTGRES_PASSWORD      - Database password (default: smithr_dev_password)
+#   POSTGRES_DB            - Database name (default: smithr)
+#   REDIS_VERSION          - Redis version (default: 7-alpine)
+#   REDIS_PORT             - Host port for Redis (default: 6379)
+#
+# Connection URLs:
+#   DATABASE_URL=postgresql://smithr:smithr_dev_password@localhost:5432/smithr
+#   REDIS_URL=redis://localhost:6379
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16}
+    container_name: ${SMITHR_PREFIX:-smithr}-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smithr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smithr_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-smithr}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smithr}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      default:
+        ipv4_address: ${SMITHR_POSTGRES_IP:-10.21.0.10}
+    restart: unless-stopped
+
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: ${SMITHR_PREFIX:-smithr}-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      default:
+        ipv4_address: ${SMITHR_REDIS_IP:-10.21.0.11}
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: ${SMITHR_PREFIX:-smithr}-postgres-data
+  redis_data:
+    name: ${SMITHR_PREFIX:-smithr}-redis-data
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

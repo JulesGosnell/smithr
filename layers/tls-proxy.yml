@@ -1,0 +1,64 @@
+# layers/tls-proxy.yml
+#
+# TLS Proxy Layer - Caddy HTTPS termination
+#
+# Provides HTTPS for the configured domain using either a pre-generated CA
+# or Caddy's auto-generated internal CA. Pre-generated is strongly preferred
+# as it allows baking the CA cert into phone images (no per-phone installation).
+#
+# Architecture:
+#   App → https://${SMITHR_DOMAIN}:443
+#              │
+#              ▼ (DNS resolved to TLS proxy IP)
+#   Caddy (10.21.0.50:443) → terminates TLS
+#              │
+#              ▼
+#   App server (${SMITHR_SERVER_HOST}:${SMITHR_SERVER_PORT})
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/tls-proxy.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX          - Container name prefix (default: smithr)
+#   SMITHR_DOMAIN          - Domain for TLS termination (default: app.local)
+#   SMITHR_SERVER_HOST     - Backend server host (default: host.docker.internal)
+#   SMITHR_SERVER_PORT     - Backend server port (default: 3000)
+#   SMITHR_TLS_PROXY_IP    - Fixed IP for the proxy (default: 10.21.0.50)
+#   SMITHR_TLS_CA_CERT     - Path to pre-generated CA cert (optional)
+#   SMITHR_TLS_CA_KEY      - Path to pre-generated CA key (optional)
+
+services:
+  tls-proxy:
+    image: caddy:2
+    container_name: ${SMITHR_PREFIX:-smithr}-tls-proxy
+    volumes:
+      - ./docker/shared/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      SMITHR_DOMAIN: ${SMITHR_DOMAIN:-app.local}
+      SMITHR_SERVER_HOST: ${SMITHR_SERVER_HOST:-host.docker.internal}
+      SMITHR_SERVER_PORT: ${SMITHR_SERVER_PORT:-3000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "443"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      default:
+        ipv4_address: ${SMITHR_TLS_PROXY_IP:-10.21.0.50}
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+    name: ${SMITHR_PREFIX:-smithr}-caddy-data
+  caddy_config:
+    name: ${SMITHR_PREFIX:-smithr}-caddy-config
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

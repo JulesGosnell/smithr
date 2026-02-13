@@ -1,0 +1,47 @@
+# smithr.yml — Smithr Demo Project Configuration
+#
+# This configures Smithr for the demo app (Fastify server + Expo mobile).
+
+project:
+  name: smithr-demo
+  repo: https://github.com/JulesGosnell/smithr
+  path: demo
+
+server:
+  build:
+    command: "cd server && pnpm install && npx prisma generate"
+  start:
+    command: "cd server && npx tsx src/index.ts"
+  port: 3001
+  health: /health
+  ready: /ready
+  env:
+    DATABASE_URL: "postgresql://smithr:smithr_dev_password@smithr-postgres:5432/smithr"
+    JWT_SECRET: "smithr-demo-jwt-secret"
+
+database:
+  migrate: "cd server && npx prisma db push"
+  seed: "cd server && npx tsx prisma/seed.ts"
+
+phones:
+  android:
+    image: "budtmo/docker-android:emulator_${SMITHR_ANDROID_API:-9.0}"
+    device: "${SMITHR_ANDROID_DEVICE:-Nexus 5}"
+    pool_size: 2
+  # ios:
+  #   image: "sickcodes/docker-osx:sonoma"
+  #   base_image: "/srv/shared/images/smithr-sonoma.img"
+  #   device: "${SMITHR_IOS_DEVICE:-iPhone 16}"
+  #   runtime: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
+
+build:
+  android:
+    command: "cd mobile && npx expo prebuild --platform android && cd android && ./gradlew assembleRelease"
+    output: "mobile/android/app/build/outputs/apk/release/app-release.apk"
+
+tests:
+  maestro:
+    - name: smoke
+      file: tests/maestro/smoke.yaml
+    - name: login
+      file: tests/maestro/login.yaml

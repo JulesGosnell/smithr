@@ -1,0 +1,63 @@
+# layers/metro.yml
+#
+# Metro Bundler Layer - React Native hot reload server
+#
+# Serves JavaScript bundles to iOS and Android apps for hot reload.
+# Only needed for development builds (sandboxes). CI with production
+# builds does not use Metro.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/metro.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX            - Container name prefix (default: smithr)
+#   SMITHR_PROJECT_PATH      - Path to project root (default: ..)
+#   SMITHR_METRO_PORT        - Metro bundler port (default: 8081)
+#   SMITHR_MOBILE_APP_PATH   - Path to mobile app within project (default: apps/mobile)
+#   SMITHR_API_URL           - API URL for the mobile app (default: http://localhost:3000)
+
+services:
+  metro:
+    image: node:20
+    container_name: ${SMITHR_PREFIX:-smithr}-metro
+    working_dir: /app/${SMITHR_MOBILE_APP_PATH:-apps/mobile}
+    command:
+      - sh
+      - -c
+      - |
+        npm install -g pnpm
+        pnpm install
+        pnpm exec expo start --dev-client --host lan --port $${METRO_PORT:-8081}
+    ports:
+      - "${SMITHR_METRO_PORT:-8081}:${SMITHR_METRO_PORT:-8081}"
+    volumes:
+      - "${SMITHR_PROJECT_PATH:-..}:/app:z"
+      - metro-node-modules:/app/node_modules
+      - metro-mobile-node-modules:/app/${SMITHR_MOBILE_APP_PATH:-apps/mobile}/node_modules
+    environment:
+      METRO_PORT: "${SMITHR_METRO_PORT:-8081}"
+      EXPO_USE_METRO_WORKSPACE_ROOT: "1"
+      REACT_NATIVE_PACKAGER_HOSTNAME: "0.0.0.0"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      EXPO_PUBLIC_API_URL: "${SMITHR_API_URL:-http://localhost:3000}"
+      EXPO_PUBLIC_DEV_MODE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const http = require('http'); http.get('http://localhost:' + (process.env.METRO_PORT || 8081) + '/status', r => { let d=''; r.on('data', c => d+=c); r.on('end', () => process.exit(d.includes('packager-status:running') ? 0 : 1)); }).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    networks:
+      - default
+    restart: unless-stopped
+
+volumes:
+  metro-node-modules:
+    name: ${SMITHR_PREFIX:-smithr}-metro-node-modules
+  metro-mobile-node-modules:
+    name: ${SMITHR_PREFIX:-smithr}-metro-mobile-node-modules
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

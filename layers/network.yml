@@ -1,0 +1,20 @@
+# layers/network.yml
+#
+# Network Layer - Foundation network for all Smithr services
+#
+# Creates the smithr-network bridge with a configurable subnet.
+# All other layers reference this network as external.
+#
+# Environment Variables:
+#   SMITHR_NETWORK_NAME    - Network name (default: smithr-network)
+#   SMITHR_NETWORK_SUBNET  - Network subnet (default: 10.21.0.0/16)
+#
+# Note: Arthur uses 10.20.0.0/16 (artha-network), so Smithr defaults
+# to 10.21.0.0/16 to avoid collisions during migration.
+
+networks:
+  default:
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}
+    ipam:
+      config:
+        - subnet: ${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}

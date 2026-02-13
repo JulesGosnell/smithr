@@ -1,0 +1,20 @@
+{
+  "name": "smithr-demo",
+  "private": true,
+  "scripts": {
+    "server": "pnpm --filter @smithr-demo/server dev",
+    "mobile": "pnpm --filter @smithr-demo/mobile start",
+    "db:generate": "pnpm --filter @smithr-demo/server db:generate",
+    "db:push": "pnpm --filter @smithr-demo/server db:push",
+    "db:seed": "pnpm --filter @smithr-demo/server db:seed",
+    "install:all": "pnpm install"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "esbuild"
+    ]
+  }
+}

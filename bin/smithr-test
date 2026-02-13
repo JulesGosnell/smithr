@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+# smithr test — Run tests against phones from the pool
+#
+# Orchestrates the full test cycle:
+#   1. Acquire a phone from the warm pool
+#   2. Install the APK
+#   3. Setup port forwarding (socat)
+#   4. Run Maestro tests
+#   5. Release the phone back to the pool
+#
+# Usage:
+#   smithr test run [test-name]       Run a specific test (or all)
+#   smithr test list                  List available tests
+#   smithr test install <handle>      Install APK on an acquired phone
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+usage() {
+    cat <<EOF
+smithr test — Run Maestro tests against phone pool
+
+Usage:
+  smithr test run [test-name] [options]   Run a test (default: all tests)
+  smithr test list                        List available test files
+  smithr test install <handle> <apk>      Install APK on a phone
+
+Options:
+  --device <handle>     Use a specific phone handle (skip acquire/release)
+  --apk <path>          Path to APK (default: auto-detect from build output)
+  --platform <p>        Platform: android or ios (default: android)
+  --server-url <url>    Server URL for port forwarding (default: http://10.21.0.1:3001)
+  --no-forwarding       Skip socat port forwarding setup
+  --junit <path>        Output JUnit XML report
+  --project-dir DIR     Project directory (default: current dir)
+  --keep-phone          Don't release phone after test (for debugging)
+  --help                Show this help
+
+Examples:
+  smithr test run                      # Run all tests (auto-acquire phone)
+  smithr test run login                # Run just the login test
+  smithr test run --device localhost:5556  # Run on specific phone
+  smithr test run --junit results.xml  # With JUnit output
+EOF
+}
+
+# Defaults
+TEST_NAME=""
+DEVICE=""
+APK_PATH=""
+PLATFORM="android"
+SERVER_URL="http://10.21.0.1:3001"
+SERVER_PORT="3001"
+FORWARDING=true
+JUNIT_PATH=""
+PROJECT_DIR="."
+KEEP_PHONE=false
+ACQUIRED_HANDLE=""
+
+cleanup() {
+    if [[ -n "$ACQUIRED_HANDLE" ]] && ! $KEEP_PHONE; then
+        log_info "Releasing phone: ${ACQUIRED_HANDLE}"
+        "${SMITHR_ROOT}/bin/smithr-phone" release "$ACQUIRED_HANDLE" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+find_apk() {
+    local search_dir="${PROJECT_DIR}/mobile/android/app/build/outputs/apk"
+    local apk
+
+    # Prefer debug with bundled JS
+    apk="${search_dir}/debug/app-debug.apk"
+    [[ -f "$apk" ]] && { echo "$apk"; return 0; }
+
+    # Fall back to release
+    apk="${search_dir}/release/app-release.apk"
+    [[ -f "$apk" ]] && { echo "$apk"; return 0; }
+
+    return 1
+}
+
+find_tests() {
+    local tests_dir="${PROJECT_DIR}/tests/maestro"
+    if [[ ! -d "$tests_dir" ]]; then
+        die "No tests directory found at: $tests_dir"
+    fi
+    find "$tests_dir" -name "*.yaml" -o -name "*.yml" | sort
+}
+
+setup_forwarding() {
+    local container="$1"
+    local port="$2"
+    local target="$3"
+
+    log_info "Setting up port forwarding: container:${port} → ${target}"
+
+    # Install socat if not present
+    docker exec "$container" bash -c "which socat >/dev/null 2>/dev/null" 2>/dev/null || {
+        log_info "Installing socat in ${container}..."
+        docker exec "$container" bash -c "apt-get update -qq && apt-get install -y -qq socat" 2>/dev/null || {
+            log_warn "Could not install socat — port forwarding unavailable"
+            return 1
+        }
+    }
+
+    # Kill existing socat on this port and restart
+    docker exec "$container" bash -c "pkill -f 'socat.*LISTEN:${port}' 2>/dev/null; sleep 1; socat TCP-LISTEN:${port},fork,reuseaddr TCP:${target} &"
+    sleep 1
+
+    # Verify
+    docker exec "$container" bash -c "curl -s http://localhost:${port}/health 2>/dev/null || wget -qO- http://localhost:${port}/health 2>/dev/null" && {
+        log_ok "Port forwarding verified"
+        return 0
+    } || {
+        log_warn "Port forwarding could not be verified"
+        return 1
+    }
+}
+
+cmd_list() {
+    log_info "Available tests:"
+    find_tests | while read -r f; do
+        local name
+        name=$(basename "$f" .yaml)
+        name=$(basename "$name" .yml)
+        echo "  $name  ($f)"
+    done
+}
+
+cmd_install() {
+    local handle="${1:?Usage: smithr test install <handle> <apk>}"
+    local apk="${2:?Usage: smithr test install <handle> <apk>}"
+
+    [[ -f "$apk" ]] || die "APK not found: $apk"
+
+    # Extract ADB target from handle (format: hostname:platform:port)
+    local adb_port
+    adb_port=$(echo "$handle" | cut -d: -f3)
+    local adb_target="localhost:${adb_port}"
+
+    log_info "Installing ${apk} on ${adb_target}..."
+    adb connect "$adb_target" 2>/dev/null || true
+    adb -s "$adb_target" install -r "$apk" 2>&1 || die "APK install failed"
+    log_ok "APK installed on ${adb_target}"
+}
+
+cmd_run() {
+    require_cmd maestro
+    require_cmd adb
+
+    local maestro_bin="${HOME}/.maestro/bin/maestro"
+    [[ -x "$maestro_bin" ]] || maestro_bin="$(which maestro)"
+
+    # Find or auto-detect APK
+    if [[ -z "$APK_PATH" ]]; then
+        APK_PATH=$(find_apk) || die "No APK found. Run 'smithr build android' first."
+    fi
+    [[ -f "$APK_PATH" ]] || die "APK not found: $APK_PATH"
+    log_info "Using APK: ${APK_PATH}"
+
+    # Acquire phone if no device specified
+    local adb_target=""
+    local container_name=""
+    if [[ -z "$DEVICE" ]]; then
+        log_info "Acquiring phone from pool..."
+        ACQUIRED_HANDLE=$("${SMITHR_ROOT}/bin/smithr-phone" get --platform "$PLATFORM" 2>/dev/null) || die "Could not acquire phone from pool"
+        log_ok "Acquired phone: ${ACQUIRED_HANDLE}"
+
+        local adb_port
+        adb_port=$(echo "$ACQUIRED_HANDLE" | cut -d: -f3)
+        adb_target="localhost:${adb_port}"
+
+        # Derive container name from port
+        local idx=$((adb_port - 5555))
+        container_name="smithr-android-${idx}"
+    else
+        adb_target="$DEVICE"
+        # Try to derive container name
+        local port="${adb_target##*:}"
+        if [[ "$port" =~ ^[0-9]+$ ]]; then
+            local idx=$((port - 5555))
+            container_name="smithr-android-${idx}"
+        fi
+    fi
+
+    # Connect ADB
+    log_info "Connecting ADB to ${adb_target}..."
+    adb connect "$adb_target" 2>/dev/null || true
+    adb -s "$adb_target" shell getprop sys.boot_completed 2>/dev/null | grep -q 1 || die "Emulator not ready at ${adb_target}"
+
+    # Install APK
+    log_info "Installing APK on ${adb_target}..."
+    adb -s "$adb_target" install -r "$APK_PATH" 2>&1 || die "APK install failed"
+
+    # Setup port forwarding if container is known
+    if $FORWARDING && [[ -n "$container_name" ]]; then
+        setup_forwarding "$container_name" "$SERVER_PORT" "${SERVER_URL#http://}" || true
+    fi
+
+    # Find test files
+    local test_files=()
+    if [[ -n "$TEST_NAME" ]]; then
+        local tests_dir="${PROJECT_DIR}/tests/maestro"
+        local test_file="${tests_dir}/${TEST_NAME}.yaml"
+        [[ -f "$test_file" ]] || test_file="${tests_dir}/${TEST_NAME}.yml"
+        [[ -f "$test_file" ]] || die "Test not found: ${TEST_NAME} (looked in ${tests_dir})"
+        test_files+=("$test_file")
+    else
+        while IFS= read -r f; do
+            test_files+=("$f")
+        done < <(find_tests)
+    fi
+
+    [[ ${#test_files[@]} -gt 0 ]] || die "No test files found"
+
+    log_info "Running ${#test_files[@]} test(s) on ${adb_target}..."
+
+    # Clear app data for clean state
+    local app_id
+    app_id=$(grep -m1 'appId:' "${test_files[0]}" 2>/dev/null | awk '{print $2}')
+    if [[ -n "$app_id" ]]; then
+        adb -s "$adb_target" shell pm clear "$app_id" 2>/dev/null || true
+    fi
+
+    # Build maestro args
+    local maestro_args=(
+        --device "$adb_target"
+    )
+    if [[ -n "$JUNIT_PATH" ]]; then
+        maestro_args+=(--format junit --output "$JUNIT_PATH")
+    fi
+
+    export MAESTRO_DRIVER_STARTUP_TIMEOUT=180000
+
+    local failed=0
+    for test_file in "${test_files[@]}"; do
+        local test_name
+        test_name=$(basename "$test_file" .yaml)
+        test_name=$(basename "$test_name" .yml)
+
+        log_info "Running test: ${test_name}"
+
+        # Clear app between tests
+        if [[ -n "$app_id" ]]; then
+            adb -s "$adb_target" shell pm clear "$app_id" 2>/dev/null || true
+            sleep 1
+            adb -s "$adb_target" shell am start -n "${app_id}/.MainActivity" 2>/dev/null || true
+            sleep 3
+        fi
+
+        if "$maestro_bin" test "${maestro_args[@]}" "$test_file" 2>&1; then
+            log_ok "PASS: ${test_name}"
+        else
+            log_error "FAIL: ${test_name}"
+            failed=$((failed + 1))
+        fi
+    done
+
+    if [[ $failed -gt 0 ]]; then
+        log_error "${failed} test(s) failed"
+        return 1
+    fi
+
+    log_ok "All ${#test_files[@]} test(s) passed"
+}
+
+# Parse args
+SUBCMD="${1:-}"
+shift 2>/dev/null || true
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --device) DEVICE="$2"; shift 2 ;;
+        --apk) APK_PATH="$2"; shift 2 ;;
+        --platform) PLATFORM="$2"; shift 2 ;;
+        --server-url) SERVER_URL="$2"; shift 2 ;;
+        --no-forwarding) FORWARDING=false; shift ;;
+        --junit) JUNIT_PATH="$2"; shift 2 ;;
+        --project-dir) PROJECT_DIR="$2"; shift 2 ;;
+        --keep-phone) KEEP_PHONE=true; shift ;;
+        help|--help|-h) usage; exit 0 ;;
+        *)
+            # Could be a test name
+            if [[ -z "$TEST_NAME" ]]; then
+                TEST_NAME="$1"; shift
+            else
+                die "Unknown option: $1"
+            fi
+            ;;
+    esac
+done
+
+case "$SUBCMD" in
+    run)     cmd_run ;;
+    list)    cmd_list ;;
+    install) cmd_install "$@" ;;
+    help|--help|-h|"") usage ;;
+    *)
+        # Treat as test name: smithr test login → smithr test run login
+        TEST_NAME="$SUBCMD"
+        cmd_run
+        ;;
+esac

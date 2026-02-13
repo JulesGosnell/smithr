@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# smithr phone — Manage the phone pool
+#
+# Usage:
+#   smithr phone get    --type <device>    Acquire a phone from the warm pool
+#   smithr phone release <handle>          Return a phone to the pool
+#   smithr phone list                      List all phones and their status
+#   smithr phone status                    Show pool summary
+#   smithr phone warm   [--count N]        Pre-warm N phones (default: from config)
+#   smithr phone reap                      Clean up expired leases
+#   smithr phone shutdown                  Gracefully shut down all phones (reverse order)
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+source "${SMITHR_ROOT}/bin/lib/phone-pool.sh"
+
+usage() {
+    cat <<EOF
+smithr phone — Manage the phone pool
+
+Usage:
+  smithr phone get --type <device> [--platform android|ios]
+      Acquire a warm phone. Returns a handle on stdout.
+
+  smithr phone release <handle>
+      Release a leased phone back to the pool.
+
+  smithr phone list
+      List all phones and their status.
+
+  smithr phone status
+      Show pool summary with lease details.
+
+  smithr phone warm [--platform android] [--type pixel_7] [--count 4]
+      Pre-warm phones into the pool. Starts containers and waits for health.
+
+  smithr phone reap
+      Clean up expired leases (run via cron for automated cleanup).
+
+  smithr phone shutdown [--all]
+      Gracefully shut down phones. Reverse order of startup.
+      --all shuts down every phone. Without --all, only idle phones.
+
+Options:
+  --platform     Phone platform: android or ios (default: android)
+  --type         Device type/model (default: pixel_7 for android, iPhone 16 for ios)
+  --count        Number of phones to warm (default: 1)
+  --help         Show this help
+EOF
+}
+
+# Parse global options
+PLATFORM="android"
+DEVICE_TYPE=""
+COUNT=1
+
+cmd_get() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --type) DEVICE_TYPE="$2"; shift 2 ;;
+            --platform) PLATFORM="$2"; shift 2 ;;
+            *) die "Unknown option for get: $1" ;;
+        esac
+    done
+
+    with_lock pool_acquire "$PLATFORM" "${DEVICE_TYPE:-any}"
+}
+
+cmd_release() {
+    local handle="${1:?Usage: smithr phone release <handle>}"
+    with_lock pool_release "$handle"
+}
+
+cmd_list() {
+    pool_list
+}
+
+cmd_status() {
+    pool_status
+}
+
+cmd_warm() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --platform) PLATFORM="$2"; shift 2 ;;
+            --type) DEVICE_TYPE="$2"; shift 2 ;;
+            --count) COUNT="$2"; shift 2 ;;
+            *) die "Unknown option for warm: $1" ;;
+        esac
+    done
+
+    local default_type
+    if [[ "$PLATFORM" == "android" ]]; then
+        default_type="${DEVICE_TYPE:-Nexus 5}"
+    else
+        default_type="${DEVICE_TYPE:-iPhone 16}"
+    fi
+
+    local hostname
+    hostname=$(hostname)
+
+    log_info "Warming ${COUNT} ${PLATFORM} phone(s) (${default_type}) on ${hostname}..."
+
+    for i in $(seq 0 $((COUNT - 1))); do
+        local port=$((5555 + i))
+        local vnc_port=$((5900 + i))
+        local novnc_port=$((6080 + i))
+        local ip_offset=$((30 + i))
+        local ip="10.21.0.${ip_offset}"
+        local project_name="smithr-phone-${PLATFORM}-${i}"
+
+        log_info "Starting phone ${i} (${default_type}) at ${ip}:${port}..."
+
+        if [[ "$PLATFORM" == "android" ]]; then
+            # Ensure network exists
+            docker network create "${SMITHR_NETWORK_NAME:-smithr-network}" \
+                --subnet="${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}" 2>/dev/null || true
+
+            SMITHR_ANDROID_ID="$i" \
+            SMITHR_ANDROID_DEVICE="$default_type" \
+            SMITHR_ANDROID_ADB_PORT="$port" \
+            SMITHR_ANDROID_VNC_PORT="$vnc_port" \
+            SMITHR_ANDROID_NOVNC_PORT="$novnc_port" \
+            SMITHR_ANDROID_IP="$ip" \
+            docker compose \
+                -f "${SMITHR_ROOT}/layers/network.yml" \
+                -f "${SMITHR_ROOT}/layers/android.yml" \
+                -p "$project_name" \
+                up -d
+
+            # Wait for the emulator to boot
+            wait_for_healthy "smithr-android-${i}" 300
+
+            # Register in the pool
+            with_lock pool_register "$hostname" "android" "$default_type" "$port" "$ip"
+        else
+            log_error "iOS warm pool not yet implemented"
+            exit 1
+        fi
+    done
+
+    log_ok "All ${COUNT} phone(s) warmed and registered"
+}
+
+cmd_reap() {
+    with_lock pool_reap
+}
+
+cmd_shutdown() {
+    local all=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --all) all=true; shift ;;
+            *) die "Unknown option for shutdown: $1" ;;
+        esac
+    done
+
+    local state
+    state=$(read_state)
+
+    local phones
+    if $all; then
+        phones=$(echo "$state" | jq -r '.phones[].id')
+    else
+        phones=$(echo "$state" | jq -r '.phones[] | select(.status == "warm") | .id')
+    fi
+
+    if [[ -z "$phones" ]]; then
+        log_info "No phones to shut down"
+        return 0
+    fi
+
+    # Shutdown in reverse order (last started → first stopped)
+    phones=$(echo "$phones" | tac)
+
+    while IFS= read -r phone_id; do
+        log_info "Shutting down: ${phone_id}"
+
+        # Extract the compose project name from the phone ID
+        local platform port
+        platform=$(echo "$phone_id" | cut -d: -f2)
+        port=$(echo "$phone_id" | cut -d: -f3)
+        local idx=$((port - 5555))
+        local project_name="smithr-phone-${platform}-${idx}"
+
+        docker compose -p "$project_name" down --timeout 30 2>/dev/null || true
+
+        # Remove from pool state
+        with_lock bash -c "
+            state=\$(cat '$PHONE_STATE_FILE')
+            state=\$(echo \"\$state\" | jq 'del(.phones[] | select(.id == \"${phone_id}\"))')
+            state=\$(echo \"\$state\" | jq 'del(.leases[] | select(.phone_id == \"${phone_id}\"))')
+            echo \"\$state\" > '${PHONE_STATE_FILE}'
+        "
+
+        log_ok "Shut down: ${phone_id}"
+    done <<< "$phones"
+
+    log_ok "Phone shutdown complete"
+}
+
+# Dispatch
+case "${1:-}" in
+    get)     shift; cmd_get "$@" ;;
+    release) shift; cmd_release "$@" ;;
+    list)    cmd_list ;;
+    status)  cmd_status ;;
+    warm)    shift; cmd_warm "$@" ;;
+    reap)    cmd_reap ;;
+    shutdown) shift; cmd_shutdown "$@" ;;
+    help|--help|-h) usage ;;
+    *) usage; exit 1 ;;
+esac

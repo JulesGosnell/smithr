@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# smithr sandbox — Manage isolated development sandboxes
+#
+# Each sandbox gets:
+#   - DinD daemon (own Docker, own port space)
+#   - Optional database + server (inside DinD)
+#   - Optional phone (inside DinD, VNC forwarded to host)
+#   - Git safety hooks (no push to main)
+#
+# Usage:
+#   smithr sandbox start <name>    Start a named sandbox (rune, sif, tyr, vali)
+#   smithr sandbox stop <name>     Stop a sandbox
+#   smithr sandbox list            List running sandboxes
+#   smithr sandbox exec <name>     Exec into the sandbox shell
+#   smithr sandbox status          Show sandbox status summary
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+# Named sandbox slots (fixed port allocations)
+declare -A SANDBOX_VNC_PORT=([rune]=5996 [sif]=5997 [tyr]=5998 [vali]=5999)
+declare -A SANDBOX_METRO_PORT=([rune]=8082 [sif]=8083 [tyr]=8084 [vali]=8085)
+declare -A SANDBOX_DIND_PORT=([rune]=2376 [sif]=2377 [tyr]=2378 [vali]=2379)
+
+usage() {
+    cat <<EOF
+smithr sandbox — Manage isolated development sandboxes
+
+Usage:
+  smithr sandbox start <name> [--with-phone] [--with-server]
+      Start a named sandbox. Name must be one of: rune, sif, tyr, vali.
+      --with-phone   Also start a phone inside the sandbox
+      --with-server  Also start shared server inside the sandbox
+
+  smithr sandbox stop <name>
+      Stop and remove a sandbox.
+
+  smithr sandbox list
+      List all running sandboxes.
+
+  smithr sandbox exec <name> [command...]
+      Execute a command inside the sandbox. Default: bash.
+
+  smithr sandbox status
+      Show status of all sandbox slots.
+
+Options:
+  --help    Show this help
+EOF
+}
+
+validate_name() {
+    local name="$1"
+    if [[ -z "${SANDBOX_VNC_PORT[$name]+_}" ]]; then
+        die "Unknown sandbox name: $name (must be one of: rune, sif, tyr, vali)"
+    fi
+}
+
+cmd_start() {
+    local name="${1:?Usage: smithr sandbox start <name>}"
+    shift
+    validate_name "$name"
+
+    local with_phone=false
+    local with_server=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --with-phone) with_phone=true; shift ;;
+            --with-server) with_server=true; shift ;;
+            *) die "Unknown option: $1" ;;
+        esac
+    done
+
+    local vnc_port="${SANDBOX_VNC_PORT[$name]}"
+    local metro_port="${SANDBOX_METRO_PORT[$name]}"
+    local dind_port="${SANDBOX_DIND_PORT[$name]}"
+    local container_name="${SMITHR_PREFIX:-smithr}-sandbox-${name}"
+    local dind_name="${container_name}-dind"
+    local network_name="${name}-net"
+
+    log_info "Starting sandbox: ${name}"
+    log_info "  VNC:   localhost:${vnc_port}"
+    log_info "  Metro: localhost:${metro_port}"
+    log_info "  DinD:  localhost:${dind_port}"
+
+    # Create sandbox network
+    docker network create "$network_name" 2>/dev/null || true
+
+    # Start DinD daemon
+    log_info "Starting DinD daemon..."
+    docker run -d \
+        --name "$dind_name" \
+        --privileged \
+        --network "$network_name" \
+        --restart unless-stopped \
+        -p "${dind_port}:2375" \
+        -e DOCKER_TLS_CERTDIR="" \
+        --ulimit nofile=524288:524288 \
+        docker:dind 2>/dev/null || {
+            if docker ps -q -f name="$dind_name" | grep -q .; then
+                log_warn "DinD already running"
+            else
+                die "Failed to start DinD"
+            fi
+        }
+
+    wait_for_healthy "$dind_name" 60 2>/dev/null || {
+        # DinD doesn't have a health check by default, just wait a bit
+        sleep 5
+    }
+
+    # Start sandbox runner (Ubuntu-based workspace)
+    log_info "Starting sandbox workspace..."
+    docker run -d \
+        --name "$container_name" \
+        --network "$network_name" \
+        --restart unless-stopped \
+        -e DOCKER_HOST="tcp://${dind_name}:2375" \
+        -p "${vnc_port}:5901" \
+        -p "${metro_port}:8081" \
+        --memory "${SMITHR_SANDBOX_MEMORY:-8g}" \
+        ubuntu:24.04 \
+        sleep infinity 2>/dev/null || {
+            if docker ps -q -f name="$container_name" | grep -q .; then
+                log_warn "Sandbox already running"
+            else
+                die "Failed to start sandbox"
+            fi
+        }
+
+    log_ok "Sandbox ${name} is running"
+    log_info "  Exec into it: smithr sandbox exec ${name}"
+}
+
+cmd_stop() {
+    local name="${1:?Usage: smithr sandbox stop <name>}"
+    validate_name "$name"
+
+    local container_name="${SMITHR_PREFIX:-smithr}-sandbox-${name}"
+    local dind_name="${container_name}-dind"
+    local network_name="${name}-net"
+
+    log_info "Stopping sandbox: ${name}"
+
+    # Stop in reverse order: workspace first, then DinD
+    docker rm -f "$container_name" 2>/dev/null || true
+    docker rm -f "$dind_name" 2>/dev/null || true
+    docker network rm "$network_name" 2>/dev/null || true
+
+    log_ok "Sandbox ${name} stopped"
+}
+
+cmd_list() {
+    echo "SANDBOX   STATUS    VNC      METRO"
+    for name in rune sif tyr vali; do
+        local container_name="${SMITHR_PREFIX:-smithr}-sandbox-${name}"
+        local status
+        status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null) || status="stopped"
+        local vnc="${SANDBOX_VNC_PORT[$name]}"
+        local metro="${SANDBOX_METRO_PORT[$name]}"
+        printf "%-9s %-9s %-8s %s\n" "$name" "$status" ":$vnc" ":$metro"
+    done
+}
+
+cmd_exec() {
+    local name="${1:?Usage: smithr sandbox exec <name> [command...]}"
+    shift
+    validate_name "$name"
+
+    local container_name="${SMITHR_PREFIX:-smithr}-sandbox-${name}"
+    local cmd="${*:-bash}"
+
+    docker exec -it "$container_name" $cmd
+}
+
+cmd_status() {
+    echo -e "${BOLD}Sandbox Status${NC}" >&2
+    cmd_list
+}
+
+# Dispatch
+case "${1:-}" in
+    start)  shift; cmd_start "$@" ;;
+    stop)   shift; cmd_stop "$@" ;;
+    list)   cmd_list ;;
+    exec)   shift; cmd_exec "$@" ;;
+    status) cmd_status ;;
+    help|--help|-h) usage ;;
+    *) usage; exit 1 ;;
+esac

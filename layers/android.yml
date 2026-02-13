@@ -1,0 +1,77 @@
+# layers/android.yml
+#
+# Android Phone Layer - Parameterised Android emulator container
+#
+# Provides a single Android emulator instance. Use multiple instances
+# of this layer (with different env vars) for phone pooling.
+#
+# Requirements:
+#   - KVM available (/dev/kvm) for hardware virtualisation
+#   - GPU available (/dev/dri) for emulator rendering (AMD or NVIDIA)
+#
+# Usage:
+#   # Single phone
+#   docker compose -f layers/network.yml -f layers/android.yml up -d
+#
+#   # Multiple phones (use unique project names and ports)
+#   SMITHR_ANDROID_ID=1 SMITHR_ANDROID_ADB_PORT=5556 SMITHR_ANDROID_VNC_PORT=5901 \
+#     docker compose -f layers/network.yml -f layers/android.yml -p smithr-phone-1 up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX              - Container name prefix (default: smithr)
+#   SMITHR_ANDROID_ID          - Phone instance ID for unique naming (default: 0)
+#   SMITHR_ANDROID_DEVICE      - Android device profile (default: Nexus 5)
+#   SMITHR_ANDROID_API_LEVEL   - Android API level (default: 9.0)
+#   SMITHR_ANDROID_ADB_PORT    - Host ADB port (default: 5555)
+#   SMITHR_ANDROID_VNC_PORT    - Host VNC port (default: 5900)
+#   SMITHR_ANDROID_NOVNC_PORT  - Host noVNC port (default: 6080)
+#   SMITHR_ANDROID_IP          - Fixed IP on smithr-network (default: 10.21.0.30)
+#   SMITHR_ANDROID_IMAGE       - Docker image (default: budtmo/docker-android:emulator_9.0)
+#   SMITHR_ANDROID_GPU         - GPU mode: host, swiftshader, off (default: host)
+#
+# Phone Pool:
+#   Each phone gets a unique IP offset: 10.21.0.30 + SMITHR_ANDROID_ID
+#   Similarly: ADB port = 5555 + ID, VNC port = 5900 + ID, noVNC = 6080 + ID
+#
+# DinD Compatibility:
+#   Uses a custom entrypoint that patches the budtmo image's sudo chown issue.
+#   Origin: Artha issue #401.
+
+services:
+  android:
+    image: ${SMITHR_ANDROID_IMAGE:-budtmo/docker-android:emulator_9.0}
+    container_name: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_ID:-0}
+    privileged: true
+    entrypoint: ["/custom-entrypoint.sh"]
+    environment:
+      EMULATOR_DEVICE: ${SMITHR_ANDROID_DEVICE:-Nexus 5}
+      WEB_VNC: "true"
+      WEB_LOG: "true"
+      EMULATOR_DATA_PARTITION: "4096"
+      EMULATOR_ADDITIONAL_ARGS: "-gpu ${SMITHR_ANDROID_GPU:-host} -no-snapshot"
+    devices:
+      - /dev/kvm:/dev/kvm
+      - /dev/dri:/dev/dri
+    ports:
+      - "${SMITHR_ANDROID_ADB_PORT:-5555}:5555"
+      - "${SMITHR_ANDROID_VNC_PORT:-5900}:5900"
+      - "${SMITHR_ANDROID_NOVNC_PORT:-6080}:6080"
+    volumes:
+      - ../docker/shared/android-entrypoint.sh:/custom-entrypoint.sh:ro
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    healthcheck:
+      test: ["CMD-SHELL", "adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 180s
+    networks:
+      default:
+        ipv4_address: ${SMITHR_ANDROID_IP:-10.21.0.30}
+    restart: unless-stopped
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

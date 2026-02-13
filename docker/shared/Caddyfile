@@ -1,0 +1,21 @@
+# Smithr Caddyfile — TLS termination for mobile app testing
+#
+# Terminates HTTPS for the configured domain and proxies to the app server.
+# Uses Caddy's internal CA by default. For pre-generated CA, mount
+# cert/key files and update the tls directive.
+#
+# Environment variables are expanded by Caddy at runtime:
+#   {$SMITHR_DOMAIN}       — Domain to serve (default: app.local)
+#   {$SMITHR_SERVER_HOST}  — Backend server host (default: host.docker.internal)
+#   {$SMITHR_SERVER_PORT}  — Backend server port (default: 3000)
+
+{$SMITHR_DOMAIN:app.local} {
+	tls internal
+
+	reverse_proxy {$SMITHR_SERVER_HOST:host.docker.internal}:{$SMITHR_SERVER_PORT:3000}
+
+	log {
+		output stdout
+		level INFO
+	}
+}

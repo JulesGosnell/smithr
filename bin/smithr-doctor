@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# smithr doctor — Check system prerequisites for Smithr
+#
+# Verifies that the host has everything needed to run Smithr:
+#   - Docker with Docker Compose v2
+#   - KVM for hardware virtualisation
+#   - GPU for Android emulator rendering
+#   - Sufficient RAM
+#   - NFS mount (if multi-host)
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+PASS=0
+FAIL=0
+WARN=0
+
+check() {
+    local label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${RED}✗${NC} ${label}"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+check_warn() {
+    local label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} ${label}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "  ${YELLOW}?${NC} ${label} (optional)"
+        WARN=$((WARN + 1))
+    fi
+}
+
+echo ""
+echo -e "${BOLD}Smithr Doctor${NC} — checking prerequisites"
+echo ""
+
+# Docker
+echo -e "${BOLD}Docker:${NC}"
+check "Docker installed" command -v docker
+check "Docker daemon running" docker info
+check "Docker Compose v2" docker compose version
+
+# KVM
+echo ""
+echo -e "${BOLD}KVM (Virtualisation):${NC}"
+check "KVM device exists (/dev/kvm)" test -e /dev/kvm
+check "KVM device writable" test -w /dev/kvm
+
+# GPU
+echo ""
+echo -e "${BOLD}GPU (Android rendering):${NC}"
+check_warn "GPU device exists (/dev/dri)" test -d /dev/dri
+
+# Memory
+echo ""
+echo -e "${BOLD}System Resources:${NC}"
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+TOTAL_CORES=$(nproc)
+
+if [[ $TOTAL_MEM_GB -ge 32 ]]; then
+    echo -e "  ${GREEN}✓${NC} RAM: ${TOTAL_MEM_GB}GB (32GB minimum)"
+    PASS=$((PASS + 1))
+elif [[ $TOTAL_MEM_GB -ge 16 ]]; then
+    echo -e "  ${YELLOW}?${NC} RAM: ${TOTAL_MEM_GB}GB (32GB recommended, 16GB minimum)"
+    WARN=$((WARN + 1))
+else
+    echo -e "  ${RED}✗${NC} RAM: ${TOTAL_MEM_GB}GB (16GB minimum required)"
+    FAIL=$((FAIL + 1))
+fi
+
+if [[ $TOTAL_CORES -ge 8 ]]; then
+    echo -e "  ${GREEN}✓${NC} CPU: ${TOTAL_CORES} cores (8 minimum)"
+    PASS=$((PASS + 1))
+else
+    echo -e "  ${RED}✗${NC} CPU: ${TOTAL_CORES} cores (8 minimum required)"
+    FAIL=$((FAIL + 1))
+fi
+
+# NFS (optional, only for multi-host)
+echo ""
+echo -e "${BOLD}NFS (Multi-host):${NC}"
+check_warn "NFS mount at /srv/shared" test -d /srv/shared
+
+# Network
+echo ""
+echo -e "${BOLD}Network:${NC}"
+# Check if smithr-network subnet conflicts with existing
+if docker network ls --format '{{.Name}}' | grep -q "smithr-network"; then
+    echo -e "  ${YELLOW}?${NC} smithr-network already exists"
+    WARN=$((WARN + 1))
+else
+    echo -e "  ${GREEN}✓${NC} smithr-network not yet created (will be created on first use)"
+    PASS=$((PASS + 1))
+fi
+
+# Summary
+echo ""
+echo -e "${BOLD}Summary:${NC} ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}, ${YELLOW}${WARN} warnings${NC}"
+
+if [[ $FAIL -gt 0 ]]; then
+    echo ""
+    log_error "Some prerequisites are missing. Fix the failures above before using Smithr."
+    exit 1
+else
+    echo ""
+    log_ok "System is ready for Smithr!"
+fi

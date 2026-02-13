@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# smithr — CLI entrypoint for the Smithr infrastructure framework
+#
+# Usage:
+#   smithr <command> [options]
+#
+# Commands:
+#   phone     Manage the phone pool (get, release, list, status, warm)
+#   server    Manage shared server environments (start, stop, status)
+#   sandbox   Manage development sandboxes (start, stop, list)
+#   build     Build project artifacts
+#   test      Run tests
+#   deploy    Deploy to production
+#   doctor    Check system prerequisites
+#   version   Show Smithr version
+#
+# Configuration:
+#   Smithr reads from smithr.yml in the current directory or the path
+#   specified by --config.
+
+set -euo pipefail
+
+SMITHR_VERSION="0.1.0"
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Source common utilities
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+usage() {
+    cat <<EOF
+smithr v${SMITHR_VERSION} — Containerised CI/testing infrastructure with Phone as a Service
+
+Usage:
+  smithr <command> [options]
+
+Commands:
+  phone      Manage the phone pool (get, release, list, status, warm)
+  server     Manage shared server environments (start, stop, status)
+  sandbox    Manage development sandboxes (start, stop, list)
+  build      Build project artifacts
+  test       Run tests
+  deploy     Deploy to production
+  doctor     Check system prerequisites (KVM, Docker, GPU, NFS)
+  version    Show Smithr version
+
+Global Options:
+  --config <path>    Path to smithr.yml (default: ./smithr.yml)
+  --verbose          Enable verbose output
+  --help             Show this help
+
+Examples:
+  smithr doctor                           # Check prerequisites
+  smithr phone warm --count 4             # Pre-warm 4 Android phones
+  smithr phone get --type pixel-7         # Acquire a phone
+  smithr phone release megalodon:5557     # Return a phone to the pool
+  smithr server start                     # Start shared server env
+  smithr test run training --device auto  # Run test with auto-assigned phone
+
+Documentation:
+  ${SMITHR_ROOT}/docs/ARCHITECTURE.md
+  ${SMITHR_ROOT}/docs/GETTING-STARTED.md
+EOF
+}
+
+# Dispatch to subcommand
+case "${1:-}" in
+    phone|server|sandbox|build|test|deploy)
+        SUBCMD="$1"
+        shift
+        exec "${SMITHR_ROOT}/bin/smithr-${SUBCMD}" "$@"
+        ;;
+    doctor)
+        shift
+        exec "${SMITHR_ROOT}/bin/smithr-doctor" "$@"
+        ;;
+    version|--version|-v)
+        echo "smithr v${SMITHR_VERSION}"
+        ;;
+    help|--help|-h|"")
+        usage
+        ;;
+    *)
+        log_error "Unknown command: $1"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac

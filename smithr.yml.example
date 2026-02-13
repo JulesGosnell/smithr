@@ -1,0 +1,121 @@
+# smithr.yml.example — Smithr configuration for your project
+#
+# Copy this to smithr.yml in your project root and customise.
+# All paths are relative to the directory containing smithr.yml
+# unless they begin with / (absolute).
+#
+# Every setting can also be overridden by an environment variable
+# of the form SMITHR_<SECTION>_<KEY> (uppercase, underscores).
+# e.g. SMITHR_PHONES_ANDROID_API=14.0 overrides phones.android.api.
+
+project:
+  name: myapp                           # Project name (container prefix, volume names)
+  repo: MyOrg/myapp                     # GitHub owner/repo
+  prefix: myapp                         # Docker container prefix (default: project name)
+
+# ─── Paths ────────────────────────────────────────────────────
+# All paths are parameterised. Override via env or here.
+paths:
+  smithr_root: "${SMITHR_ROOT:-/home/user/src/smithr}"      # Smithr installation
+  project_root: "${SMITHR_PROJECT_ROOT:-/home/user/src/myapp}"  # Your project
+  android_sdk: "${ANDROID_HOME:-/home/user/Android/Sdk}"    # Android SDK
+  nfs_shared: "${SMITHR_NFS_PATH:-/srv/shared}"             # NFS mount for artifacts
+  images: "${SMITHR_IMAGES_PATH:-/srv/shared/images}"       # macOS/Android base images
+
+# ─── Server Environment ──────────────────────────────────────
+server:
+  compose_file: docker/api.yml          # Project's server compose file (optional)
+  port: 3001                            # Server port
+  health_check: /health                 # Liveness endpoint
+  ready_check: /ready                   # Readiness endpoint
+  setup_commands:
+    - "pnpm db:migrate"
+    - "pnpm db:seed"
+  env:
+    DATABASE_URL: "postgresql://${POSTGRES_USER:-smithr}:${POSTGRES_PASSWORD:-smithr_dev_password}@${SMITHR_PREFIX:-smithr}-postgres:5432/${POSTGRES_DB:-smithr}"
+
+# ─── Database ─────────────────────────────────────────────────
+database:
+  postgres:
+    version: "${POSTGRES_VERSION:-16}"
+    port: "${POSTGRES_PORT:-5432}"
+    user: "${POSTGRES_USER:-smithr}"
+    password: "${POSTGRES_PASSWORD:-smithr_dev_password}"
+    db: "${POSTGRES_DB:-smithr}"
+  redis:
+    version: "${REDIS_VERSION:-7-alpine}"
+    port: "${REDIS_PORT:-6379}"
+
+# ─── Build Configuration ─────────────────────────────────────
+build:
+  android:
+    command: "pnpm mobile:build:android"
+    artifact: "apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+    sdk_path: "${ANDROID_HOME:-/home/user/Android/Sdk}"
+  ios:
+    command: "pnpm mobile:build:ios"
+    artifact: "apps/mobile/ios/build/MyApp.app"
+  server:
+    command: "docker build -t ${PROJECT_NAME}-api ."
+    artifact: "${PROJECT_NAME}-api:latest"
+
+# ─── Phone Pool Configuration ────────────────────────────────
+phones:
+  android:
+    image: "budtmo/docker-android:emulator_${SMITHR_ANDROID_API:-9.0}"  # Docker image
+    device: "${SMITHR_ANDROID_DEVICE:-Nexus 5}"       # AVD device profile
+    api: "${SMITHR_ANDROID_API:-9.0}"                  # Android version (9.0, 10.0, 14.0)
+    gpu: "${SMITHR_ANDROID_GPU:-host}"                 # GPU mode: host, swiftshader, off
+    pool_size: 4                                        # Warm phones per host
+    snapshot: true                                      # Use snapshot for warm boot
+    ttl_minutes: 30                                     # Lease timeout
+  ios:
+    base_image: "${SMITHR_MACOS_IMAGE:-/srv/shared/images/smithr-sonoma.img}"
+    macos_version: "${SMITHR_MACOS_VERSION:-sonoma}"    # macOS version: sonoma, ventura
+    device: "${SMITHR_IOS_DEVICE:-iPhone 16}"           # Simulator device
+    runtime: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"          # iOS runtime version
+    ram: "${SMITHR_MACOS_RAM:-22}"                      # RAM per VM (GB)
+    cores: "${SMITHR_MACOS_CORES:-4}"                   # CPU cores per VM
+    pool_size: 2                                         # macOS VMs per host
+
+# ─── Test Suites ──────────────────────────────────────────────
+tests:
+  framework: maestro                    # maestro, playwright, or maestro+playwright
+  app_package: com.myorg.myapp          # Android app package name
+  suites:
+    - name: documents
+      file: tests/maestro/documents.yaml
+    - name: profile
+      file: tests/maestro/profile.yaml
+    - name: notifications
+      file: tests/maestro/notifications.yaml
+    - name: schedule
+      file: tests/maestro/schedule.yaml
+
+# ─── Network ─────────────────────────────────────────────────
+network:
+  name: "${SMITHR_NETWORK_NAME:-smithr-network}"
+  subnet: "${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}"
+
+# ─── TLS ──────────────────────────────────────────────────────
+tls:
+  domain: "${SMITHR_TLS_DOMAIN:-myapp.local}"
+  # ca_cert: docker/shared/tls/ca.crt
+  # ca_key: docker/shared/tls/ca.key
+
+# ─── Sandboxes ────────────────────────────────────────────────
+sandboxes:
+  memory_limit: "8g"
+  workers:
+    - name: rune
+      vnc_port: 5996
+      metro_port: 8082
+    - name: sif
+      vnc_port: 5997
+      metro_port: 8083
+    - name: tyr
+      vnc_port: 5998
+      metro_port: 8084
+    - name: vali
+      vnc_port: 5999
+      metro_port: 8085

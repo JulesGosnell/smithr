@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# smithr build — Build project artifacts (APKs, IPAs, etc.)
+#
+# Reads build configuration from smithr.yml and produces installable artifacts.
+# For CI/Phone-as-a-Service, builds include bundled JS (no Metro dependency).
+#
+# Usage:
+#   smithr build android          Build Android debug APK (bundled JS)
+#   smithr build android --release  Build Android release APK
+#   smithr build ios              Build iOS app (requires macOS sandbox)
+#   smithr build server           Build/prepare the server
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+usage() {
+    cat <<EOF
+smithr build — Build project artifacts
+
+Usage:
+  smithr build android [options]    Build Android APK with bundled JS
+  smithr build ios [options]        Build iOS app (requires macOS)
+  smithr build server               Prepare server (install deps, generate client)
+
+Options:
+  --release          Build release variant (default: debug with bundled JS)
+  --project-dir DIR  Project directory (default: current dir)
+  --output DIR       Output directory for artifacts
+  --clean            Clean build before building
+  --help             Show this help
+
+The debug build bundles JS into the APK so it works without Metro,
+which is required for Phone-as-a-Service and CI testing.
+EOF
+}
+
+# Defaults
+VARIANT="debug"
+PROJECT_DIR="."
+OUTPUT_DIR=""
+CLEAN=false
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        android|ios|server) PLATFORM="$1"; shift ;;
+        --release) VARIANT="release"; shift ;;
+        --project-dir) PROJECT_DIR="$2"; shift 2 ;;
+        --output) OUTPUT_DIR="$2"; shift 2 ;;
+        --clean) CLEAN=true; shift ;;
+        help|--help|-h) usage; exit 0 ;;
+        *) die "Unknown option: $1" ;;
+    esac
+done
+
+[[ -n "${PLATFORM:-}" ]] || { usage; die "Platform required: android, ios, or server"; }
+
+build_android() {
+    local mobile_dir="${PROJECT_DIR}/mobile"
+    local android_dir="${mobile_dir}/android"
+
+    [[ -d "$mobile_dir" ]] || die "Mobile directory not found: $mobile_dir"
+
+    # Ensure android project exists (prebuild if needed)
+    if [[ ! -d "$android_dir" ]]; then
+        log_info "Android project not found, running expo prebuild..."
+        (cd "$mobile_dir" && npx expo prebuild --platform android --no-install)
+    fi
+
+    # Ensure the gradle config bundles JS in debug builds
+    if [[ "$VARIANT" == "debug" ]]; then
+        if ! grep -q 'debuggableVariants = \[\]' "$android_dir/app/build.gradle" 2>/dev/null; then
+            log_warn "Debug build may not bundle JS. Set debuggableVariants = [] in build.gradle"
+            log_warn "for Phone-as-a-Service/CI usage."
+        fi
+    fi
+
+    if $CLEAN; then
+        log_info "Cleaning previous build..."
+        (cd "$android_dir" && ./gradlew clean --no-daemon 2>&1) || true
+    fi
+
+    log_info "Building Android ${VARIANT} APK..."
+    local gradle_task="assemble$(echo "${VARIANT^}")"
+    (cd "$android_dir" && ./gradlew "$gradle_task" --no-daemon 2>&1) || die "Android build failed"
+
+    local apk_path="${android_dir}/app/build/outputs/apk/${VARIANT}/app-${VARIANT}.apk"
+    if [[ ! -f "$apk_path" ]]; then
+        die "APK not found at expected path: $apk_path"
+    fi
+
+    local apk_size
+    apk_size=$(du -h "$apk_path" | cut -f1)
+    log_ok "Android ${VARIANT} APK built: ${apk_path} (${apk_size})"
+
+    # Copy to output dir if specified
+    if [[ -n "$OUTPUT_DIR" ]]; then
+        mkdir -p "$OUTPUT_DIR"
+        cp "$apk_path" "$OUTPUT_DIR/"
+        log_ok "Copied to: ${OUTPUT_DIR}/app-${VARIANT}.apk"
+    fi
+
+    # Print path on stdout for piping
+    echo "$apk_path"
+}
+
+build_ios() {
+    die "iOS build not yet implemented — requires macOS sandbox"
+}
+
+build_server() {
+    local server_dir="${PROJECT_DIR}/server"
+    [[ -d "$server_dir" ]] || die "Server directory not found: $server_dir"
+
+    log_info "Preparing server..."
+    (cd "$server_dir" && pnpm install 2>&1) || die "pnpm install failed"
+
+    if [[ -f "$server_dir/prisma/schema.prisma" ]]; then
+        log_info "Generating Prisma client..."
+        (cd "$server_dir" && npx prisma generate 2>&1) || die "Prisma generate failed"
+    fi
+
+    log_ok "Server build complete"
+}
+
+case "$PLATFORM" in
+    android) build_android ;;
+    ios)     build_ios ;;
+    server)  build_server ;;
+esac

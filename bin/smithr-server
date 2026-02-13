@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# smithr server — Manage shared server environments
+#
+# The shared server runs the project's database, API server, TLS proxy,
+# and DNS once, to be reused by all test jobs. This eliminates redundant
+# setup across a test matrix.
+#
+# Usage:
+#   smithr server start    Start the shared server environment
+#   smithr server stop     Stop and clean up (reverse startup order)
+#   smithr server status   Check if the server is running and healthy
+#   smithr server ensure   Start only if not already running (idempotent)
+
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+SMITHR_PREFIX="${SMITHR_PREFIX:-smithr}"
+COMPOSE_PROJECT="${SMITHR_PREFIX}-server"
+
+usage() {
+    cat <<EOF
+smithr server — Manage shared server environments
+
+Usage:
+  smithr server start [--config smithr.yml]
+      Start the shared server (network, DB, Redis, TLS proxy, DNS).
+      If a project app-server compose file is configured, starts that too.
+
+  smithr server stop
+      Gracefully shut down in reverse startup order.
+      Order: app-server → TLS proxy → DNS → database → network
+
+  smithr server status
+      Check health of all server components.
+
+  smithr server ensure
+      Start only if not already running (safe for CI matrix jobs).
+
+Options:
+  --config <path>   Path to smithr.yml (default: ./smithr.yml)
+  --help            Show this help
+EOF
+}
+
+# Compose files for the server stack (in startup order)
+get_compose_files() {
+    local files=(
+        "${SMITHR_ROOT}/layers/network.yml"
+        "${SMITHR_ROOT}/layers/database.yml"
+        "${SMITHR_ROOT}/layers/dns.yml"
+        "${SMITHR_ROOT}/layers/tls-proxy.yml"
+    )
+
+    # Add project-specific server compose if configured
+    if [[ -n "${SMITHR_SERVER_COMPOSE:-}" && -f "${SMITHR_SERVER_COMPOSE}" ]]; then
+        files+=("${SMITHR_SERVER_COMPOSE}")
+    fi
+
+    echo "${files[@]}"
+}
+
+compose_cmd() {
+    local files
+    read -ra files <<< "$(get_compose_files)"
+
+    local compose_args=()
+    for f in "${files[@]}"; do
+        compose_args+=("-f" "$f")
+    done
+
+    docker compose "${compose_args[@]}" -p "${COMPOSE_PROJECT}" "$@"
+}
+
+cmd_start() {
+    log_info "Starting shared server environment..."
+
+    # Start in dependency order. Docker Compose handles depends_on,
+    # but we log each phase for visibility.
+    log_info "Phase 1: Creating network..."
+    docker network create "${SMITHR_NETWORK_NAME:-smithr-network}" \
+        --subnet="${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}" 2>/dev/null || true
+
+    log_info "Phase 2: Starting database + cache..."
+    compose_cmd up -d postgres redis
+    wait_for_healthy "${SMITHR_PREFIX}-postgres" 60
+    wait_for_healthy "${SMITHR_PREFIX}-redis" 30
+
+    log_info "Phase 3: Starting DNS..."
+    compose_cmd up -d dns 2>/dev/null || log_warn "DNS service not available (optional)"
+
+    log_info "Phase 4: Starting TLS proxy..."
+    compose_cmd up -d tls-proxy
+    wait_for_healthy "${SMITHR_PREFIX}-tls-proxy" 30
+
+    # Phase 5: Project-specific server (if configured)
+    if [[ -n "${SMITHR_SERVER_COMPOSE:-}" ]]; then
+        log_info "Phase 5: Starting app server..."
+        compose_cmd up -d
+        # Run project setup commands if configured
+        if [[ -n "${SMITHR_SERVER_SETUP_CMD:-}" ]]; then
+            log_info "Running server setup: ${SMITHR_SERVER_SETUP_CMD}"
+            eval "${SMITHR_SERVER_SETUP_CMD}"
+        fi
+    fi
+
+    log_ok "Shared server environment is ready"
+    cmd_status
+}
+
+cmd_stop() {
+    log_info "Stopping shared server environment (reverse order)..."
+
+    # Stop in reverse order: app → proxy → DNS → database → network
+    compose_cmd down --timeout 30
+
+    # Optionally remove the network (only if no other services use it)
+    if docker network inspect "${SMITHR_NETWORK_NAME:-smithr-network}" >/dev/null 2>&1; then
+        local connected
+        connected=$(docker network inspect "${SMITHR_NETWORK_NAME:-smithr-network}" \
+            --format '{{len .Containers}}')
+        if [[ "$connected" == "0" ]]; then
+            log_info "Removing smithr-network (no connected containers)"
+            docker network rm "${SMITHR_NETWORK_NAME:-smithr-network}" 2>/dev/null || true
+        else
+            log_warn "smithr-network still has ${connected} connected container(s), keeping it"
+        fi
+    fi
+
+    log_ok "Server environment stopped"
+}
+
+cmd_status() {
+    echo -e "${BOLD}Shared Server Status${NC}"
+    echo ""
+
+    local services=("postgres" "redis" "tls-proxy")
+    local all_healthy=true
+
+    for svc in "${services[@]}"; do
+        local container="${SMITHR_PREFIX}-${svc}"
+        local status
+        status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "not_running")
+
+        case "$status" in
+            healthy)
+                echo -e "  ${GREEN}✓${NC} ${svc}: healthy"
+                ;;
+            starting)
+                echo -e "  ${YELLOW}…${NC} ${svc}: starting"
+                all_healthy=false
+                ;;
+            *)
+                echo -e "  ${RED}✗${NC} ${svc}: ${status}"
+                all_healthy=false
+                ;;
+        esac
+    done
+
+    echo ""
+    if $all_healthy; then
+        log_ok "All services healthy"
+    else
+        log_warn "Some services are not healthy"
+    fi
+}
+
+cmd_ensure() {
+    # Check if already running
+    local pg_status
+    pg_status=$(docker inspect --format='{{.State.Health.Status}}' "${SMITHR_PREFIX}-postgres" 2>/dev/null || echo "not_running")
+
+    if [[ "$pg_status" == "healthy" ]]; then
+        log_ok "Server already running"
+        cmd_status
+        return 0
+    fi
+
+    cmd_start
+}
+
+# Dispatch
+case "${1:-}" in
+    start)  shift; cmd_start "$@" ;;
+    stop)   cmd_stop ;;
+    status) cmd_status ;;
+    ensure) cmd_ensure ;;
+    help|--help|-h) usage ;;
+    *) usage; exit 1 ;;
+esac

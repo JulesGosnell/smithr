@@ -1,0 +1,8 @@
+appId: dev.smithr.demo
+name: "Smoke Test - App Launches"
+---
+# Verify the app loads and shows login screen
+- extendedWaitUntil:
+    visible:
+        id: "input-email"
+    timeout: 20000
