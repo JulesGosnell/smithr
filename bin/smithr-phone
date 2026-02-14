@@ -135,9 +135,49 @@ cmd_warm() {
 
             # Register in the pool
             with_lock pool_register "$hostname" "android" "$default_type" "$port" "$ip"
+        elif [[ "$PLATFORM" == "ios" ]]; then
+            # iOS uses macOS VM + iOS Simulator
+            # Port allocation: SSH starts at 50922, VNC at 5999
+            local ssh_port=$((50922 + i))
+            local vnc_port=$((5999 + i))
+            local ip_offset=$((40 + i))
+            local ip="10.21.0.${ip_offset}"
+            local macos_image="${SMITHR_MACOS_IMAGE:-/srv/shared/images/artha-sonoma.img}"
+
+            [[ -f "$macos_image" ]] || die "macOS image not found: $macos_image"
+
+            # Ensure network exists
+            docker network create "${SMITHR_NETWORK_NAME:-smithr-network}" \
+                --subnet="${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}" 2>/dev/null || true
+
+            log_info "Starting macOS VM ${i} (${default_type}) at ${ip} (SSH:${ssh_port}, VNC:${vnc_port})..."
+
+            SMITHR_IOS_VM_ID="$i" \
+            SMITHR_IOS_DEVICE="$default_type" \
+            SMITHR_MACOS_IMAGE="$macos_image" \
+            SMITHR_MACOS_SSH_PORT="$ssh_port" \
+            SMITHR_MACOS_VNC_PORT="$vnc_port" \
+            SMITHR_MACOS_IP="$ip" \
+            docker compose \
+                -f "${SMITHR_ROOT}/layers/network.yml" \
+                -f "${SMITHR_ROOT}/layers/ios.yml" \
+                -f "${SMITHR_ROOT}/layers/ios-sim.yml" \
+                -p "$project_name" \
+                up -d
+
+            # macOS VM takes much longer to boot than Android (~2-5 minutes)
+            local container_name="${SMITHR_PREFIX:-smithr}-ios-${i}"
+            wait_for_healthy "$container_name" 600
+
+            # Wait for simulator sidecar too
+            local sim_container="${container_name}-sim"
+            log_info "Waiting for iOS Simulator to boot..."
+            wait_for_healthy "$sim_container" 300
+
+            # Register in the pool — use SSH port as the "port" identifier
+            with_lock pool_register "$hostname" "ios" "$default_type" "$ssh_port" "$ip"
         else
-            log_error "iOS warm pool not yet implemented"
-            exit 1
+            die "Unknown platform: $PLATFORM (expected: android or ios)"
         fi
     done
 
@@ -179,13 +219,26 @@ cmd_shutdown() {
         log_info "Shutting down: ${phone_id}"
 
         # Extract the compose project name from the phone ID
-        local platform port
+        local platform port idx
         platform=$(echo "$phone_id" | cut -d: -f2)
         port=$(echo "$phone_id" | cut -d: -f3)
-        local idx=$((port - 5555))
+        if [[ "$platform" == "ios" ]]; then
+            idx=$((port - 50922))
+        else
+            idx=$((port - 5555))
+        fi
         local project_name="smithr-phone-${platform}-${idx}"
 
-        docker compose -p "$project_name" down --timeout 30 2>/dev/null || true
+        if [[ "$platform" == "ios" ]]; then
+            docker compose \
+                -f "${SMITHR_ROOT}/layers/network.yml" \
+                -f "${SMITHR_ROOT}/layers/ios.yml" \
+                -f "${SMITHR_ROOT}/layers/ios-sim.yml" \
+                -p "$project_name" \
+                down --timeout 60 2>/dev/null || true
+        else
+            docker compose -p "$project_name" down --timeout 30 2>/dev/null || true
+        fi
 
         # Remove from pool state
         with_lock bash -c "

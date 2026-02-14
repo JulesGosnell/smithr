@@ -3,15 +3,19 @@
 #
 # Orchestrates the full test cycle:
 #   1. Acquire a phone from the warm pool
-#   2. Install the APK
+#   2. Install the app (APK for Android, .app for iOS)
 #   3. Setup port forwarding (socat)
 #   4. Run Maestro tests
 #   5. Release the phone back to the pool
 #
+# Platform differences:
+#   Android: ADB + local Maestro
+#   iOS:     SSH into macOS VM + remote Maestro (runs inside macOS)
+#
 # Usage:
 #   smithr test run [test-name]       Run a specific test (or all)
 #   smithr test list                  List available tests
-#   smithr test install <handle>      Install APK on an acquired phone
+#   smithr test install <handle>      Install app on an acquired phone
 
 set -euo pipefail
 
@@ -25,11 +29,12 @@ smithr test — Run Maestro tests against phone pool
 Usage:
   smithr test run [test-name] [options]   Run a test (default: all tests)
   smithr test list                        List available test files
-  smithr test install <handle> <apk>      Install APK on a phone
+  smithr test install <handle> <app>      Install app on a phone
 
 Options:
   --device <handle>     Use a specific phone handle (skip acquire/release)
-  --apk <path>          Path to APK (default: auto-detect from build output)
+  --apk <path>          Path to APK (Android) or .app/.app.tar.gz (iOS)
+  --app <path>          Alias for --apk (preferred for iOS)
   --platform <p>        Platform: android or ios (default: android)
   --server-url <url>    Server URL for port forwarding (default: http://10.21.0.1:3001)
   --no-forwarding       Skip socat port forwarding setup
@@ -39,10 +44,12 @@ Options:
   --help                Show this help
 
 Examples:
-  smithr test run                      # Run all tests (auto-acquire phone)
-  smithr test run login                # Run just the login test
-  smithr test run --device localhost:5556  # Run on specific phone
-  smithr test run --junit results.xml  # With JUnit output
+  smithr test run                                  # Run all tests (Android, auto-acquire)
+  smithr test run login                            # Run just the login test
+  smithr test run --platform ios                   # Run on iOS Simulator
+  smithr test run --platform ios --app MyApp.app   # iOS with specific app
+  smithr test run --device localhost:5556           # Run on specific Android phone
+  smithr test run --junit results.xml              # With JUnit output
 EOF
 }
 
@@ -82,12 +89,139 @@ find_apk() {
     return 1
 }
 
+# Find an iOS .app bundle or .app.tar.gz
+find_ios_app() {
+    local search_dirs=(
+        "${PROJECT_DIR}/mobile/ios/build"
+        "${PROJECT_DIR}/ios/build"
+        "${PROJECT_DIR}/build/ios"
+        "${PROJECT_DIR}"
+    )
+
+    for dir in "${search_dirs[@]}"; do
+        [[ -d "$dir" ]] || continue
+
+        # Look for .app directories
+        local app
+        app=$(find "$dir" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1)
+        [[ -n "$app" ]] && { echo "$app"; return 0; }
+
+        # Look for .app.tar.gz archives
+        app=$(find "$dir" -maxdepth 3 -name "*.app.tar.gz" -type f 2>/dev/null | head -1)
+        [[ -n "$app" ]] && { echo "$app"; return 0; }
+    done
+
+    return 1
+}
+
+# --- iOS SSH helpers ---
+# All iOS communication goes through SSH to the macOS VM
+
+IOS_SSH_KEY="${SMITHR_ROOT}/layers/scripts/ios/ssh/macos-ssh-key"
+IOS_SSH_USER="${SMITHR_MACOS_SSH_USER:-claude}"
+IOS_REMOTE_TMP="/tmp/smithr-test"
+
+# Run a command on the macOS VM via SSH
+# Usage: ios_ssh <ssh_host> <ssh_port> <command>
+ios_ssh() {
+    local host="$1" port="$2"
+    shift 2
+    ssh -i "$IOS_SSH_KEY" \
+        -o StrictHostKeyChecking=no \
+        -o BatchMode=yes \
+        -o ConnectTimeout=10 \
+        -p "$port" \
+        "${IOS_SSH_USER}@${host}" \
+        "$@"
+}
+
+# Copy files to the macOS VM via SCP
+# Usage: ios_scp <ssh_host> <ssh_port> <local_path> <remote_path>
+ios_scp() {
+    local host="$1" port="$2" local_path="$3" remote_path="$4"
+    scp -i "$IOS_SSH_KEY" \
+        -o StrictHostKeyChecking=no \
+        -o BatchMode=yes \
+        -P "$port" \
+        "$local_path" \
+        "${IOS_SSH_USER}@${host}:${remote_path}"
+}
+
+# Install an iOS app on the Simulator (via SSH)
+# Handles both .app directories and .app.tar.gz archives
+ios_install_app() {
+    local ssh_host="$1" ssh_port="$2" app_path="$3"
+
+    ios_ssh "$ssh_host" "$ssh_port" "mkdir -p ${IOS_REMOTE_TMP}"
+
+    if [[ "$app_path" == *.tar.gz ]]; then
+        log_info "Uploading app archive to macOS..."
+        local archive_name
+        archive_name=$(basename "$app_path")
+        ios_scp "$ssh_host" "$ssh_port" "$app_path" "${IOS_REMOTE_TMP}/${archive_name}"
+
+        log_info "Extracting and installing..."
+        ios_ssh "$ssh_host" "$ssh_port" "
+            cd ${IOS_REMOTE_TMP}
+            rm -rf extracted
+            mkdir -p extracted
+            tar -xzf '${archive_name}' -C extracted
+            APP=\$(find extracted -maxdepth 2 -name '*.app' -type d | head -1)
+            if [ -z \"\$APP\" ]; then
+                echo 'ERROR: No .app found in archive' >&2
+                exit 1
+            fi
+            xcrun simctl install booted \"\$APP\"
+        "
+    elif [[ -d "$app_path" ]]; then
+        # .app directory — tar it up, send, extract, install
+        log_info "Packaging and uploading .app bundle..."
+        local tmp_archive="/tmp/smithr-ios-app-$$.tar.gz"
+        tar -czf "$tmp_archive" -C "$(dirname "$app_path")" "$(basename "$app_path")"
+        ios_scp "$ssh_host" "$ssh_port" "$tmp_archive" "${IOS_REMOTE_TMP}/app.tar.gz"
+        rm -f "$tmp_archive"
+
+        ios_ssh "$ssh_host" "$ssh_port" "
+            cd ${IOS_REMOTE_TMP}
+            rm -rf extracted
+            mkdir -p extracted
+            tar -xzf app.tar.gz -C extracted
+            APP=\$(find extracted -maxdepth 2 -name '*.app' -type d | head -1)
+            xcrun simctl install booted \"\$APP\"
+        "
+    else
+        die "Unsupported app format: $app_path (expected .app directory or .app.tar.gz)"
+    fi
+
+    log_ok "iOS app installed on Simulator"
+}
+
 find_tests() {
     local tests_dir="${PROJECT_DIR}/tests/maestro"
     if [[ ! -d "$tests_dir" ]]; then
         die "No tests directory found at: $tests_dir"
     fi
     find "$tests_dir" -name "*.yaml" -o -name "*.yml" | sort
+}
+
+# Resolve test files into an array (used by both Android and iOS runners)
+# Usage: resolve_test_files <array_name>
+resolve_test_files() {
+    local -n _out="$1"
+
+    if [[ -n "$TEST_NAME" ]]; then
+        local tests_dir="${PROJECT_DIR}/tests/maestro"
+        local test_file="${tests_dir}/${TEST_NAME}.yaml"
+        [[ -f "$test_file" ]] || test_file="${tests_dir}/${TEST_NAME}.yml"
+        [[ -f "$test_file" ]] || die "Test not found: ${TEST_NAME} (looked in ${tests_dir})"
+        _out+=("$test_file")
+    else
+        while IFS= read -r f; do
+            _out+=("$f")
+        done < <(find_tests)
+    fi
+
+    [[ ${#_out[@]} -gt 0 ]] || die "No test files found"
 }
 
 setup_forwarding() {
@@ -131,23 +265,36 @@ cmd_list() {
 }
 
 cmd_install() {
-    local handle="${1:?Usage: smithr test install <handle> <apk>}"
-    local apk="${2:?Usage: smithr test install <handle> <apk>}"
+    local handle="${1:?Usage: smithr test install <handle> <app>}"
+    local app="${2:?Usage: smithr test install <handle> <app>}"
 
-    [[ -f "$apk" ]] || die "APK not found: $apk"
+    local platform
+    platform=$(echo "$handle" | cut -d: -f2)
+    local port
+    port=$(echo "$handle" | cut -d: -f3)
 
-    # Extract ADB target from handle (format: hostname:platform:port)
-    local adb_port
-    adb_port=$(echo "$handle" | cut -d: -f3)
-    local adb_target="localhost:${adb_port}"
-
-    log_info "Installing ${apk} on ${adb_target}..."
-    adb connect "$adb_target" 2>/dev/null || true
-    adb -s "$adb_target" install -r "$apk" 2>&1 || die "APK install failed"
-    log_ok "APK installed on ${adb_target}"
+    if [[ "$platform" == "ios" ]]; then
+        [[ -e "$app" ]] || die "App not found: $app"
+        ios_install_app "localhost" "$port" "$app"
+    else
+        [[ -f "$app" ]] || die "APK not found: $app"
+        local adb_target="localhost:${port}"
+        log_info "Installing ${app} on ${adb_target}..."
+        adb connect "$adb_target" 2>/dev/null || true
+        adb -s "$adb_target" install -r "$app" 2>&1 || die "APK install failed"
+        log_ok "APK installed on ${adb_target}"
+    fi
 }
 
 cmd_run() {
+    if [[ "$PLATFORM" == "ios" ]]; then
+        cmd_run_ios
+    else
+        cmd_run_android
+    fi
+}
+
+cmd_run_android() {
     require_cmd maestro
     require_cmd adb
 
@@ -200,21 +347,9 @@ cmd_run() {
         setup_forwarding "$container_name" "$SERVER_PORT" "${SERVER_URL#http://}" || true
     fi
 
-    # Find test files
+    # Find and run tests
     local test_files=()
-    if [[ -n "$TEST_NAME" ]]; then
-        local tests_dir="${PROJECT_DIR}/tests/maestro"
-        local test_file="${tests_dir}/${TEST_NAME}.yaml"
-        [[ -f "$test_file" ]] || test_file="${tests_dir}/${TEST_NAME}.yml"
-        [[ -f "$test_file" ]] || die "Test not found: ${TEST_NAME} (looked in ${tests_dir})"
-        test_files+=("$test_file")
-    else
-        while IFS= read -r f; do
-            test_files+=("$f")
-        done < <(find_tests)
-    fi
-
-    [[ ${#test_files[@]} -gt 0 ]] || die "No test files found"
+    resolve_test_files test_files
 
     log_info "Running ${#test_files[@]} test(s) on ${adb_target}..."
 
@@ -267,6 +402,134 @@ cmd_run() {
     log_ok "All ${#test_files[@]} test(s) passed"
 }
 
+cmd_run_ios() {
+    # iOS: Maestro runs INSIDE the macOS VM via SSH
+    # We SCP test files over and invoke maestro remotely
+
+    [[ -f "$IOS_SSH_KEY" ]] || die "iOS SSH key not found: $IOS_SSH_KEY"
+
+    # Determine SSH connection
+    local ssh_host="localhost"
+    local ssh_port=""
+
+    if [[ -z "$DEVICE" ]]; then
+        log_info "Acquiring iOS phone from pool..."
+        ACQUIRED_HANDLE=$("${SMITHR_ROOT}/bin/smithr-phone" get --platform ios 2>/dev/null) || die "Could not acquire iOS phone from pool"
+        log_ok "Acquired phone: ${ACQUIRED_HANDLE}"
+        ssh_port=$(echo "$ACQUIRED_HANDLE" | cut -d: -f3)
+    else
+        # --device can be host:port or just port
+        if [[ "$DEVICE" == *:* ]]; then
+            ssh_host="${DEVICE%%:*}"
+            ssh_port="${DEVICE##*:}"
+        else
+            ssh_port="$DEVICE"
+        fi
+    fi
+
+    [[ -n "$ssh_port" ]] || die "Could not determine SSH port for iOS device"
+
+    # Verify SSH connectivity
+    log_info "Connecting to macOS VM at ${ssh_host}:${ssh_port}..."
+    ios_ssh "$ssh_host" "$ssh_port" "echo ok" >/dev/null 2>&1 || die "Cannot SSH to macOS VM at ${ssh_host}:${ssh_port}"
+
+    # Verify simulator is booted
+    local booted_devices
+    booted_devices=$(ios_ssh "$ssh_host" "$ssh_port" "xcrun simctl list devices booted 2>/dev/null") || die "Cannot query simulator devices"
+    echo "$booted_devices" | grep -qF "Booted" || die "No iOS Simulator device is booted"
+    log_ok "iOS Simulator connected"
+
+    # Find or auto-detect app
+    if [[ -n "$APK_PATH" ]]; then
+        # --apk or --app was used
+        [[ -e "$APK_PATH" ]] || die "App not found: $APK_PATH"
+        log_info "Installing app: ${APK_PATH}"
+        ios_install_app "$ssh_host" "$ssh_port" "$APK_PATH"
+    else
+        # Try auto-detect
+        if APK_PATH=$(find_ios_app); then
+            log_info "Auto-detected app: ${APK_PATH}"
+            ios_install_app "$ssh_host" "$ssh_port" "$APK_PATH"
+        else
+            log_warn "No iOS app found to install — assuming app is already on Simulator"
+        fi
+    fi
+
+    # Find test files
+    local test_files=()
+    resolve_test_files test_files
+
+    # Prepare remote test directory
+    ios_ssh "$ssh_host" "$ssh_port" "rm -rf ${IOS_REMOTE_TMP}/tests && mkdir -p ${IOS_REMOTE_TMP}/tests"
+
+    # Copy all test files to macOS
+    log_info "Copying ${#test_files[@]} test file(s) to macOS VM..."
+    for test_file in "${test_files[@]}"; do
+        ios_scp "$ssh_host" "$ssh_port" "$test_file" "${IOS_REMOTE_TMP}/tests/"
+    done
+
+    # Extract app ID from first test for app management
+    local app_id
+    app_id=$(grep -m1 'appId:' "${test_files[0]}" 2>/dev/null | awk '{print $2}')
+
+    log_info "Running ${#test_files[@]} test(s) on iOS Simulator..."
+
+    local failed=0
+    for test_file in "${test_files[@]}"; do
+        local test_basename
+        test_basename=$(basename "$test_file")
+        local test_name
+        test_name=$(basename "$test_basename" .yaml)
+        test_name=$(basename "$test_name" .yml)
+
+        log_info "Running test: ${test_name}"
+
+        # Reset app state between tests
+        if [[ -n "$app_id" ]]; then
+            ios_ssh "$ssh_host" "$ssh_port" "
+                xcrun simctl terminate booted '${app_id}' 2>/dev/null || true
+                xcrun simctl uninstall booted '${app_id}' 2>/dev/null || true
+            " 2>/dev/null || true
+
+            # Reinstall if we have an app path
+            if [[ -n "$APK_PATH" ]]; then
+                ios_install_app "$ssh_host" "$ssh_port" "$APK_PATH" 2>/dev/null
+            fi
+
+            # Launch the app
+            ios_ssh "$ssh_host" "$ssh_port" "
+                xcrun simctl launch booted '${app_id}' 2>/dev/null || true
+            " 2>/dev/null || true
+            sleep 3
+        fi
+
+        # Run Maestro inside the macOS VM
+        local maestro_result=0
+        ios_ssh "$ssh_host" "$ssh_port" "
+            export PATH=\$HOME/.maestro/bin:/usr/local/bin:\$PATH
+            export MAESTRO_DRIVER_STARTUP_TIMEOUT=180000
+            maestro test '${IOS_REMOTE_TMP}/tests/${test_basename}'
+        " 2>&1 || maestro_result=$?
+
+        if [[ $maestro_result -eq 0 ]]; then
+            log_ok "PASS: ${test_name}"
+        else
+            log_error "FAIL: ${test_name}"
+            failed=$((failed + 1))
+        fi
+    done
+
+    # Cleanup remote test files
+    ios_ssh "$ssh_host" "$ssh_port" "rm -rf ${IOS_REMOTE_TMP}/tests" 2>/dev/null || true
+
+    if [[ $failed -gt 0 ]]; then
+        log_error "${failed} test(s) failed"
+        return 1
+    fi
+
+    log_ok "All ${#test_files[@]} test(s) passed"
+}
+
 # Parse args
 SUBCMD="${1:-}"
 shift 2>/dev/null || true
@@ -274,7 +537,7 @@ shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --device) DEVICE="$2"; shift 2 ;;
-        --apk) APK_PATH="$2"; shift 2 ;;
+        --apk|--app) APK_PATH="$2"; shift 2 ;;
         --platform) PLATFORM="$2"; shift 2 ;;
         --server-url) SERVER_URL="$2"; shift 2 ;;
         --no-forwarding) FORWARDING=false; shift ;;

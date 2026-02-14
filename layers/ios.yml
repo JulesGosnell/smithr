@@ -5,6 +5,14 @@
 # Runs macOS Sonoma via Docker-OSX (QEMU) with iOS Simulator.
 # Uses QCOW2 overlays so the base image is never modified.
 #
+# Architecture Stack:
+#   Linux Host (Fedora)
+#   +-- Docker Container (sickcodes/docker-osx)
+#       +-- QEMU/KVM Virtual Machine
+#           +-- macOS Sonoma
+#               +-- Xcode + iOS Simulator
+#                   +-- Your iOS App
+#
 # Requirements:
 #   - KVM available (/dev/kvm) for hardware virtualisation
 #   - macOS base image at configured path
@@ -15,54 +23,82 @@
 #   For duplicate models, use separate macOS VMs (separate compose instances).
 #
 # Usage:
-#   docker compose -f layers/network.yml -f layers/ios.yml up -d
+#   SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+#     docker compose -f layers/network.yml -f layers/ios.yml up -d
 #
 # Environment Variables:
 #   SMITHR_PREFIX            - Container name prefix (default: smithr)
 #   SMITHR_IOS_VM_ID         - VM instance ID (default: 0)
-#   SMITHR_MACOS_IMAGE       - Path to macOS base image (default: /srv/shared/images/smithr-sonoma.img)
-#   SMITHR_MACOS_RAM         - RAM for macOS VM (default: 22GB)
+#   SMITHR_MACOS_IMAGE       - Path to macOS base image (REQUIRED)
+#   SMITHR_MACOS_RAM         - RAM for macOS VM in GB (default: 22)
 #   SMITHR_MACOS_CORES       - CPU cores for VM (default: 4)
-#   SMITHR_MACOS_CPU         - CPU model (default: Haswell-noTSX)
+#   SMITHR_MACOS_CPU         - CPU model (default: Haswell-noTSX) - CRITICAL for AMD
 #   SMITHR_MACOS_VGA         - VGA type (default: vmware)
 #   SMITHR_MACOS_VNC_PORT    - Host VNC port (default: 5999)
 #   SMITHR_MACOS_SSH_PORT    - Host SSH port (default: 50922)
-#   SMITHR_MACOS_IP          - Fixed IP (default: 10.21.0.40)
+#   SMITHR_MACOS_IP          - Fixed IP on smithr-network (default: 10.21.0.40)
 #   SMITHR_IOS_DEVICE        - iOS device model (default: iPhone 16)
 #   SMITHR_IOS_RUNTIME       - iOS runtime version (default: iOS 18.3)
 #   SMITHR_MACOS_SSH_USER    - SSH user on macOS (default: claude)
+#   SMITHR_SCRIPTS_DIR       - Path to iOS scripts (default: ./layers/scripts/ios)
 #
 # Networking:
-#   macOS guest uses QEMU NAT (10.0.2.x). socat bridges from
-#   smithr-network to the guest via port forwarding.
+#   macOS guest uses QEMU NAT (10.0.2.x). For server connectivity,
+#   use socat inside the container to bridge ports.
 
 services:
-  ios:
-    image: sickcodes/docker-osx:sonoma
+  macos:
+    image: sickcodes/docker-osx:latest
     container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_VM_ID:-0}
-    environment:
-      NOPICKER: "true"
-      RAM: ${SMITHR_MACOS_RAM:-22}
-      SMP: ${SMITHR_MACOS_CORES:-4}
-      CPU: ${SMITHR_MACOS_CPU:-Haswell-noTSX}
-      DISPLAY_RESOLUTION: "1920x1080"
+    # Use our custom launch script that omits the unnecessary InstallMedia drive
+    entrypoint: ["/bin/bash"]
+    command: ["/launch.sh"]
     devices:
-      - /dev/kvm:/dev/kvm
+      - /dev/kvm
     ports:
-      - "${SMITHR_MACOS_VNC_PORT:-5999}:5999"
       - "${SMITHR_MACOS_SSH_PORT:-50922}:10022"
+      - "${SMITHR_MACOS_VNC_PORT:-5999}:5999"
     volumes:
-      - "${SMITHR_MACOS_IMAGE:?SMITHR_MACOS_IMAGE must be set}:/image:ro"
+      # Mount disk image to the path QEMU expects
+      - "${SMITHR_MACOS_IMAGE:?SMITHR_MACOS_IMAGE must be set}:/home/arch/OSX-KVM/mac_hdd_ng.img"
+      # Custom launch script (no BaseSystem/InstallMedia needed)
+      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/launch-preinstalled.sh:/launch.sh:z"
+      # Health check scripts
+      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/macos-healthcheck.sh:/macos-healthcheck.sh:z"
+      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ios-healthcheck.sh:/ios-healthcheck.sh:z"
+      # SSH key for health checks
+      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ssh/macos-ssh-key:/ssh-key/macos-ssh-key:z"
+      # Shared folder - available at /mnt/hostshare in macOS via virtio-9p
+      # Default to an empty temp dir if no project share is needed
+      - "${SMITHR_MACOS_SHARE:-/tmp/smithr-macos-share}:/mnt/hostshare:z"
+    environment:
+      RAM: "${SMITHR_MACOS_RAM:-22}"
+      CORES: "${SMITHR_MACOS_CORES:-4}"
+      CPU: "${SMITHR_MACOS_CPU:-Haswell-noTSX}"
+      VGA: "${SMITHR_MACOS_VGA:-vmware}"
+      DISPLAY: ""
+      # VNC display :99 = port 5999
+      EXTRA: "-display none -vnc 0.0.0.0:99,password=off"
+      # Volatile by default (QCOW2 overlay protects base image)
+      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-0}"
+      # Skip OpenCore boot picker (saves ~30s)
+      NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
+      BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"
+      # iOS Simulator configuration (used by healthcheck)
+      IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
+      IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
+      SSH_USER: "${SMITHR_MACOS_SSH_USER:-claude}"
     healthcheck:
-      test: ["CMD-SHELL", "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 10022 ${SMITHR_MACOS_SSH_USER:-claude}@localhost 'echo ok' 2>/dev/null"]
-      interval: 30s
+      # macOS health check: verifies SSH responsive + Dock running (desktop ready)
+      test: ["CMD", "bash", "/macos-healthcheck.sh"]
+      interval: 5s
       timeout: 10s
       retries: 60
-      start_period: 300s
+      start_period: 60s
     networks:
       default:
         ipv4_address: ${SMITHR_MACOS_IP:-10.21.0.40}
-    restart: unless-stopped
+    restart: "no"
 
 networks:
   default:
