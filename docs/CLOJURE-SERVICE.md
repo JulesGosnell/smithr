@@ -25,6 +25,7 @@ NFS JSON + flock phone pool with a proper server:
 | `hammar.state` | Single atom holding `{:resources {} :leases {} :hosts {}}`. All queries and mutations |
 | `hammar.docker` | Docker client creation, container inspection, event subscription. One thread per host |
 | `hammar.lease` | `acquire!` / `unlease!` / `gc-expired-leases!`. Manages SSH tunnel lifecycle |
+| `hammar.macos` | macOS user lifecycle via SSH: create/delete build users, SSH key setup |
 | `hammar.api` | Reitit router with Muuntaja. Serves API + static files |
 | `hammar.handlers` | Ring handlers for each endpoint. Serializes Clojure maps to JSON with underscore keys |
 | `hammar.compose` | Shells out to `docker compose` CLI for up/down/ps |
@@ -154,18 +155,21 @@ cd hammar && npm install && npm run dev
 ## What's Working
 
 - All Clojure namespaces compile cleanly
-- API smoke-tested: health, resources, hosts, lease acquire, lease list all return correct JSON
-- Docker event subscription connects to local daemon
+- API smoke-tested: health, resources, hosts, lease acquire/unlease all return correct JSON
+- Docker event subscription connects to local and remote Docker daemons
 - Lease acquire/unlease with atomic state transitions
+- Shared macOS VM build leases with per-user isolation (concurrent builds)
+- Warm/persistent workspaces — named macOS users that survive unlease
+- macOS user lifecycle via SSH (create, delete, SSH key setup, PATH, locale)
 - GC loop for expired leases
 - Dashboard HTML/CSS ready, ClojureScript components written
+- Workspace management (list, get, purge) in API and dashboard
 
 ## What Needs Work
 
 1. **SSH tunnel process spawning** — port allocation works, actual socat/SSH process creation is stubbed
 2. **ClojureScript build** — `npm install && npx shadow-cljs release app` not yet run
 3. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
-4. **Remote host connection** — TCP Docker daemon connection (prognathodon) untested
-5. **Integration test** — full flow: start containers → discover → lease → unlease → GC
-6. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
-7. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON
+4. **Integration test** — full flow: start containers → discover → lease → unlease → GC
+5. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
+6. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON

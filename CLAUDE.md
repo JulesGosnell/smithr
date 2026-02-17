@@ -37,6 +37,7 @@ smithr/
 │   │   ├── state.clj           ← Atom-based state (resources/leases/hosts)
 │   │   ├── docker.clj          ← Docker event subscription (docker-java)
 │   │   ├── lease.clj           ← Lease acquire/unlease/GC + SSH tunnels
+│   │   ├── macos.clj           ← macOS user lifecycle (create/delete via SSH)
 │   │   ├── api.clj             ← Reitit routes + Ring middleware
 │   │   ├── handlers.clj        ← Ring handler implementations
 │   │   ├── compose.clj         ← Shell out to docker compose CLI
@@ -84,9 +85,12 @@ The service listens on port **7070** and serves both the REST API and dashboard.
 |--------|------|-------------|
 | GET | `/api/resources` | List resources (filterable by type/platform/status/host) |
 | GET | `/api/resources/{id}` | Get single resource |
-| POST | `/api/leases` | Acquire a lease |
+| POST | `/api/leases` | Acquire a lease (supports `lease_type`: build/phone, optional `workspace`) |
 | DELETE | `/api/leases/{id}` | Unlease a resource |
 | GET | `/api/leases` | List active leases |
+| GET | `/api/workspaces` | List all workspaces (persistent build environments) |
+| GET | `/api/workspaces/{name}` | Get workspace by name |
+| DELETE | `/api/workspaces/{name}` | Purge workspace (delete macOS user + home dir) |
 | GET | `/api/hosts` | List Docker hosts |
 | GET | `/api/health` | Health check |
 | GET | `/openapi.yaml` | Raw OpenAPI spec |
