@@ -3,6 +3,7 @@
    Uses swap! on state atom for atomic compare-and-set semantics.
    Manages SSH tunnels: created on acquire, destroyed on unlease/GC."
   (:require [clojure.tools.logging :as log]
+            [clojure.java.shell :as shell]
             [hammar.state :as state]
             [hammar.macos :as macos])
   (:import [java.time Instant Duration]
@@ -81,6 +82,83 @@
     (swap! tunnels dissoc lease-id)))
 
 ;; ---------------------------------------------------------------------------
+;; Reverse port forwarding (server_ports: app → server connectivity)
+;; ---------------------------------------------------------------------------
+
+(defn- setup-server-ports!
+  "Set up reverse port forwarding so the phone app can reach server ports.
+   For Android: uses `adb reverse` (native ADB feature).
+   For iOS: uses socat inside the macOS VM via SSH.
+   Returns a map of {port {:status :forwarded/:failed}}."
+  [lease-id resource tunnel-port server-ports]
+  (let [platform (:platform resource)]
+    (case platform
+      :android
+      (do
+        ;; Wait briefly for ADB to be ready through the tunnel
+        (Thread/sleep 2000)
+        (into {}
+              (for [port server-ports]
+                (let [adb-target (str "localhost:" tunnel-port)]
+                  (try
+                    (log/info "Setting up adb reverse tcp:" port "for lease" lease-id)
+                    (let [{:keys [exit out err]}
+                          (shell/sh "adb" "-s" adb-target "reverse"
+                                    (str "tcp:" port) (str "tcp:" port))]
+                      (if (zero? exit)
+                        (do (log/info "adb reverse tcp:" port "→ tcp:" port "OK")
+                            [port {:status "forwarded" :phone-address (str "localhost:" port)}])
+                        (do (log/warn "adb reverse failed for port" port ":" err)
+                            [port {:status "failed" :error (str err)}])))
+                    (catch Exception e
+                      (log/warn "adb reverse exception for port" port ":" (.getMessage e))
+                      [port {:status "failed" :error (.getMessage e)}]))))))
+
+      :ios
+      (let [{:keys [ssh-host ssh-port]} (:connection resource)]
+        (into {}
+              (for [port server-ports]
+                (try
+                  (log/info "Setting up socat reverse port" port "in macOS VM for lease" lease-id)
+                  (macos/ssh-exec-raw! resource
+                    (str "nohup socat TCP-LISTEN:" port ",fork,reuseaddr TCP:10.0.2.2:" port
+                         " > /dev/null 2>&1 & echo $!"))
+                  (log/info "socat reverse tcp:" port "→ 10.0.2.2:" port "OK")
+                  [port {:status "forwarded" :phone-address (str "localhost:" port)}]
+                  (catch Exception e
+                    (log/warn "socat reverse failed for port" port ":" (.getMessage e))
+                    [port {:status "failed" :error (.getMessage e)}])))))
+
+      ;; Unknown platform — no reverse forwarding
+      (do
+        (log/warn "Reverse port forwarding not supported for platform" platform)
+        {}))))
+
+(defn- teardown-server-ports!
+  "Clean up reverse port forwarding on unlease."
+  [resource tunnel-port server-ports]
+  (let [platform (:platform resource)]
+    (case platform
+      :android
+      (try
+        (let [adb-target (str "localhost:" tunnel-port)]
+          (shell/sh "adb" "-s" adb-target "reverse" "--remove-all")
+          (log/info "Cleared adb reverse ports"))
+        (catch Exception e
+          (log/warn "Failed to clear adb reverse:" (.getMessage e))))
+
+      :ios
+      (try
+        (doseq [port server-ports]
+          (macos/ssh-exec-raw! resource
+            (str "pkill -f 'socat TCP-LISTEN:" port "' 2>/dev/null || true")))
+        (log/info "Cleared socat reverse ports in macOS VM")
+        (catch Exception e
+          (log/warn "Failed to clear socat reverse:" (.getMessage e))))
+
+      nil)))
+
+;; ---------------------------------------------------------------------------
 ;; Lease acquire
 ;; ---------------------------------------------------------------------------
 
@@ -104,7 +182,7 @@
 
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
-  [{:keys [type platform ttl-seconds lessee lease-type workspace]
+  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -252,26 +330,38 @@
                                                           :lease-type :build})]
                                       (when parent-lease
                                         (:id parent-lease))))))]
-          (swap! state/state
-                 (fn [s]
-                   (cond-> s
-                     true (assoc-in [:leases lease-id :connection]
-                                    {:tunnel-port (:port tunnel)})
-                     parent-lease-id (assoc-in [:leases lease-id :parent-lease-id]
-                                               parent-lease-id))))
-          (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
-                    "lessee:" lessee "ttl:" ttl-seconds "s"
-                    "tunnel-port:" (:port tunnel)
-                    (when parent-lease-id (str "parent-hold:" parent-lease-id)))
-          (state/record-event! "lease"
-            {:lessee    lessee
-             :container (:container resource)
-             :resource  (:id resource)
-             :lease-id  lease-id
-             :lease-type "phone"
-             :ttl       ttl-seconds})
-          (cond-> (assoc lease :connection {:tunnel-port (:port tunnel)})
-            parent-lease-id (assoc :parent-lease-id parent-lease-id)))))))
+          ;; Set up reverse port forwarding for server_ports
+          (let [port-results (when (seq server-ports)
+                               (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
+                connection (cond-> {:tunnel-port (:port tunnel)}
+                             (seq server-ports) (assoc :server-ports server-ports))]
+            (swap! state/state
+                   (fn [s]
+                     (cond-> s
+                       true (assoc-in [:leases lease-id :connection] connection)
+                       true (assoc-in [:leases lease-id :server-ports] server-ports)
+                       parent-lease-id (assoc-in [:leases lease-id :parent-lease-id]
+                                                  parent-lease-id))))
+            ;; Wait for port forwarding to complete and merge results
+            (let [port-map (when port-results @port-results)
+                  final-connection (cond-> connection
+                                     port-map (assoc :server-port-status port-map))]
+              (when port-map
+                (swap! state/state assoc-in [:leases lease-id :connection] final-connection))
+              (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
+                        "lessee:" lessee "ttl:" ttl-seconds "s"
+                        "tunnel-port:" (:port tunnel)
+                        (when (seq server-ports) (str "server-ports:" server-ports))
+                        (when parent-lease-id (str "parent-hold:" parent-lease-id)))
+              (state/record-event! "lease"
+                {:lessee    lessee
+                 :container (:container resource)
+                 :resource  (:id resource)
+                 :lease-id  lease-id
+                 :lease-type "phone"
+                 :ttl       ttl-seconds})
+              (cond-> (assoc lease :connection final-connection)
+                parent-lease-id (assoc :parent-lease-id parent-lease-id)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
@@ -328,6 +418,12 @@
                     (macos/delete-user! resource macos-user)
                     (catch Exception e
                       (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e))))))))))
+      ;; Clean up reverse port forwarding if present
+      (when-let [server-ports (seq (:server-ports lease))]
+        (let [resource (state/resource (:resource-id lease))
+              tunnel (get @tunnels lease-id)]
+          (when (and resource tunnel)
+            (teardown-server-ports! resource (:port tunnel) server-ports))))
       (stop-tunnel! lease-id)
       ;; Cascading: release parent hold lease if present
       (when-let [parent-lid (:parent-lease-id lease)]

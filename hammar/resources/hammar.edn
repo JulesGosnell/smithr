@@ -4,7 +4,8 @@
  :hosts [{:label "megalodon"
           :docker-uri "unix:///var/run/docker.sock"}
          {:label "prognathodon"
-          :docker-uri "tcp://localhost:2375"}]
+          :docker-uri "tcp://localhost:2375"
+          :host-address "prognathodon"}]
 
  :gc {:interval-seconds 30
       :own-host "megalodon"}

@@ -276,7 +276,7 @@
                      (when ttl (str " for " (format-duration ttl))))
       "unlease" (str lessee " unleases " container
                      (when ws (str " workspace:" ws))
-                     (when held (str " held " (format-duration held))))
+                     (when held (str " held for " (format-duration held))))
       "gc"      (str "GC expires " container " (" lessee ")")
       (str t " " container))))
 

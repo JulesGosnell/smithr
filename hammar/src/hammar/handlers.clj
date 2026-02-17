@@ -119,12 +119,14 @@
   [request]
   (let [body      (:body-params request)
         workspace (or (:workspace body) (get body "workspace"))
+        server-ports (or (:server_ports body) (get body "server_ports"))
         params    (cond-> {:type        (or (:type body) (get body "type"))
                            :platform    (or (:platform body) (get body "platform"))
                            :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
                            :lessee      (or (:lessee body) (get body "lessee") "anonymous")
                            :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}
-                    workspace (assoc :workspace workspace))]
+                    workspace (assoc :workspace workspace)
+                    (seq server-ports) (assoc :server-ports (vec server-ports)))]
     (log/info "Lease request:" params)
     (try
       (if-let [result (lease/acquire! params)]

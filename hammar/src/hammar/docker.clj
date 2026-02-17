@@ -42,8 +42,9 @@
           (.getIpAddress)))
 
 (defn container->resource
-  "Convert a Docker container inspect result to a Resource map."
-  [container host-label network-name]
+  "Convert a Docker container inspect result to a Resource map.
+   host-address is the reachable hostname/IP for remote hosts (nil for local)."
+  [container host-label network-name host-address]
   (let [labels (.getLabels (.getConfig container))
         res-type (keyword (get labels "smithr.resource.type"))
         platform (keyword (get labels "smithr.resource.platform"))
@@ -71,11 +72,23 @@
                                 (.getHostPortSpec)
                                 (Integer/parseInt)))
         ;; Build connection map based on platform
+        ;; For remote hosts, use host-address + host-mapped ports instead of container IPs
+        remote? (some? host-address)
         connection (case platform
-                     :android (cond-> {:adb-host ip :adb-port 5555}
+                     :android (cond-> {:adb-host (if (and remote? (host-port-for 5555))
+                                                   host-address ip)
+                                       :adb-port (if (and remote? (host-port-for 5555))
+                                                   (host-port-for 5555) 5555)}
                                 (host-port-for 5900) (assoc :vnc-port (host-port-for 5900)))
-                     :ios {:ssh-host ip :ssh-port 10022}
-                     :macos (cond-> {:ssh-host ip :ssh-port 10022}
+                     :ios (let [ssh-port (if (and remote? (host-port-for 10022))
+                                           (host-port-for 10022) 10022)]
+                            {:ssh-host (if (and remote? (host-port-for 10022))
+                                         host-address ip)
+                             :ssh-port ssh-port})
+                     :macos (cond-> {:ssh-host (if (and remote? (host-port-for 10022))
+                                                 host-address ip)
+                                     :ssh-port (if (and remote? (host-port-for 10022))
+                                                 (host-port-for 10022) 10022)}
                               (host-port-for 5999) (assoc :vnc-port (host-port-for 5999)))
                      {})]
     (cond-> {:id id
@@ -99,7 +112,7 @@
 
 (defn scan-containers!
   "Scan running containers for smithr.managed=true and register them."
-  [client host-label network-name]
+  [client host-label network-name host-address]
   (log/info "Scanning containers on" host-label)
   (let [containers (-> client
                        (.listContainersCmd)
@@ -109,7 +122,7 @@
     (doseq [c containers]
       (let [id (.getId c)
             inspected (-> client (.inspectContainerCmd id) (.exec))
-            resource (container->resource inspected host-label network-name)]
+            resource (container->resource inspected host-label network-name host-address)]
         (log/info "Discovered resource:" (:id resource) "status:" (:status resource))
         (state/upsert-resource! resource)))
     (log/info "Scan complete on" host-label "- found" (count containers) "managed containers")))
@@ -120,7 +133,7 @@
 
 (defn- handle-event
   "Process a Docker event and update state."
-  [client host-label network-name ^Event event]
+  [client host-label network-name host-address ^Event event]
   (let [action (.getAction event)
         actor (.getActor event)
         attrs (when actor (.getAttributes actor))
@@ -133,7 +146,7 @@
           "start"
           (try
             (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
-                  resource (container->resource inspected host-label network-name)]
+                  resource (container->resource inspected host-label network-name host-address)]
               (state/upsert-resource! resource))
             (catch Exception e
               (log/warn "Failed to inspect container on start:" (.getMessage e))))
@@ -141,7 +154,7 @@
           ;; Health status changed
           "health_status: healthy"
           (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
-                resource (container->resource inspected host-label network-name)]
+                resource (container->resource inspected host-label network-name host-address)]
             ;; Only mark warm if not currently leased
             (if (#{:leased :shared} (:status (state/resource (:id resource))))
               (log/debug "Container healthy but leased/shared, keeping current status")
@@ -168,12 +181,12 @@
 (defn subscribe-events!
   "Subscribe to Docker events for managed containers.
    Returns the callback (closeable) for cleanup."
-  [client host-label network-name]
+  [client host-label network-name host-address]
   (log/info "Subscribing to Docker events on" host-label)
   (let [callback (proxy [EventsResultCallback] []
                    (onNext [^Event event]
                      (try
-                       (handle-event client host-label network-name event)
+                       (handle-event client host-label network-name host-address event)
                        (catch Exception e
                          (log/error e "Error handling Docker event")))))]
     (-> client
@@ -190,16 +203,17 @@
   "Connect to a Docker host: register, scan containers, subscribe to events.
    Returns {:client client :subscription subscription}."
   [host-config network-name]
-  (let [{:keys [label docker-uri]} host-config]
-    (log/info "Connecting to Docker host" label "at" docker-uri)
+  (let [{:keys [label docker-uri host-address]} host-config]
+    (log/info "Connecting to Docker host" label "at" docker-uri
+              (when host-address (str "(host-address: " host-address ")")))
     (try
       (let [client (make-client docker-uri)]
         ;; Verify connectivity
         (-> client (.pingCmd) (.exec))
         (log/info "Connected to" label)
         (state/register-host! label docker-uri)
-        (scan-containers! client label network-name)
-        (let [sub (subscribe-events! client label network-name)]
+        (scan-containers! client label network-name host-address)
+        (let [sub (subscribe-events! client label network-name host-address)]
           {:client client :subscription sub :label label}))
       (catch Exception e
         (log/error "Failed to connect to" label ":" (.getMessage e))
