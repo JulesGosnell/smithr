@@ -199,6 +199,7 @@ cd hammar && npm install && npm run dev
 - API smoke-tested: health, resources, hosts, lease acquire/unlease all return correct JSON
 - Docker event subscription connects to local and remote Docker daemons
 - Lease acquire/unlease with atomic state transitions
+- Socat tunnel spawning on acquire, process destruction on unlease/GC
 - Shared macOS VM build leases with per-user isolation (concurrent builds)
 - Warm/persistent workspaces — named macOS users that survive unlease
 - macOS user lifecycle via SSH (create, delete, SSH key setup, PATH, locale)
@@ -208,9 +209,8 @@ cd hammar && npm install && npm run dev
 
 ## What Needs Work
 
-1. **SSH tunnel process spawning** — port allocation works, actual socat/SSH process creation is stubbed
-2. **ClojureScript build** — `npm install && npx shadow-cljs release app` not yet run
-3. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
-4. **Integration test** — full flow: start containers → discover → lease → unlease → GC
-5. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
-6. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON
+1. **ClojureScript build** — `npm install && npx shadow-cljs release app` not yet run
+2. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
+3. **Integration test** — full flow: start containers → discover → lease → unlease → GC
+4. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
+5. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON
