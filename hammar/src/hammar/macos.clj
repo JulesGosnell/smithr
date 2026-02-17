@@ -53,7 +53,19 @@
                 (str "sudo dscl . -create /Users/" username " UniqueID " uid)
                 (str "sudo dscl . -create /Users/" username " PrimaryGroupID 20")
                 (str "sudo dscl . -create /Users/" username " NFSHomeDirectory " home-dir)
-                (str "sudo createhomedir -c -u " username)]
+                (str "sudo createhomedir -c -u " username)
+                ;; Add to SSH access group (required by macOS)
+                (str "sudo dscl . -append /Groups/com.apple.access_ssh GroupMembership " username)
+                ;; Set up SSH key auth — copy from smithr admin user
+                (str "sudo mkdir -p " home-dir "/.ssh")
+                (str "sudo cp /Users/smithr/.ssh/authorized_keys " home-dir "/.ssh/")
+                (str "sudo chown -R " username ":staff " home-dir "/.ssh")
+                (str "sudo chmod 700 " home-dir "/.ssh")
+                (str "sudo chmod 600 " home-dir "/.ssh/authorized_keys")
+                ;; Set up shell profile — PATH and locale for SSH sessions
+                (str "sudo bash -c 'printf \"eval \\$(/usr/libexec/path_helper -s)\\nexport LANG=en_US.UTF-8\\nexport LC_ALL=en_US.UTF-8\\n\" > " home-dir "/.bashrc'")
+                (str "sudo bash -c 'echo \"source ~/.bashrc\" > " home-dir "/.bash_profile'")
+                (str "sudo chown " username ":staff " home-dir "/.bashrc " home-dir "/.bash_profile")]
           combined (str/join " && " cmds)
           result (ssh-exec! resource combined)]
       (if (= 0 (:exit result))

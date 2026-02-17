@@ -127,9 +127,11 @@
         ;; Build lease: create macOS user, then start tunnel
         (if-let [user-info (macos/create-user! resource lease-id)]
           (let [tunnel (start-tunnel! lease-id resource)
+                {:keys [ssh-host ssh-port]} (:connection resource)
                 connection {:tunnel-port (:port tunnel)
                             :ssh-user    (:macos-user user-info)
-                            :ssh-host    "localhost"
+                            :ssh-host    ssh-host
+                            :ssh-port    (or ssh-port 10022)
                             :home-dir    (:home-dir user-info)}]
             ;; Update lease with connection and user info
             (swap! state/state
