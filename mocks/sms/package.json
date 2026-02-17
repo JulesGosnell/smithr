@@ -1,0 +1,12 @@
+{
+  "name": "smithr-mock-sms",
+  "version": "1.0.0",
+  "description": "Mock Twilio SMS API for E2E testing",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0"
+  }
+}

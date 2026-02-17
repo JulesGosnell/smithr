@@ -1,0 +1,40 @@
+# layers/sms.yml
+#
+# Mock Twilio SMS API for E2E testing
+#
+# Provides a Twilio-compatible Messages API that captures SMS in memory.
+# Point your app's TWILIO_API_URL at this service instead of api.twilio.com.
+#
+# Ports:
+#   3200 — Twilio API + test query API
+#
+# Endpoints:
+#   POST /2010-04-01/Accounts/:sid/Messages.json   — Send SMS (Twilio-compatible)
+#   GET  /2010-04-01/Accounts/:sid/Messages.json    — List messages
+#   GET  /2010-04-01/Accounts/:sid/Messages/:sid.json — Get message by SID
+#   GET  /api/messages             — List captured messages (?to=+1234567890)
+#   GET  /api/messages/latest      — Most recent message (?to=...)
+#   DELETE /api/messages           — Clear all messages
+#   GET  /health                  — Health check
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/sms.yml up -d
+
+services:
+  sms:
+    container_name: smithr-mock-sms
+    build:
+      context: ../mocks/sms
+    ports:
+      - "${SMITHR_SMS_PORT:-3200}:3200"
+    environment:
+      PORT: "3200"
+    networks:
+      default:
+        ipv4_address: 10.21.0.51
+    restart: unless-stopped
+
+networks:
+  default:
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}
+    external: true

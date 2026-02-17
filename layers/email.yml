@@ -1,0 +1,39 @@
+# layers/email.yml
+#
+# Mock Resend Email API for E2E testing
+#
+# Provides a Resend-compatible API that captures emails in memory.
+# Point your app's RESEND_API_URL at this service instead of api.resend.com.
+#
+# Ports:
+#   3100 — Resend API + test query API
+#
+# Endpoints:
+#   POST /emails              — Send email (Resend-compatible)
+#   GET  /emails/:id          — Get email by ID
+#   GET  /api/emails           — List captured emails (?to=user@example.com)
+#   GET  /api/emails/latest    — Most recent email (?to=...)
+#   DELETE /api/emails         — Clear all emails
+#   GET  /health              — Health check
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/email.yml up -d
+
+services:
+  email:
+    container_name: smithr-mock-email
+    build:
+      context: ../mocks/email
+    ports:
+      - "${SMITHR_EMAIL_PORT:-3100}:3100"
+    environment:
+      PORT: "3100"
+    networks:
+      default:
+        ipv4_address: 10.21.0.50
+    restart: unless-stopped
+
+networks:
+  default:
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}
+    external: true

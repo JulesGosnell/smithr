@@ -57,8 +57,13 @@ smithr/
 │   ├── android.yml             ← Android emulator (labelled smithr.managed=true)
 │   ├── ios.yml                 ← macOS VM (labelled smithr.managed=true)
 │   ├── ios-sim.yml             ← iOS Simulator sidecar (labelled)
+│   ├── email.yml               ← Mock Resend email API (port 3100)
+│   ├── sms.yml                 ← Mock Twilio SMS API (port 3200)
 │   ├── network.yml, database.yml, dns.yml, tls-proxy.yml, dind.yml, metro.yml
 │   └── scripts/ios/            ← iOS VM scripts
+├── mocks/                      ← Mock API services for E2E testing
+│   ├── email/                  ← Resend-compatible email mock (Fastify)
+│   └── sms/                    ← Twilio-compatible SMS mock (Fastify)
 ├── demo/                       ← Demo app (Fastify+Prisma server, Expo mobile)
 ├── docs/                       ← Documentation
 └── templates/                  ← GitHub Actions CI templates
@@ -132,7 +137,7 @@ labels:
 - **State**: Never mutate state outside `swap!` on `hammar.state/state` atom
 - **Naming**: Container names = `smithr-<type>-<rune>` (e.g., `smithr-android-fe`)
 - **Network**: `smithr-network` at 10.21.0.0/16, service at 10.21.0.20
-- **Ports**: postgres:5433, redis:6380, Smithr API:7070, shadow-cljs:8090
+- **Ports**: postgres:5433, redis:6380, Smithr API:7070, shadow-cljs:8090, mock-email:3100, mock-sms:3200
 
 ## MCP Tools
 
