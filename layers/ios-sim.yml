@@ -41,7 +41,7 @@ services:
     environment:
       SSH_HOST: "${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}"
       SSH_PORT: "10022"
-      SSH_USER: "${SMITHR_MACOS_SSH_USER:-claude}"
+      SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
       SSH_KEY: "/ssh-key/macos-ssh-key"
       IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"

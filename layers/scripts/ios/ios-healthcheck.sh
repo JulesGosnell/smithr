@@ -14,13 +14,13 @@
 #
 # Environment Variables:
 #   IOS_DEVICE  - Expected simulator device name (optional)
-#   SSH_USER    - SSH user for macOS VM (default: claude)
+#   SSH_USER    - SSH user for macOS VM (default: smithr)
 #   SSH_KEY     - Path to SSH private key (default: /ssh-key/macos-ssh-key)
 #
 
 set -e
 
-SSH_USER="${SSH_USER:-claude}"
+SSH_USER="${SSH_USER:-smithr}"
 SSH_PORT="${SSH_PORT:-10022}"
 SSH_HOST="${SSH_HOST:-localhost}"
 SSH_KEY="${SSH_KEY:-/ssh-key/macos-ssh-key}"

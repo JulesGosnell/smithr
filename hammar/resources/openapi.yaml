@@ -36,7 +36,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [booting, warm, leased, dead]
+            enum: [booting, warm, shared, leased, dead]
           description: Filter by status
         - name: host
           in: query
@@ -208,13 +208,21 @@ components:
           example: megalodon
         status:
           type: string
-          enum: [booting, warm, leased, dead]
+          enum: [booting, warm, shared, leased, dead]
         container:
           type: string
           description: Docker container name
           example: smithr-android-0
         connection:
           $ref: "#/components/schemas/Connection"
+        max_slots:
+          type: integer
+          description: Maximum concurrent build leases (macOS VMs only)
+          example: 10
+        active_lease_count:
+          type: integer
+          description: Number of currently active build leases (macOS VMs only)
+          example: 3
         lease_id:
           type: string
           description: Active lease ID if leased
@@ -241,6 +249,13 @@ components:
         tunnel_port:
           type: integer
           description: Hammar-managed SSH tunnel port (allocated on lease)
+        ssh_user:
+          type: string
+          description: SSH username for the tunnel
+        home_dir:
+          type: string
+          description: Home directory path (build leases only)
+          example: /Users/build-a1b2c3d4
 
     LeaseRequest:
       type: object
@@ -262,6 +277,11 @@ components:
           type: string
           default: anonymous
           description: Identifier for who is leasing
+        lease_type:
+          type: string
+          enum: [build, phone]
+          default: phone
+          description: Type of lease - build (shared, concurrent) or phone (exclusive)
 
     Lease:
       type: object
@@ -284,6 +304,14 @@ components:
         expires_at:
           type: string
           format: date-time
+        lease_type:
+          type: string
+          enum: [build, phone]
+          description: Type of lease
+        macos_user:
+          type: string
+          description: macOS user account (build leases only)
+          example: build-a1b2c3d4
         connection:
           $ref: "#/components/schemas/Connection"
 

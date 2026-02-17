@@ -48,12 +48,18 @@
       (update :status name)
       (update :updated-at serialize-instant)
       (dissoc :parent)
+      ;; For macOS VMs: expose slot info, remove internal set
+      (cond->
+        (:max-slots r) (assoc :active-lease-count (count (:active-leases r #{})))
+        true           (dissoc :active-leases))
       kw->underscore))
 
 (defn- serialize-lease [l]
   (-> l
       (update :acquired-at serialize-instant)
       (update :expires-at serialize-instant)
+      (cond->
+        (:lease-type l) (update :lease-type name))
       kw->underscore))
 
 (defn- serialize-host [h]
@@ -116,7 +122,8 @@
         params {:type        (or (:type body) (get body "type"))
                 :platform    (or (:platform body) (get body "platform"))
                 :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
-                :lessee      (or (:lessee body) (get body "lessee") "anonymous")}]
+                :lessee      (or (:lessee body) (get body "lessee") "anonymous")
+                :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}]
     (log/info "Lease request:" params)
     (if-let [result (lease/acquire! params)]
       (json-response 201 (serialize-lease result))

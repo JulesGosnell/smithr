@@ -78,15 +78,20 @@
                      :macos (cond-> {:ssh-host ip :ssh-port 10022}
                               (host-port-for 5999) (assoc :vnc-port (host-port-for 5999)))
                      {})]
-    {:id id
-     :type res-type
-     :platform platform
-     :host host-label
-     :status status
-     :container name
-     :connection connection
-     :parent (get labels "smithr.resource.parent")
-     :updated-at (Instant/now)}))
+    (cond-> {:id id
+             :type res-type
+             :platform platform
+             :host host-label
+             :status status
+             :container name
+             :connection connection
+             :parent (get labels "smithr.resource.parent")
+             :updated-at (Instant/now)}
+      (= platform :macos)
+      (assoc :max-slots (if-let [s (get labels "smithr.resource.max-slots")]
+                          (Integer/parseInt s)
+                          10)
+             :active-leases #{}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Initial container scan
@@ -138,8 +143,8 @@
           (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
                 resource (container->resource inspected host-label network-name)]
             ;; Only mark warm if not currently leased
-            (if (= :leased (:status (state/resource (:id resource))))
-              (log/debug "Container healthy but leased, keeping leased status")
+            (if (#{:leased :shared} (:status (state/resource (:id resource))))
+              (log/debug "Container healthy but leased/shared, keeping current status")
               (state/upsert-resource! resource)))
 
           ;; Container died or was destroyed — remove resource

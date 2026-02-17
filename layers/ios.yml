@@ -39,7 +39,8 @@
 #   SMITHR_MACOS_IP          - Fixed IP on smithr-network (default: 10.21.0.40)
 #   SMITHR_IOS_DEVICE        - iOS device model (default: iPhone 16)
 #   SMITHR_IOS_RUNTIME       - iOS runtime version (default: iOS 18.3)
-#   SMITHR_MACOS_SSH_USER    - SSH user on macOS (default: claude)
+#   SMITHR_MACOS_SSH_USER    - SSH user on macOS (default: smithr)
+#   SMITHR_MACOS_MAX_SLOTS   - Max concurrent build leases per VM (default: 10)
 #   SMITHR_SCRIPTS_DIR       - Path to iOS scripts (default: ./layers/scripts/ios)
 #
 # Networking:
@@ -87,12 +88,13 @@ services:
       # iOS Simulator configuration (used by healthcheck)
       IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
-      SSH_USER: "${SMITHR_MACOS_SSH_USER:-claude}"
+      SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
     labels:
       smithr.managed: "true"
       smithr.resource.type: "vm"
       smithr.resource.platform: "macos"
       smithr.resource.pool: "ios"
+      smithr.resource.max-slots: "${SMITHR_MACOS_MAX_SLOTS:-10}"
     healthcheck:
       # macOS health check: verifies SSH responsive + Dock running (desktop ready)
       test: ["CMD", "bash", "/macos-healthcheck.sh"]

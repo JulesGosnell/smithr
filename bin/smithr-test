@@ -129,7 +129,7 @@ find_ios_app() {
 # All iOS communication goes through SSH to the macOS VM
 
 IOS_SSH_KEY="${SMITHR_ROOT}/layers/scripts/ios/ssh/macos-ssh-key"
-IOS_SSH_USER="${SMITHR_MACOS_SSH_USER:-claude}"
+IOS_SSH_USER="${SMITHR_MACOS_SSH_USER:-smithr}"
 IOS_REMOTE_TMP="/tmp/smithr-test"
 
 # Run a command on the macOS VM via SSH

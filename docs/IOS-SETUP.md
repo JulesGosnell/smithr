@@ -88,7 +88,7 @@ docker inspect smithr-ios-0 --format '{{.State.Health.Status}}'     # macOS VM
 docker inspect smithr-ios-0-sim --format '{{.State.Health.Status}}' # iOS Simulator
 
 # 4. Verify via SSH
-ssh -i layers/scripts/ios/ssh/macos-ssh-key -o StrictHostKeyChecking=no -p 50922 claude@localhost \
+ssh -i layers/scripts/ios/ssh/macos-ssh-key -o StrictHostKeyChecking=no -p 50922 smithr@localhost \
   "xcrun simctl list devices booted"
 
 # 5. Connect via VNC (optional, for visual debugging)
@@ -122,20 +122,20 @@ smithr phone shutdown --all
 SSH_KEY="layers/scripts/ios/ssh/macos-ssh-key"
 
 # Copy app to macOS
-scp -i "$SSH_KEY" -P 50922 path/to/MyApp.app.tar.gz claude@localhost:/tmp/
+scp -i "$SSH_KEY" -P 50922 path/to/MyApp.app.tar.gz smithr@localhost:/tmp/
 
 # Extract and install
-ssh -i "$SSH_KEY" -p 50922 claude@localhost "
+ssh -i "$SSH_KEY" -p 50922 smithr@localhost "
   mkdir -p /tmp/app && tar -xzf /tmp/MyApp.app.tar.gz -C /tmp/app
   xcrun simctl install booted /tmp/app/MyApp.app
 "
 
 # Launch
-ssh -i "$SSH_KEY" -p 50922 claude@localhost "xcrun simctl launch booted com.example.myapp"
+ssh -i "$SSH_KEY" -p 50922 smithr@localhost "xcrun simctl launch booted com.example.myapp"
 
 # Take screenshot
-ssh -i "$SSH_KEY" -p 50922 claude@localhost "xcrun simctl io booted screenshot /tmp/screenshot.png"
-scp -i "$SSH_KEY" -P 50922 claude@localhost:/tmp/screenshot.png ./screenshot.png
+ssh -i "$SSH_KEY" -p 50922 smithr@localhost "xcrun simctl io booted screenshot /tmp/screenshot.png"
+scp -i "$SSH_KEY" -P 50922 smithr@localhost:/tmp/screenshot.png ./screenshot.png
 ```
 
 ### Running Maestro Tests on iOS
@@ -146,10 +146,10 @@ Maestro runs **inside the macOS VM** (not on the Linux host) because it needs di
 SSH_KEY="layers/scripts/ios/ssh/macos-ssh-key"
 
 # Copy test file to macOS
-scp -i "$SSH_KEY" -P 50922 tests/mobile/login.yaml claude@localhost:/tmp/
+scp -i "$SSH_KEY" -P 50922 tests/mobile/login.yaml smithr@localhost:/tmp/
 
 # Run test
-ssh -i "$SSH_KEY" -p 50922 claude@localhost "
+ssh -i "$SSH_KEY" -p 50922 smithr@localhost "
   export PATH=\$HOME/.maestro/bin:\$PATH
   export MAESTRO_DRIVER_STARTUP_TIMEOUT=180000
   maestro test /tmp/login.yaml
@@ -214,7 +214,7 @@ Two-stage health checking:
 | `SMITHR_MACOS_IP` | `10.21.0.40` | IP on smithr-network |
 | `SMITHR_IOS_DEVICE` | `iPhone 16` | Simulator device |
 | `SMITHR_IOS_RUNTIME` | `iOS 18.3` | iOS runtime version |
-| `SMITHR_MACOS_SSH_USER` | `claude` | SSH user in macOS |
+| `SMITHR_MACOS_SSH_USER` | `smithr` | SSH user in macOS |
 | `SMITHR_MACOS_PERSISTENT` | `0` | 1=write to image, 0=overlay |
 | `SMITHR_MACOS_SHARE` | `/tmp/smithr-macos-share` | Host dir shared to macOS |
 | `SMITHR_SCRIPTS_DIR` | `./scripts/ios` | Path to iOS scripts |

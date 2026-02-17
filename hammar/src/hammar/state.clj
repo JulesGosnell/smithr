@@ -92,3 +92,24 @@
                (and (= (:status r) :warm)
                     (= (:type r) resource-type)
                     (= (:platform r) platform)))))
+
+(defn available-for-build
+  "Get macOS VMs available for a shared build lease.
+   Returns VMs that are :warm (no leases) or :shared with capacity remaining."
+  [platform]
+  (resources (fn [r]
+               (and (= (:type r) :vm)
+                    (= (:platform r) (keyword platform))
+                    (or (= (:status r) :warm)
+                        (and (= (:status r) :shared)
+                             (< (count (:active-leases r #{}))
+                                (:max-slots r 10))))))))
+
+(defn available-for-phone
+  "Get macOS VMs available for an exclusive phone lease.
+   Only :warm VMs qualify (no existing leases of any type)."
+  [platform]
+  (resources (fn [r]
+               (and (= (:type r) :vm)
+                    (= (:platform r) (keyword platform))
+                    (= (:status r) :warm)))))

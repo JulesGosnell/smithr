@@ -44,17 +44,21 @@
   (fetch-hosts!)
   (fetch-health!))
 
-(defn acquire-lease! [resource-type platform]
-  (POST (str base-url "/api/leases")
-    {:params          {:type resource-type
-                       :platform platform
-                       :ttl_seconds 1800
-                       :lessee "dashboard"}
-     :handler         (fn [_] (fetch-all!))
-     :error-handler   (partial handle-error "Acquire")
-     :format          :json
-     :response-format :json
-     :keywords?       true}))
+(defn acquire-lease!
+  ([resource-type platform]
+   (acquire-lease! resource-type platform "phone"))
+  ([resource-type platform lease-type]
+   (POST (str base-url "/api/leases")
+     {:params          {:type resource-type
+                        :platform platform
+                        :lease_type lease-type
+                        :ttl_seconds 1800
+                        :lessee "dashboard"}
+      :handler         (fn [_] (fetch-all!))
+      :error-handler   (partial handle-error "Acquire")
+      :format          :json
+      :response-format :json
+      :keywords?       true})))
 
 (defn release-lease! [lease-id]
   (DELETE (str base-url "/api/leases/" lease-id)

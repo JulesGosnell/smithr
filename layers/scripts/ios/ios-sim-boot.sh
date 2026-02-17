@@ -9,7 +9,7 @@
 # Environment Variables:
 #   SSH_HOST      - macOS container hostname
 #   SSH_PORT      - SSH port (default: 10022)
-#   SSH_USER      - SSH user (default: claude)
+#   SSH_USER      - SSH user (default: smithr)
 #   SSH_KEY       - Path to SSH private key
 #   IOS_DEVICE    - Simulator device name
 #   IOS_RUNTIME   - iOS runtime version
