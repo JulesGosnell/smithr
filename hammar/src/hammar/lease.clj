@@ -25,32 +25,59 @@
     (dec port)))
 
 (defn- start-tunnel!
-  "Start an SSH tunnel for a lease. Returns tunnel info map."
+  "Start a socat tunnel for a lease. Returns tunnel info map.
+   Android: forwards tunnel-port → adb-host:adb-port
+   macOS:   forwards tunnel-port → ssh-host:ssh-port"
   [lease-id resource]
   (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
-        tunnel-port (allocate-tunnel-port!)]
+        tunnel-port (allocate-tunnel-port!)
+        platform    (:platform resource)
+        target      (case platform
+                      :android (str (or adb-host "localhost") ":" (or adb-port 5555))
+                      :macos   (str (or ssh-host "localhost") ":" (or ssh-port 10022))
+                      :ios     (str (or ssh-host "localhost") ":" (or ssh-port 10022))
+                      (str "localhost:0"))
+        cmd         ["socat"
+                     (str "TCP-LISTEN:" tunnel-port ",fork,reuseaddr,bind=0.0.0.0")
+                     (str "TCP:" target)]]
     (log/info "Starting tunnel on port" tunnel-port "for lease" lease-id
-              "-> resource" (:id resource))
-    ;; For now, record the tunnel port. Actual tunnel processes will
-    ;; be platform-specific:
-    ;; - Android: socat TCP-LISTEN:tunnel-port,fork TCP:adb-host:adb-port
-    ;; - iOS: SSH tunnel through container to macOS VM
-    (let [tunnel-info {:port tunnel-port
-                       :resource-id (:id resource)
-                       :started-at (Instant/now)}]
-      (swap! tunnels assoc lease-id tunnel-info)
-      tunnel-info)))
+              "-> resource" (:id resource) "target:" target)
+    (try
+      (let [proc (-> (ProcessBuilder. ^java.util.List cmd)
+                     (.redirectErrorStream true)
+                     (.start))
+            tunnel-info {:port        tunnel-port
+                         :process     proc
+                         :resource-id (:id resource)
+                         :target      target
+                         :started-at  (Instant/now)}]
+        (swap! tunnels assoc lease-id tunnel-info)
+        (log/info "Tunnel started: port" tunnel-port "→" target "pid" (.pid proc))
+        tunnel-info)
+      (catch Exception e
+        (log/error "Failed to start tunnel on port" tunnel-port ":" (.getMessage e))
+        ;; Return info without process — tunnel won't work but lease proceeds
+        (let [tunnel-info {:port        tunnel-port
+                           :resource-id (:id resource)
+                           :target      target
+                           :started-at  (Instant/now)}]
+          (swap! tunnels assoc lease-id tunnel-info)
+          tunnel-info)))))
 
 (defn- stop-tunnel!
-  "Stop and clean up an SSH tunnel for a lease."
+  "Stop and clean up a socat tunnel for a lease."
   [lease-id]
   (when-let [tunnel (get @tunnels lease-id)]
-    (log/info "Stopping tunnel on port" (:port tunnel) "for lease" lease-id)
-    ;; Kill the tunnel process if running
-    (when-let [proc (:process tunnel)]
-      (try (.destroyForcibly proc)
-           (catch Exception e
-             (log/warn "Error stopping tunnel process:" (.getMessage e)))))
+    (log/info "Stopping tunnel on port" (:port tunnel) "for lease" lease-id
+              (when (:target tunnel) (str "→ " (:target tunnel))))
+    ;; Kill the socat process if running
+    (when-let [^Process proc (:process tunnel)]
+      (try
+        (when (.isAlive proc)
+          (.destroyForcibly proc)
+          (log/info "Tunnel process killed: pid" (.pid proc)))
+        (catch Exception e
+          (log/warn "Error stopping tunnel process:" (.getMessage e)))))
     (swap! tunnels dissoc lease-id)))
 
 ;; ---------------------------------------------------------------------------
