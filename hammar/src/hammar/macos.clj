@@ -52,7 +52,7 @@
     (when found
       (.getCanonicalPath (java.io.File. found)))))
 
-(defn- ssh-exec-raw!
+(defn ssh-exec-raw!
   "Execute a command on a macOS VM via SSH (no bootstrap check).
    Returns {:exit int :out string :err string}."
   [resource cmd]

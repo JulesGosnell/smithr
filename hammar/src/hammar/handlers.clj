@@ -33,11 +33,14 @@
   (when inst (str inst)))
 
 (defn- kw->underscore
-  "Convert a keyword map to underscore-string keys for JSON."
+  "Convert a keyword map to underscore-string keys for JSON.
+   Handles non-keyword keys (e.g., integer keys in port maps) gracefully."
   [m]
   (into {}
         (map (fn [[k v]]
-               [(-> (name k) (clojure.string/replace "-" "_") keyword)
+               [(if (keyword? k)
+                  (-> (name k) (clojure.string/replace "-" "_") keyword)
+                  k)
                 (if (map? v) (kw->underscore v) v)]))
         m))
 

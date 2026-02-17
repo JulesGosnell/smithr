@@ -94,25 +94,32 @@
   (let [platform (:platform resource)]
     (case platform
       :android
-      (do
-        ;; Wait briefly for ADB to be ready through the tunnel
-        (Thread/sleep 2000)
+      (let [adb-target (str "localhost:" tunnel-port)]
+        ;; Connect ADB through the tunnel first
+        (log/info "Connecting ADB to" adb-target "for lease" lease-id)
+        (let [{:keys [exit out]} (shell/sh "adb" "connect" adb-target)]
+          (log/info "adb connect:" (clojure.string/trim (str out)))
+          (when-not (zero? exit)
+            (log/warn "adb connect failed, retrying in 3s...")
+            (Thread/sleep 3000)
+            (shell/sh "adb" "connect" adb-target)))
+        ;; Small delay for connection to stabilize
+        (Thread/sleep 1000)
         (into {}
               (for [port server-ports]
-                (let [adb-target (str "localhost:" tunnel-port)]
-                  (try
-                    (log/info "Setting up adb reverse tcp:" port "for lease" lease-id)
-                    (let [{:keys [exit out err]}
-                          (shell/sh "adb" "-s" adb-target "reverse"
-                                    (str "tcp:" port) (str "tcp:" port))]
-                      (if (zero? exit)
-                        (do (log/info "adb reverse tcp:" port "→ tcp:" port "OK")
-                            [port {:status "forwarded" :phone-address (str "localhost:" port)}])
-                        (do (log/warn "adb reverse failed for port" port ":" err)
-                            [port {:status "failed" :error (str err)}])))
-                    (catch Exception e
-                      (log/warn "adb reverse exception for port" port ":" (.getMessage e))
-                      [port {:status "failed" :error (.getMessage e)}]))))))
+                (try
+                  (log/info "Setting up adb reverse tcp:" port "for lease" lease-id)
+                  (let [{:keys [exit out err]}
+                        (shell/sh "adb" "-s" adb-target "reverse"
+                                  (str "tcp:" port) (str "tcp:" port))]
+                    (if (zero? exit)
+                      (do (log/info "adb reverse tcp:" port "→ tcp:" port "OK")
+                          [port {:status "forwarded" :phone-address (str "localhost:" port)}])
+                      (do (log/warn "adb reverse failed for port" port ":" err)
+                          [port {:status "failed" :error (str err)}])))
+                  (catch Exception e
+                    (log/warn "adb reverse exception for port" port ":" (.getMessage e))
+                    [port {:status "failed" :error (.getMessage e)}])))))
 
       :ios
       (let [{:keys [ssh-host ssh-port]} (:connection resource)]
@@ -143,7 +150,8 @@
       (try
         (let [adb-target (str "localhost:" tunnel-port)]
           (shell/sh "adb" "-s" adb-target "reverse" "--remove-all")
-          (log/info "Cleared adb reverse ports"))
+          (shell/sh "adb" "disconnect" adb-target)
+          (log/info "Cleared adb reverse ports and disconnected"))
         (catch Exception e
           (log/warn "Failed to clear adb reverse:" (.getMessage e))))
 
