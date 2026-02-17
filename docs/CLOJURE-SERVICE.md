@@ -211,5 +211,5 @@ cd hammar && npm install && npm run dev
 
 1. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
 2. **Integration test** — full flow: start containers → discover → lease → unlease → GC
-3. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
+3. ~~iOS cascading leases~~ ✅ — leasing an iOS phone now holds its parent macOS VM via build lease
 4. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON

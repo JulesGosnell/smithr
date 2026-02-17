@@ -34,11 +34,13 @@ docker compose -f layers/network.yml -f layers/hammar.yml up -d
 ```
 Verify the container starts, connects to Docker socket, discovers managed containers.
 
-### 4. iOS Cascading Leases
-When leasing an iOS phone (simulator), its parent macOS VM should be automatically
-held. The `smithr.resource.parent` label links child → parent. Implement in `lease.clj`:
-- On acquire of iOS phone: check if parent VM has a lease, if not create a hold-lease
-- On unlease: only unlease parent if no other children are leased
+### 4. iOS Cascading Leases ✅
+Done. When leasing an iOS phone (simulator), the parent macOS VM is automatically
+held via a build lease. The `smithr.resource.parent` label links child → parent.
+- On acquire: creates a "hold:lease-id" build lease on the parent VM
+- On unlease: automatically releases the parent hold lease
+- Parent hold uses build lease type (shared), so other builds can still use the VM
+- Stored as `:parent-lease-id` on the child lease
 
 ### 5. Integration Test
 Full flow with live Docker:

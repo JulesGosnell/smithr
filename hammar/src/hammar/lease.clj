@@ -226,15 +226,36 @@
               (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
               (unlease! lease-id)
               nil)))
-        ;; Phone lease: start tunnel (legacy behavior)
-        (let [tunnel (start-tunnel! lease-id resource)]
+        ;; Phone lease: start tunnel + cascading parent hold
+        (let [tunnel (start-tunnel! lease-id resource)
+              ;; Cascading lease: if resource has a parent, hold it
+              parent-lease-id (when-let [parent-container (:parent resource)]
+                                (let [parent-res (first (filter #(= (:container %) parent-container)
+                                                                (state/resources)))]
+                                  (when parent-res
+                                    (log/info "Cascading: holding parent" (:id parent-res)
+                                              "for iOS lease" lease-id)
+                                    (let [parent-lease (acquire!
+                                                         {:type      (name (:type parent-res))
+                                                          :platform  (name (:platform parent-res))
+                                                          :ttl-seconds ttl-seconds
+                                                          :lessee    (str "hold:" lease-id)
+                                                          :lease-type :build})]
+                                      (when parent-lease
+                                        (:id parent-lease))))))]
           (swap! state/state
-                 assoc-in [:leases lease-id :connection]
-                 {:tunnel-port (:port tunnel)})
+                 (fn [s]
+                   (cond-> s
+                     true (assoc-in [:leases lease-id :connection]
+                                    {:tunnel-port (:port tunnel)})
+                     parent-lease-id (assoc-in [:leases lease-id :parent-lease-id]
+                                               parent-lease-id))))
           (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
                     "lessee:" lessee "ttl:" ttl-seconds "s"
-                    "tunnel-port:" (:port tunnel))
-          (assoc lease :connection {:tunnel-port (:port tunnel)}))))))
+                    "tunnel-port:" (:port tunnel)
+                    (when parent-lease-id (str "parent-hold:" parent-lease-id)))
+          (cond-> (assoc lease :connection {:tunnel-port (:port tunnel)})
+            parent-lease-id (assoc :parent-lease-id parent-lease-id)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
@@ -292,6 +313,10 @@
                     (catch Exception e
                       (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e))))))))))
       (stop-tunnel! lease-id)
+      ;; Cascading: release parent hold lease if present
+      (when-let [parent-lid (:parent-lease-id lease)]
+        (log/info "Cascading: releasing parent hold" parent-lid "for lease" lease-id)
+        (unlease! parent-lid))
       (log/info "Lease unleased:" lease-id
                 (when (= (:lease-type lease) :build)
                   (str (if (:workspace lease)
