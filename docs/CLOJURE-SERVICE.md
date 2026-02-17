@@ -204,13 +204,12 @@ cd hammar && npm install && npm run dev
 - Warm/persistent workspaces — named macOS users that survive unlease
 - macOS user lifecycle via SSH (create, delete, SSH key setup, PATH, locale)
 - GC loop for expired leases
-- Dashboard HTML/CSS ready, ClojureScript components written
+- Dashboard: release build works (`npx shadow-cljs release app` → 426KB)
 - Workspace management (list, get, purge) in API and dashboard
 
 ## What Needs Work
 
-1. **ClojureScript build** — `npm install && npx shadow-cljs release app` not yet run
-2. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
-3. **Integration test** — full flow: start containers → discover → lease → unlease → GC
-4. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
-5. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON
+1. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
+2. **Integration test** — full flow: start containers → discover → lease → unlease → GC
+3. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
+4. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON
