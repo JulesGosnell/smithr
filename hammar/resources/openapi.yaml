@@ -5,7 +5,7 @@ info:
     Manages phones, emulators, macOS VMs, and iOS simulators across
     multiple hosts. Push-based state via Docker events, atomic leasing
     with SSH tunnel provisioning.
-  version: "0.2.0"
+  version: "0.3.0"
   contact:
     name: Smithr
     url: https://github.com/JulesGosnell/smithr
@@ -285,6 +285,10 @@ components:
           type: integer
           description: Number of currently active build leases (macOS VMs only)
           example: 3
+        parent:
+          type: string
+          description: Parent container name (iOS simulators reference their macOS VM)
+          example: smithr-ios-fe
         lease_id:
           type: string
           description: Active lease ID if leased
@@ -387,6 +391,13 @@ components:
           type: string
           description: macOS user account (build leases only)
           example: build-a1b2c3d4
+        parent_lease_id:
+          type: string
+          format: uuid
+          description: |
+            Parent hold lease ID (iOS phone leases only). When an iOS simulator
+            is leased, a build lease is automatically created on the parent macOS
+            VM to prevent GC. This lease is auto-released on unlease.
         connection:
           $ref: "#/components/schemas/Connection"
 
@@ -440,6 +451,8 @@ components:
         resources:
           type: integer
         leases:
+          type: integer
+        workspaces:
           type: integer
 
     Error:

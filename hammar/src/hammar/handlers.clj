@@ -47,7 +47,6 @@
       (update :platform name)
       (update :status name)
       (update :updated-at serialize-instant)
-      (dissoc :parent)
       ;; For macOS VMs: expose slot info, remove internal set
       (cond->
         (:max-slots r) (assoc :active-lease-count (count (:active-leases r #{})))
