@@ -1,5 +1,6 @@
 (ns hammar.ui.dashboard
-  "Dashboard components for the Hammar UI."
+  "Dashboard components for the Hammar UI — nested box visualization.
+   Hosts contain resources, resources contain child resources and leases."
   (:require [reagent.core :as r]
             [hammar.ui.state :as state]
             [hammar.ui.api :as api]))
@@ -21,18 +22,191 @@
         (< delta 3600) (str (int (/ delta 60)) "m " (int (mod delta 60)) "s")
         :else (str (int (/ delta 3600)) "h " (int (/ (mod delta 3600) 60)) "m")))))
 
-(defn- lease-for-resource
-  "Find the lease for a given resource, if any."
-  [resource-id]
-  (some #(when (= (:resource_id %) resource-id) %) @state/leases))
+(defn- countdown-urgency
+  "Return urgency class based on % of TTL remaining."
+  [expires-at ttl-seconds]
+  (when (and expires-at ttl-seconds (pos? ttl-seconds))
+    (let [exp (.getTime (js/Date. expires-at))
+          now (.getTime (js/Date.))
+          remaining (/ (- exp now) 1000)
+          pct (/ remaining ttl-seconds)]
+      (cond
+        (<= pct 0)   "expired"
+        (<= pct 0.1) "urgent"
+        (<= pct 0.5) "warning"
+        :else         "ok"))))
 
 (defn- leases-for-resource
-  "Find all leases for a given resource (for shared VMs with multiple build leases)."
+  "Find all leases for a given resource."
   [resource-id]
   (filter #(= (:resource_id %) resource-id) @state/leases))
 
+(defn- children-of
+  "Find child resources whose :parent matches container name."
+  [container-name all-resources]
+  (filter #(= (:parent %) container-name) all-resources))
+
+(defn- root-resources
+  "Resources that have no parent (top-level within a host)."
+  [all-resources]
+  (filter #(nil? (:parent %)) all-resources))
+
 ;; ---------------------------------------------------------------------------
-;; Components
+;; Tick timer — forces re-render every second for live countdowns
+;; ---------------------------------------------------------------------------
+
+(defonce tick (r/atom 0))
+(defonce tick-interval
+  (js/setInterval #(swap! tick inc) 1000))
+
+;; ---------------------------------------------------------------------------
+;; Lease box (innermost nesting level)
+;; ---------------------------------------------------------------------------
+
+(defn lease-box [lease]
+  (let [_ @tick  ;; subscribe to tick for live countdown
+        remaining (time-remaining (:expires_at lease))
+        urgency (countdown-urgency (:expires_at lease) (:ttl_seconds lease))]
+    [:div.nested-box.lease-box {:class urgency}
+     [:div.box-header
+      [:span.box-title
+       (or (:macos_user lease) (subs (:id lease) 0 8))]
+      [:span.box-meta (:lessee lease)]
+      (when remaining
+        [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
+     [:div.box-controls
+      [:button.btn.release {:on-click #(api/unlease! (:id lease))} "Unlease"]]]))
+
+;; ---------------------------------------------------------------------------
+;; Workspace box (shown inside VM resource)
+;; ---------------------------------------------------------------------------
+
+(defn workspace-box [ws]
+  (let [_ @tick
+        leased? (= (:status ws) "leased")
+        lease (when leased?
+                (some #(when (= (:id %) (:lease_id ws)) %) @state/leases))
+        remaining (when lease (time-remaining (:expires_at lease)))
+        urgency (when lease (countdown-urgency (:expires_at lease) (:ttl_seconds lease)))]
+    [:div.nested-box.workspace-box {:class (if leased? "leased" "idle")}
+     [:div.box-header
+      [:span.box-title (str "\uD83D\uDCC1 " (:name ws))]
+      [:span.box-meta (if leased? (str (:lessee lease)) "idle")]
+      (when remaining
+        [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
+     [:div.box-controls
+      (if leased?
+        [:button.btn.release {:on-click #(api/unlease! (:id lease))} "Unlease"]
+        [:button.btn.purge {:on-click #(api/purge-workspace! (:name ws))} "Purge"])]]))
+
+;; ---------------------------------------------------------------------------
+;; Resource box (contains child resources + leases)
+;; ---------------------------------------------------------------------------
+
+(defn resource-box [resource all-resources]
+  (let [_ @tick
+        status (:status resource)
+        macos-vm? (= (:platform resource) "macos")
+        max-slots (:max_slots resource)
+        active-count (:active_lease_count resource 0)
+        children (children-of (:container resource) all-resources)
+        leases (leases-for-resource (:id resource))
+        connection (:connection resource)
+        vnc-port (:vnc_port connection)
+        ;; Find workspaces for this resource
+        ws-list (filter #(= (:resource_id %) (:id resource)) @state/workspaces)
+        ;; For exclusive phone lease
+        phone-lease (when (= status "leased")
+                      (first leases))
+        remaining (when phone-lease (time-remaining (:expires_at phone-lease)))
+        urgency (when phone-lease (countdown-urgency (:expires_at phone-lease) (:ttl_seconds phone-lease)))]
+    [:div.nested-box.resource-box {:class status
+                                   :data-resource-id (:id resource)
+                                   :data-status status
+                                   :data-platform (:platform resource)}
+     [:div.box-header
+      [:span.box-title (:container resource)]
+      [:span.box-meta
+       (:type resource) " · " (:platform resource)
+       (when max-slots (str " · " active-count "/" max-slots " slots"))]
+      [:span.box-status {:class status} status]
+      (when remaining
+        [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
+
+     ;; Phone lease info (exclusive)
+     (when phone-lease
+       [:div.box-lease-info
+        [:span.lessee (:lessee phone-lease)]])
+
+     ;; Nested children: child resources (e.g., iOS sim inside macOS VM)
+     (when (seq children)
+       [:div.nested-children
+        (for [child (sort-by :id children)]
+          ^{:key (:id child)} [resource-box child all-resources])])
+
+     ;; Nested children: build leases (shared VM)
+     (when (and (= status "shared") (seq leases))
+       [:div.nested-children
+        (for [l (sort-by :id leases)]
+          ^{:key (:id l)} [lease-box l])])
+
+     ;; Nested children: workspaces
+     (when (seq ws-list)
+       [:div.nested-children
+        (for [ws (sort-by :name ws-list)]
+          ^{:key (:name ws)} [workspace-box ws])])
+
+     ;; Controls
+     [:div.box-controls
+      (case status
+        "warm" (list
+                (when macos-vm?
+                  ^{:key "build"} [:button.btn.lease
+                                   {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "build")}
+                                   "Build Lease"])
+                ^{:key "phone"} [:button.btn.lease
+                                 {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "phone")
+                                  :style (when macos-vm? {:background "var(--orange-bg)"
+                                                          :border-color "var(--orange)"
+                                                          :color "var(--orange)"})}
+                                 "Phone Lease"])
+        "shared" (list
+                  ^{:key "build"} [:button.btn.lease
+                                   {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "build")}
+                                   "Add Build"])
+        "leased" (when phone-lease
+                   [:button.btn.release
+                    {:on-click #(api/unlease! (:id phone-lease))} "Unlease"])
+        nil)
+      (when vnc-port
+        [:a.btn.vnc {:href (str "vnc://localhost:" vnc-port) :target "_blank"
+                     :style {:text-decoration "none"}} "VNC"])]]))
+
+;; ---------------------------------------------------------------------------
+;; Host box (outermost level)
+;; ---------------------------------------------------------------------------
+
+(defn host-box [host-label all-resources]
+  (let [host-info (some #(when (= (:label %) host-label) %) @state/hosts)
+        host-resources (filter #(= (:host %) host-label) all-resources)
+        roots (root-resources host-resources)
+        connected? (:connected host-info true)]
+    [:div.nested-box.host-box {:class (if connected? "connected" "disconnected")
+                               :data-host host-label}
+     [:div.box-header
+      [:span.box-title host-label]
+      [:span.box-meta (str (count host-resources) " resource"
+                           (when (not= 1 (count host-resources)) "s"))]
+      [:span.box-status {:class (if connected? "connected" "disconnected")}
+       (if connected? "connected" "disconnected")]]
+     (if (seq roots)
+       [:div.nested-children
+        (for [r (sort-by :id roots)]
+          ^{:key (:id r)} [resource-box r all-resources])]
+       [:div.empty "No resources on this host"])]))
+
+;; ---------------------------------------------------------------------------
+;; Top-level components
 ;; ---------------------------------------------------------------------------
 
 (defn header []
@@ -41,12 +215,15 @@
      [:h1 "SMITHR"]
      [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
       (if h
-        (str (:status h) " | " (:hosts h) " hosts | "
-             (:resources h) " resources | " (:leases h) " leases")
+        (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "
+             (:resources h) " resources \u2502 " (:leases h) " leases"
+             (when (pos? (:workspaces h 0))
+               (str " \u2502 " (:workspaces h) " workspaces")))
         "connecting...")]]))
 
 (defn summary-bar []
-  (let [resources @state/resources
+  (let [_ @tick
+        resources @state/resources
         total (count resources)
         warm (count (filter #(= (:status %) "warm") resources))
         leased (count (filter #(= (:status %) "leased") resources))
@@ -55,160 +232,24 @@
     [:div.summary
      [:div.stat [:span.value total] [:span.label "total"]]
      [:div.stat [:span.value {:style {:color "var(--green)"}} warm] [:span.label "available"]]
-     [:div.stat [:span.value {:style {:color "var(--red)"}} leased] [:span.label "leased"]]
+     [:div.stat [:span.value {:style {:color "var(--orange)"}} leased] [:span.label "leased"]]
      [:div.stat [:span.value {:style {:color "var(--yellow)"}} booting] [:span.label "booting"]]
-     [:div.stat [:span.value {:style {:color "var(--blue, #4a9eff)"}} shared] [:span.label "shared"]]]))
-
-(defn resource-card [resource]
-  (let [status (:status resource)
-        lease (when (= status "leased") (lease-for-resource (:id resource)))
-        active-leases (when (= status "shared") (leases-for-resource (:id resource)))
-        connection (:connection resource)
-        vnc-port (:vnc_port connection)
-        macos-vm? (= (:platform resource) "macos")
-        max-slots (:max_slots resource)
-        active-count (:active_lease_count resource 0)]
-    [:div.resource-card {:class status}
-     [:div.resource-id (:id resource)]
-     [:div.resource-meta
-      [:span.badge (:type resource)]
-      [:span.badge (:platform resource)]
-      [:span.badge (:container resource)]
-      ;; Show slot usage for macOS VMs
-      (when max-slots
-        [:span.badge {:style {:background "var(--blue, #4a9eff)"
-                              :color "white"}}
-         (str active-count "/" max-slots " builds")])]
-     ;; Show single lease info for phone leases
-     (when lease
-       [:div.lease-info
-        [:span.lessee (:lessee lease)]
-        [:span " | "]
-        [:span.ttl (time-remaining (:expires_at lease))]])
-     ;; Show multiple build lease info for shared VMs
-     (when (seq active-leases)
-       [:div.lease-info
-        (for [l active-leases]
-          ^{:key (:id l)}
-          [:div {:style {:font-size "0.8rem" :margin-top "0.25rem"}}
-           [:span.lessee (:lessee l)]
-           (when (:macos_user l) [:span " (" (:macos_user l) ")"])
-           [:span " | "]
-           [:span.ttl (time-remaining (:expires_at l))]])])
-     [:div {:style {:margin-top "0.5rem" :display "flex" :gap "0.5rem" :flex-wrap "wrap"}}
-      (case status
-        "warm" (if macos-vm?
-                 ;; macOS VMs get two lease buttons
-                 (list
-                  ^{:key "build"} [:button.btn.lease
-                                   {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "build")}
-                                   "Build Lease"]
-                  ^{:key "phone"} [:button.btn.lease
-                                   {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "phone")
-                                    :style {:background "var(--orange, #f59e0b)"}}
-                                   "Phone Lease"])
-                 ;; Non-macOS: single lease button
-                 [:button.btn.lease
-                  {:on-click #(api/acquire-lease! (:type resource) (:platform resource))}
-                  "Lease"])
-        "shared" (list
-                  ;; Can add more build leases to shared VMs
-                  ^{:key "build"} [:button.btn.lease
-                                   {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "build")}
-                                   "Add Build"]
-                  ;; Unlease buttons for each active lease
-                  (for [l active-leases]
-                    ^{:key (str "rel-" (:id l))}
-                    [:button.btn.release
-                     {:on-click #(api/unlease! (:id l))
-                      :style {:font-size "0.75rem"}}
-                     (str "Unlease " (or (:macos_user l) (subs (:id l) 0 8)))]))
-        "leased" (when lease
-                   [:button.btn.release
-                    {:on-click #(api/unlease! (:id lease))}
-                    "Unlease"])
-        nil)
-      (when vnc-port
-        [:a.btn.vnc {:href (str "vnc://localhost:" vnc-port) :target "_blank"
-                     :style {:text-decoration "none"}} "VNC"])]]))
-
-(defn host-panel [host-label]
-  (let [host-info (some #(when (= (:label %) host-label) %) @state/hosts)
-        resources (filter #(= (:host %) host-label) @state/resources)
-        connected? (:connected host-info true)]
-    [:div.host-panel
-     [:div.host-header
-      [:h2 host-label]
-      [:span.host-status {:class (if connected? "connected" "disconnected")}
-       (if connected? "connected" "disconnected")]]
-     (if (seq resources)
-       [:div.resources
-        (for [r (sort-by :id resources)]
-          ^{:key (:id r)} [resource-card r])]
-       [:div.empty "No resources on this host"])]))
+     [:div.stat [:span.value {:style {:color "var(--blue)"}} shared] [:span.label "shared"]]]))
 
 (defn error-banner []
   (when-let [err @state/error]
-    [:div {:style {:background "var(--red-bg)"
-                   :color "var(--red)"
-                   :padding "0.5rem 1rem"
-                   :text-align "center"
-                   :font-size "0.85rem"}}
-     err]))
-
-(defn workspace-card [ws]
-  (let [status (:status ws)
-        leased? (= status "leased")]
-    [:div.resource-card {:class (if leased? "shared" "warm")}
-     [:div.resource-id (:name ws)]
-     [:div.resource-meta
-      [:span.badge "workspace"]
-      [:span.badge (:macos_user ws)]
-      [:span.badge {:style {:background (if leased? "var(--red)" "var(--green)")
-                            :color "white"}}
-       status]]
-     (when leased?
-       (when-let [lease (some #(when (= (:id %) (:lease_id ws)) %) @state/leases)]
-         [:div.lease-info
-          [:span.lessee (:lessee lease)]
-          [:span " | "]
-          [:span.ttl (time-remaining (:expires_at lease))]]))
-     [:div {:style {:margin-top "0.5rem" :display "flex" :gap "0.5rem"}}
-      (when-not leased?
-        [:button.btn.release
-         {:on-click #(api/purge-workspace! (:name ws))
-          :style {:background "var(--red)" :color "white" :font-size "0.75rem"}}
-         "Purge"])]]))
-
-(defn workspace-panel []
-  (let [wss @state/workspaces]
-    (when (seq wss)
-      [:div.host-panel
-       [:div.host-header
-        [:h2 "Workspaces"]
-        [:span.host-status.connected (str (count wss) " workspace" (when (> (count wss) 1) "s"))]]
-       [:div.resources
-        (for [ws (sort-by :name wss)]
-          ^{:key (:name ws)} [workspace-card ws])]])))
+    [:div.error-banner err]))
 
 (defn dashboard []
-  (let [host-labels (->> @state/resources
-                         (map :host)
-                         distinct
-                         sort)
-        ;; Also include hosts that have no resources
-        all-hosts (->> @state/hosts
-                       (map :label)
-                       (concat host-labels)
-                       distinct
-                       sort)]
+  (let [all-resources @state/resources
+        host-labels (->> all-resources (map :host) distinct sort)
+        all-hosts (->> @state/hosts (map :label) (concat host-labels) distinct sort)]
     [:div
      [header]
      [error-banner]
      [summary-bar]
-     [workspace-panel]
      [:div.hosts
       (if (seq all-hosts)
         (for [h all-hosts]
-          ^{:key h} [host-panel h])
+          ^{:key h} [host-box h all-resources])
         [:div.empty "No hosts connected. Waiting for Docker events..."])]]))

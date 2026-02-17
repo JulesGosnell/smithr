@@ -4,7 +4,8 @@
    for isolated concurrent build access."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [hammar.config :as config]))
 
 (defn build-username
   "Generate a macOS username for a build lease.
@@ -12,13 +13,28 @@
   [lease-id]
   (str "build-" (subs lease-id 0 (min 8 (count lease-id)))))
 
+(defonce ^:private cached-ssh-key-path
+  (delay
+    (let [configured (get-in (config/load-config) [:tunnel :key-path])
+          candidates (remove nil?
+                       [configured
+                        "layers/scripts/ios/ssh/macos-ssh-key"
+                        "/ssh-key/macos-ssh-key"])
+          found (or (first (filter #(.exists (java.io.File. %)) candidates))
+                    (first candidates))]
+      (log/info "Resolved SSH key path:" found)
+      found)))
+
+(defn- ssh-key-path [] @cached-ssh-key-path)
+
 (defn- ssh-exec!
   "Execute a command on a macOS VM via SSH.
    Returns {:exit int :out string :err string}."
   [resource cmd]
   (let [{:keys [ssh-host ssh-port]} (:connection resource)
+        key-path (ssh-key-path)
         result (sh "ssh"
-                   "-i" "/ssh-key/macos-ssh-key"
+                   "-i" key-path
                    "-o" "StrictHostKeyChecking=no"
                    "-o" "ConnectTimeout=10"
                    "-p" (str (or ssh-port 10022))

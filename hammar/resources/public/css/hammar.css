@@ -1,4 +1,4 @@
-/* Smithr Dashboard Styles */
+/* Smithr Dashboard — Nested Box Layout */
 
 :root {
   --bg: #0f1117;
@@ -12,9 +12,12 @@
   --red-bg: #2a0a0a;
   --yellow: #eab308;
   --yellow-bg: #2a2a0a;
+  --orange: #f59e0b;
+  --orange-bg: #2a1f0a;
   --grey: #6b7280;
   --grey-bg: #1f2028;
   --blue: #3b82f6;
+  --blue-bg: #0a1a2a;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -59,6 +62,15 @@ body {
 .header .status.connected { color: var(--green); }
 .header .status.disconnected { color: var(--red); }
 
+/* Error Banner */
+.error-banner {
+  background: var(--red-bg);
+  color: var(--red);
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
 /* Summary Bar */
 .summary {
   display: flex;
@@ -85,7 +97,11 @@ body {
   letter-spacing: 0.05em;
 }
 
-/* Host Panels */
+/* ===================================================================
+   Nested Box System
+   Host → Resource → Child Resource / Lease / Workspace
+   =================================================================== */
+
 .hosts {
   padding: 1.5rem;
   display: flex;
@@ -93,116 +109,214 @@ body {
   gap: 1.5rem;
 }
 
-.host-panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
+/* Base nested box */
+.nested-box {
+  border: 2px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
 
-.host-panel .host-header {
+.nested-box .box-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
   background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  flex-wrap: wrap;
 }
 
-.host-panel .host-header h2 {
-  font-size: 1rem;
+.nested-box .box-title {
   font-weight: 600;
+  font-size: 0.95rem;
 }
 
-.host-panel .host-header .host-status {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+.nested-box .box-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.nested-box .box-status {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+
+/* Countdown timer */
+.countdown {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0.1rem 0.5rem;
   border-radius: 4px;
 }
 
-.host-status.connected {
+.countdown.ok { color: var(--green); background: var(--green-bg); }
+.countdown.warning { color: var(--orange); background: var(--orange-bg); }
+.countdown.urgent { color: var(--red); background: var(--red-bg); animation: pulse 1s ease-in-out infinite; }
+.countdown.expired { color: var(--grey); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Nested children container */
+.nested-children {
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Host-level children: allow side-by-side for top-level resources */
+.host-box > .nested-children {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.host-box > .nested-children > .resource-box {
+  flex: 1 1 300px;
+  min-width: 280px;
+}
+
+/* ===================================================================
+   Host Box (Level 1 — outermost)
+   =================================================================== */
+
+.host-box {
+  background: var(--surface);
+}
+
+.host-box.connected {
+  border-color: var(--border);
+}
+
+.host-box.disconnected {
+  border-color: var(--red);
+  opacity: 0.7;
+}
+
+.host-box > .box-header {
+  padding: 0.75rem 1rem;
+}
+
+.host-box > .box-header .box-title {
+  font-size: 1.1rem;
+}
+
+.host-box .box-status.connected {
   background: var(--green-bg);
   color: var(--green);
 }
 
-.host-status.disconnected {
+.host-box .box-status.disconnected {
   background: var(--red-bg);
   color: var(--red);
 }
 
-/* Resource Cards */
-.resources {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 0.75rem;
-  padding: 1rem;
+/* ===================================================================
+   Resource Box (Level 2)
+   =================================================================== */
+
+.resource-box {
+  background: rgba(0,0,0,0.15);
 }
 
-.resource-card {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.resource-card.warm {
+.resource-box.warm {
   border-color: var(--green);
-  background: var(--green-bg);
 }
 
-.resource-card.leased {
-  border-color: var(--red);
-  background: var(--red-bg);
+.resource-box.leased {
+  border-color: var(--orange);
 }
 
-.resource-card.booting {
-  border-color: var(--yellow);
-  background: var(--yellow-bg);
-}
-
-.resource-card.shared {
+.resource-box.shared {
   border-color: var(--blue);
-  background: rgba(59, 130, 246, 0.08);
 }
 
-.resource-card.dead {
+.resource-box.booting {
+  border-color: var(--yellow);
+}
+
+.resource-box.dead {
   border-color: var(--grey);
-  background: var(--grey-bg);
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
-.resource-card .resource-id {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
+.resource-box .box-status.warm { background: var(--green-bg); color: var(--green); }
+.resource-box .box-status.leased { background: var(--orange-bg); color: var(--orange); }
+.resource-box .box-status.shared { background: var(--blue-bg); color: var(--blue); }
+.resource-box .box-status.booting { background: var(--yellow-bg); color: var(--yellow); }
+.resource-box .box-status.dead { background: var(--grey-bg); color: var(--grey); }
 
-.resource-card .resource-meta {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  display: flex;
-  gap: 0.5rem;
-}
-
-.resource-card .resource-meta .badge {
-  padding: 0.1rem 0.4rem;
-  border-radius: 3px;
-  background: rgba(255,255,255,0.06);
-}
-
-.resource-card .lease-info {
+.resource-box .box-lease-info {
+  padding: 0.25rem 1rem;
   font-size: 0.8rem;
-  margin-top: 0.25rem;
 }
 
-.resource-card .lease-info .lessee {
-  color: var(--red);
+.resource-box .box-lease-info .lessee {
+  color: var(--orange);
   font-weight: 500;
 }
 
-.resource-card .lease-info .ttl {
-  color: var(--text-dim);
+/* ===================================================================
+   Lease Box (Level 3 — inside shared VMs)
+   =================================================================== */
+
+.lease-box {
+  background: rgba(0,0,0,0.2);
+  border-color: var(--orange);
+}
+
+.lease-box.urgent {
+  border-color: var(--red);
+}
+
+.lease-box .box-header .box-title {
+  font-size: 0.85rem;
+}
+
+/* ===================================================================
+   Workspace Box (Level 3 — inside VMs)
+   =================================================================== */
+
+.workspace-box {
+  background: rgba(0,0,0,0.2);
+}
+
+.workspace-box.idle {
+  border-color: var(--green);
+  border-style: dashed;
+}
+
+.workspace-box.leased {
+  border-color: var(--blue);
+}
+
+.workspace-box .box-header .box-title {
+  font-size: 0.85rem;
+}
+
+/* ===================================================================
+   Controls (buttons at bottom of boxes)
+   =================================================================== */
+
+.box-controls {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem 0.75rem;
+  flex-wrap: wrap;
+}
+
+.box-controls:empty {
+  display: none;
 }
 
 /* Buttons */
@@ -215,7 +329,7 @@ body {
   color: var(--text);
   cursor: pointer;
   font-size: 0.8rem;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .btn:hover {
@@ -227,15 +341,33 @@ body {
   color: var(--green);
 }
 
+.btn.lease:hover {
+  background: var(--green-bg);
+}
+
 .btn.release,
 .btn.unlease {
   border-color: var(--red);
   color: var(--red);
 }
 
+.btn.release:hover {
+  background: var(--red-bg);
+}
+
+.btn.purge {
+  border-color: var(--red);
+  color: var(--red);
+  font-size: 0.75rem;
+}
+
 .btn.vnc {
   border-color: var(--blue);
   color: var(--blue);
+}
+
+.btn.vnc:hover {
+  background: var(--blue-bg);
 }
 
 /* Empty state */
