@@ -80,6 +80,8 @@ Events are filtered by label `smithr.managed=true`.
 
 ## Lease Lifecycle
 
+### Phone Lease (exclusive)
+
 ```
 Client: POST /api/leases {type: "phone", platform: "android", ttl_seconds: 300}
   ↓
@@ -97,6 +99,45 @@ unlease! → swap! state atom:
   1. Mark resource :warm again
   2. Remove lease entry
   3. .destroyForcibly on tunnel process → client disconnected
+```
+
+### Build Lease (shared, macOS VMs only)
+
+```
+Client: POST /api/leases {type: "vm", platform: "macos", lease_type: "build"}
+  ↓
+acquire! → swap! state atom:
+  1. Find :warm or :shared VM with available slots (count < max-slots)
+  2. Add lease-id to resource's :active-leases set
+  3. Mark :shared (or stay :shared)
+  4. Create macOS user account via SSH (dscl + SSH key + profile)
+  5. Return lease with SSH connection info (user, host, port, home dir)
+  ↓
+Client SSHes as build user, runs build
+  ↓
+unlease! → swap! state atom:
+  1. Remove lease-id from :active-leases
+  2. If active-leases now empty → mark :warm, else stay :shared
+  3. Delete macOS user + home dir (unless workspace lease)
+```
+
+### Workspace Lease (persistent build environment)
+
+```
+Client: POST /api/leases {type: "vm", platform: "macos", workspace: "artha-build-1"}
+  ↓
+acquire!:
+  1. Check workspace name valid, not already leased
+  2. Ensure macOS user exists (create if new, reuse if warm)
+  3. Same slot logic as build lease
+  4. Register workspace in :workspaces state
+  ↓
+unlease!:
+  1. Same slot cleanup as build lease
+  2. Mark workspace :idle (do NOT delete user/home dir)
+  ↓
+Client: DELETE /api/workspaces/artha-build-1  (explicit purge)
+  → Deletes macOS user + home dir permanently
 ```
 
 ## SSH Tunnel Design
