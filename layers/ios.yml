@@ -60,6 +60,9 @@ services:
       smithr.resource.platform: "ios"
       smithr.resource.pool: "ios"
       smithr.resource.parent: "${SMITHR_PREFIX:-smithr}-xcode-${SMITHR_XCODE_RUNE:-fe}"
+      # iOS sidecar doesn't run SSH — route to the macOS VM
+      smithr.resource.connect-host: "${SMITHR_MACOS_IP:-10.21.0.40}"
+      smithr.resource.connect-port: "10022"
     healthcheck:
       # Check that Simulator has a booted device
       test: ["CMD-SHELL", "ssh -i /tmp/macos-ssh-key -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes -p $${SSH_PORT} $${SSH_USER}@$${SSH_HOST} \"xcrun simctl list devices booted 2>/dev/null | grep -qF '$${IOS_DEVICE} ('\""]

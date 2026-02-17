@@ -80,11 +80,17 @@
                                        :adb-port (if (and remote? (host-port-for 5555))
                                                    (host-port-for 5555) 5555)}
                                 (host-port-for 5900) (assoc :vnc-port (host-port-for 5900)))
-                     :ios (let [ssh-port (if (and remote? (host-port-for 10022))
-                                           (host-port-for 10022) 10022)]
-                            {:ssh-host (if (and remote? (host-port-for 10022))
-                                         host-address ip)
-                             :ssh-port ssh-port})
+                     :ios (let [;; iOS sidecar doesn't run SSH — use connect labels pointing to macOS VM
+                               connect-host (get labels "smithr.resource.connect-host")
+                               connect-port (some-> (get labels "smithr.resource.connect-port")
+                                                    Integer/parseInt)
+                               ssh-host (or connect-host
+                                            (if (and remote? (host-port-for 10022))
+                                              host-address ip))
+                               ssh-port (or connect-port
+                                            (if (and remote? (host-port-for 10022))
+                                              (host-port-for 10022) 10022))]
+                            {:ssh-host ssh-host :ssh-port ssh-port})
                      :macos (cond-> {:ssh-host (if (and remote? (host-port-for 10022))
                                                  host-address ip)
                                      :ssh-port (if (and remote? (host-port-for 10022))

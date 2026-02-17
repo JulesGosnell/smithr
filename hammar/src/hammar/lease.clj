@@ -19,6 +19,18 @@
 (defonce ^:private next-tunnel-port
   (atom 17000))
 
+(defn cleanup-stale-tunnels!
+  "Kill orphaned socat tunnel processes from previous Hammar sessions.
+   Called on startup before accepting new leases."
+  []
+  (try
+    (let [{:keys [exit out]} (shell/sh "pkill" "-f" "socat TCP-LISTEN:170")]
+      (if (zero? exit)
+        (log/info "Cleaned up stale socat tunnel processes")
+        (log/debug "No stale socat tunnels to clean up")))
+    (catch Exception e
+      (log/debug "No stale tunnels (pkill:" (.getMessage e) ")"))))
+
 (defn- allocate-tunnel-port!
   "Allocate the next available tunnel port."
   []
@@ -28,15 +40,26 @@
 (defn- start-tunnel!
   "Start a socat tunnel for a lease. Returns tunnel info map.
    Android: forwards tunnel-port → adb-host:adb-port
-   macOS:   forwards tunnel-port → ssh-host:ssh-port"
+   macOS:   forwards tunnel-port → ssh-host:ssh-port
+   iOS:     forwards tunnel-port → parent macOS VM's ssh-host:ssh-port"
   [lease-id resource]
   (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
         tunnel-port (allocate-tunnel-port!)
         platform    (:platform resource)
+        ;; iOS sidecar doesn't run SSH — route to parent macOS VM
+        parent-conn (when (and (= platform :ios) (:parent resource))
+                      (let [parent (first (filter #(= (:container %) (:parent resource))
+                                                  (state/resources)))]
+                        (when parent
+                          (log/info "iOS tunnel: routing to parent" (:id parent)
+                                    "at" (get-in parent [:connection :ssh-host]))
+                          (:connection parent))))
         target      (case platform
                       :android (str (or adb-host "localhost") ":" (or adb-port 5555))
                       :macos   (str (or ssh-host "localhost") ":" (or ssh-port 10022))
-                      :ios     (str (or ssh-host "localhost") ":" (or ssh-port 10022))
+                      :ios     (let [conn (or parent-conn (:connection resource))]
+                                 (str (or (:ssh-host conn) "localhost") ":"
+                                      (or (:ssh-port conn) 10022)))
                       (str "localhost:0"))
         cmd         ["socat"
                      (str "TCP-LISTEN:" tunnel-port ",fork,reuseaddr,bind=0.0.0.0")
