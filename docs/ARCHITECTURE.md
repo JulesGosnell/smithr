@@ -294,6 +294,52 @@ smithr phone status
 - Multiple phone models per VM (iPhone 16 + iPhone 15 + iPad Pro)
 - For duplicate models, schedule across different VMs
 
+### macOS VM Lease Types
+
+macOS VMs support two concurrent access modes:
+
+1. **Phone leases** (exclusive) — One lease locks the entire VM. Used for iOS Simulator
+   testing where the Simulator runs per-user. Status: `:leased`.
+
+2. **Build leases** (shared) — Multiple concurrent builds per VM (up to `max_slots`,
+   default 10). Each build gets its own macOS user account, SSH tunnel, and home
+   directory. Status: `:shared`.
+
+Status transitions:
+```
+  :warm ──phone──▶ :leased    (exclusive, no other leases allowed)
+  :warm ──build──▶ :shared    (concurrent, more builds can join)
+  :shared ─build──▶ :shared   (up to max_slots)
+  :shared ─last unlease──▶ :warm  (all builds done)
+```
+
+Build users are created via `dscl` over SSH. Each gets:
+- macOS user account (`build-<8chars>` or workspace name)
+- Home directory at `/Users/<username>`
+- SSH key auth (copied from smithr admin)
+- `com.apple.access_ssh` group membership
+- Shell profile with PATH and locale
+
+### Workspaces (Warm Builds)
+
+Workspaces are named persistent build environments that survive unlease:
+
+```bash
+# Acquire a workspace lease — user account persists after unlease
+POST /api/leases {"type":"vm","platform":"macos","workspace":"artha-build-1"}
+
+# Unlease — workspace marked idle, user/home dir preserved
+DELETE /api/leases/{id}
+
+# Next acquire reuses the same user, avoiding git clone + npm install
+POST /api/leases {"type":"vm","platform":"macos","workspace":"artha-build-1"}
+
+# Purge when no longer needed — deletes user and home dir
+DELETE /api/workspaces/artha-build-1
+```
+
+One lease per workspace at a time. Workspace names must match `^[a-zA-Z][a-zA-Z0-9-]{2,30}$`.
+
 ### State Management
 
 **Clojure control plane** (see [CLOJURE-SERVICE.md](CLOJURE-SERVICE.md)):

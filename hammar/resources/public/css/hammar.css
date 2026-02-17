@@ -162,6 +162,11 @@ body {
   background: var(--yellow-bg);
 }
 
+.resource-card.shared {
+  border-color: var(--blue);
+  background: rgba(59, 130, 246, 0.08);
+}
+
 .resource-card.dead {
   border-color: var(--grey);
   background: var(--grey-bg);
@@ -222,9 +227,15 @@ body {
   color: var(--green);
 }
 
-.btn.release {
+.btn.release,
+.btn.unlease {
   border-color: var(--red);
   color: var(--red);
+}
+
+.btn.vnc {
+  border-color: var(--blue);
+  color: var(--blue);
 }
 
 /* Empty state */
