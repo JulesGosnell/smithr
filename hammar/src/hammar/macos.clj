@@ -45,17 +45,17 @@
   (let [result (ssh-exec! resource (str "dscl . -read /Users/" username " UniqueID 2>/dev/null"))]
     (= 0 (:exit result))))
 
-(defn create-user!
-  "Create a macOS user account for a build lease.
+(defn- create-macos-user!
+  "Create a macOS user account with the given username and real name.
+   Handles dscl user creation, home dir, SSH key auth, access group, and shell profile.
    Returns {:macos-user string :home-dir string} on success, nil on failure."
-  [resource lease-id]
-  (let [username (build-username lease-id)
-        home-dir (str "/Users/" username)
+  [resource username real-name]
+  (let [home-dir (str "/Users/" username)
         uid (next-uid resource)]
     (log/info "Creating macOS user" username "uid:" uid "on" (:id resource))
     (let [cmds [(str "sudo dscl . -create /Users/" username)
                 (str "sudo dscl . -create /Users/" username " UserShell /bin/bash")
-                (str "sudo dscl . -create /Users/" username " RealName 'Build " (subs lease-id 0 (min 8 (count lease-id))) "'")
+                (str "sudo dscl . -create /Users/" username " RealName '" real-name "'")
                 (str "sudo dscl . -create /Users/" username " UniqueID " uid)
                 (str "sudo dscl . -create /Users/" username " PrimaryGroupID 20")
                 (str "sudo dscl . -create /Users/" username " NFSHomeDirectory " home-dir)
@@ -83,39 +83,18 @@
                      "on" (:id resource) ":" (:err result))
           nil)))))
 
+(defn create-user!
+  "Create a macOS user account for a build lease.
+   Returns {:macos-user string :home-dir string} on success, nil on failure."
+  [resource lease-id]
+  (let [username (build-username lease-id)]
+    (create-macos-user! resource username (str "Build " (subs lease-id 0 (min 8 (count lease-id)))))))
+
 (defn create-named-user!
   "Create a macOS user with a specific username (for workspaces).
    Returns {:macos-user string :home-dir string} on success, nil on failure."
   [resource username]
-  (let [home-dir (str "/Users/" username)
-        uid (next-uid resource)]
-    (log/info "Creating workspace user" username "uid:" uid "on" (:id resource))
-    (let [cmds [(str "sudo dscl . -create /Users/" username)
-                (str "sudo dscl . -create /Users/" username " UserShell /bin/bash")
-                (str "sudo dscl . -create /Users/" username " RealName 'Workspace " username "'")
-                (str "sudo dscl . -create /Users/" username " UniqueID " uid)
-                (str "sudo dscl . -create /Users/" username " PrimaryGroupID 20")
-                (str "sudo dscl . -create /Users/" username " NFSHomeDirectory " home-dir)
-                (str "sudo createhomedir -c -u " username)
-                (str "sudo dscl . -append /Groups/com.apple.access_ssh GroupMembership " username)
-                (str "sudo mkdir -p " home-dir "/.ssh")
-                (str "sudo cp /Users/smithr/.ssh/authorized_keys " home-dir "/.ssh/")
-                (str "sudo chown -R " username ":staff " home-dir "/.ssh")
-                (str "sudo chmod 700 " home-dir "/.ssh")
-                (str "sudo chmod 600 " home-dir "/.ssh/authorized_keys")
-                (str "sudo bash -c 'printf \"eval \\$(/usr/libexec/path_helper -s)\\nexport LANG=en_US.UTF-8\\nexport LC_ALL=en_US.UTF-8\\n\" > " home-dir "/.bashrc'")
-                (str "sudo bash -c 'echo \"source ~/.bashrc\" > " home-dir "/.bash_profile'")
-                (str "sudo chown " username ":staff " home-dir "/.bashrc " home-dir "/.bash_profile")]
-          combined (str/join " && " cmds)
-          result (ssh-exec! resource combined)]
-      (if (= 0 (:exit result))
-        (do
-          (log/info "Created workspace user" username "on" (:id resource))
-          {:macos-user username :home-dir home-dir})
-        (do
-          (log/error "Failed to create workspace user" username
-                     "on" (:id resource) ":" (:err result))
-          nil)))))
+  (create-macos-user! resource username (str "Workspace " username)))
 
 (defn ensure-user!
   "Ensure a macOS user exists (for warm/workspace builds).

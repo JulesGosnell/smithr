@@ -158,10 +158,29 @@ else
     log "Keeping claude user (use --remove-claude to remove)"
 fi
 
+# --- Step 8: Install build-user management scripts ---
+log "Installing build-user management scripts..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/build-user"
+
+ssh_as smithr "mkdir -p /Users/smithr/bin"
+
+for script in create-build-user.sh delete-build-user.sh list-build-users.sh; do
+    if [[ -f "$SCRIPT_DIR/$script" ]]; then
+        scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -P "$SSH_PORT" \
+            "$SCRIPT_DIR/$script" "smithr@${SSH_HOST}:/Users/smithr/bin/$script"
+        ssh_as smithr "chmod +x /Users/smithr/bin/$script"
+        log "  Installed $script"
+    else
+        log "  WARNING: $script not found at $SCRIPT_DIR"
+    fi
+done
+log "Build-user scripts installed at /Users/smithr/bin/"
+
 log ""
 log "=== Image prep complete ==="
 log "smithr user: created, admin, sudo, SSH key auth"
 log "User management: verified (create + delete build users)"
+log "Build-user scripts: installed at /Users/smithr/bin/"
 log ""
 log "Next steps:"
 log "  1. Shut down the VM cleanly: ssh $SSH_OPTS smithr@${SSH_HOST} 'sudo shutdown -h now'"
