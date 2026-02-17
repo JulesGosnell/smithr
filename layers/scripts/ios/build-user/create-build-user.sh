@@ -22,7 +22,14 @@
 set -euo pipefail
 
 USERNAME="${1:?Usage: create-build-user.sh <username> [uid]}"
-HOME_DIR="/Users/${USERNAME}"
+
+# Use RAM disk for ephemeral build homes when available (setup-ramdisk.sh)
+RAMDISK_HOME="/Volumes/BuildHomes"
+if [[ -d "$RAMDISK_HOME" ]] && mount | grep -q "$RAMDISK_HOME"; then
+    HOME_DIR="${RAMDISK_HOME}/${USERNAME}"
+else
+    HOME_DIR="/Users/${USERNAME}"
+fi
 
 # Find next UID if not specified
 if [[ -n "${2:-}" ]]; then

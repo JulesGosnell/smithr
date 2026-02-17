@@ -176,11 +176,31 @@ for script in create-build-user.sh delete-build-user.sh list-build-users.sh; do
 done
 log "Build-user scripts installed at /Users/smithr/bin/"
 
+# --- Step 9: Install RAM disk LaunchDaemon ---
+log "Installing RAM disk LaunchDaemon..."
+PLIST="com.smithr.ramdisk.plist"
+if [[ -f "$SCRIPT_DIR/$PLIST" ]]; then
+    scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -P "$SSH_PORT" \
+        "$SCRIPT_DIR/$PLIST" "smithr@${SSH_HOST}:/tmp/$PLIST"
+    ssh_as smithr "sudo cp /tmp/$PLIST /Library/LaunchDaemons/$PLIST && \
+                   sudo chown root:wheel /Library/LaunchDaemons/$PLIST && \
+                   sudo chmod 644 /Library/LaunchDaemons/$PLIST && \
+                   rm /tmp/$PLIST"
+    log "  LaunchDaemon installed — RAM disk will mount on boot"
+    # Run it now to test
+    ssh_as smithr "sudo /Users/smithr/bin/setup-ramdisk.sh" && \
+        log "  RAM disk verified: $(ssh_as smithr 'df -h /Volumes/BuildHomes | tail -1')" || \
+        log "  WARNING: RAM disk test failed (will retry on next boot)"
+else
+    log "  WARNING: $PLIST not found at $SCRIPT_DIR"
+fi
+
 log ""
 log "=== Image prep complete ==="
 log "smithr user: created, admin, sudo, SSH key auth"
 log "User management: verified (create + delete build users)"
 log "Build-user scripts: installed at /Users/smithr/bin/"
+log "RAM disk: LaunchDaemon installed (2GB at /Volumes/BuildHomes)"
 log ""
 log "Next steps:"
 log "  1. Shut down the VM cleanly: ssh $SSH_OPTS smithr@${SSH_HOST} 'sudo shutdown -h now'"

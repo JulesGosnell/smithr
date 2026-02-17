@@ -41,7 +41,11 @@ sudo dscl . -delete /Groups/com.apple.access_ssh GroupMembership "${USERNAME}" 2
 # Delete user account
 sudo dscl . -delete "/Users/${USERNAME}"
 
-# Delete home directory
+# Delete home directory (check both RAM disk and /Users)
+RAMDISK_HOME="/Volumes/BuildHomes/${USERNAME}"
+if [[ -d "$RAMDISK_HOME" ]]; then
+    sudo rm -rf "$RAMDISK_HOME"
+fi
 sudo rm -rf "/Users/${USERNAME}"
 
 echo "Deleted user ${USERNAME}" >&2
