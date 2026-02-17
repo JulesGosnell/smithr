@@ -176,6 +176,45 @@ start_api_server() {
     fi
 }
 
+# Start mock services if configured in smithr.yml
+start_mock_services() {
+    local mock_email mock_sms started=false
+    mock_email=$(smithr_config ".server.mocks.email" "false" 2>/dev/null)
+    mock_sms=$(smithr_config ".server.mocks.sms" "false" 2>/dev/null)
+
+    if [[ "$mock_email" == "true" ]]; then
+        log_info "Phase 5: Starting mock email service (Resend)..."
+        docker compose -f "${SMITHR_ROOT}/layers/network.yml" \
+            -f "${SMITHR_ROOT}/layers/email.yml" \
+            -p "${COMPOSE_PROJECT}" up -d --build 2>&1
+        wait_for_healthy "smithr-mock-email" 30
+        started=true
+    fi
+
+    if [[ "$mock_sms" == "true" ]]; then
+        log_info "Phase 5: Starting mock SMS service (Twilio)..."
+        docker compose -f "${SMITHR_ROOT}/layers/network.yml" \
+            -f "${SMITHR_ROOT}/layers/sms.yml" \
+            -p "${COMPOSE_PROJECT}" up -d --build 2>&1
+        wait_for_healthy "smithr-mock-sms" 30
+        started=true
+    fi
+
+    if $started; then
+        log_ok "Mock services started"
+    fi
+}
+
+# Stop mock services
+stop_mock_services() {
+    for container in smithr-mock-email smithr-mock-sms; do
+        if docker inspect "$container" >/dev/null 2>&1; then
+            log_info "Stopping $container..."
+            docker rm -f "$container" 2>/dev/null || true
+        fi
+    done
+}
+
 # Stop the project's API server container
 stop_api_server() {
     local api_compose
@@ -219,15 +258,20 @@ cmd_start() {
     compose_cmd up -d tls-proxy
     wait_for_healthy "${SMITHR_PREFIX}-tls-proxy" 30
 
-    # Phase 5: Project-specific DB setup (from smithr.yml)
+    # Phase 5: Mock services (optional, from smithr.yml)
+    if [[ -n "$CONFIG_PATH" ]]; then
+        start_mock_services
+    fi
+
+    # Phase 6: Project-specific DB setup (from smithr.yml)
     if [[ -n "$CONFIG_PATH" ]] && smithr_config_has ".server.setup"; then
-        log_info "Phase 5: Project database setup..."
+        log_info "Phase 6: Project database setup..."
         run_db_setup
     fi
 
-    # Phase 6: Project API server (from smithr.yml)
+    # Phase 7: Project API server (from smithr.yml)
     if [[ -n "$CONFIG_PATH" ]] && smithr_config_has ".server.api.compose"; then
-        log_info "Phase 6: Starting project API server..."
+        log_info "Phase 7: Starting project API server..."
         start_api_server
     fi
 
@@ -236,10 +280,11 @@ cmd_start() {
 }
 
 cmd_stop() {
-    # Load config for API server cleanup
+    # Load config for API server and mock cleanup
     if [[ -n "$CONFIG_PATH" ]]; then
         load_config "$CONFIG_PATH"
         stop_api_server
+        stop_mock_services
     fi
 
     log_info "Stopping shared server environment (reverse order)..."
@@ -288,6 +333,23 @@ cmd_status() {
                 all_healthy=false
                 ;;
         esac
+    done
+
+    # Check mock services
+    for mock_container in smithr-mock-email smithr-mock-sms; do
+        if docker inspect "$mock_container" >/dev/null 2>&1; then
+            local mock_status
+            mock_status=$(docker inspect --format='{{.State.Health.Status}}' "$mock_container" 2>/dev/null || echo "running")
+            local label="${mock_container#smithr-mock-}"
+            case "$mock_status" in
+                healthy)
+                    echo -e "  ${GREEN}✓${NC} mock-${label}: healthy"
+                    ;;
+                *)
+                    echo -e "  ${YELLOW}…${NC} mock-${label}: ${mock_status}"
+                    ;;
+            esac
+        fi
     done
 
     # Check project API server if configured

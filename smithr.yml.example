@@ -33,6 +33,13 @@ server:
     - "pnpm db:migrate"
     - "pnpm db:seed"
 
+  # Mock services for E2E testing (optional, started with shared server)
+  # These intercept API calls to production services, capturing messages
+  # for test assertions. Set the corresponding env vars in your API server.
+  mocks:
+    email: true                         # Mock Resend email API (port 3100)
+    sms: true                           # Mock Twilio SMS API (port 3200)
+
   # Project API server (started via Docker Compose)
   api:
     compose: "docker/api.yml"           # Path to project's compose file
@@ -43,6 +50,8 @@ server:
       NODE_ENV: "production"
       DATABASE_URL: "postgresql://myapp:myapp_dev_password@smithr-postgres:5432/myapp"
       REDIS_URL: "redis://smithr-redis:6379"
+      RESEND_API_URL: "http://smithr-mock-email:3100"  # → mock instead of api.resend.com
+      TWILIO_API_URL: "http://smithr-mock-sms:3200"    # → mock instead of api.twilio.com
 
 # ─── Mobile Apps ────────────────────────────────────────────
 mobile:
