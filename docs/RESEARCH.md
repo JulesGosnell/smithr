@@ -183,7 +183,7 @@ This validates Smithr's architecture exactly. The "cleanup not restart" pattern 
 Experimental Docker feature that freezes a running container to disk and restores it later. True instant restore. Worth monitoring but not production-ready.
 
 ### Key Gap Confirmed
-**Smithr fills a genuine gap in the ecosystem.** There is no open-source tool that provides warm pool management for containerised Android emulators AND macOS VMs with iOS simulators, with a simple allocation/release API, integrated with CI. The closest commercial alternatives are Corellium ($100k+/year), BrowserStack, and AWS Device Farm.
+**Smithr fills a genuine gap in the ecosystem.** There is no open-source tool that provides warm pool management for containerised Android emulators AND macOS VMs with iOS simulators, with a simple allocation/unlease API, integrated with CI. The closest commercial alternatives are Corellium ($100k+/year), BrowserStack, and AWS Device Farm.
 
 ## Sources
 

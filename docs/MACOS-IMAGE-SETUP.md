@@ -37,7 +37,7 @@ Smithr uses a macOS Sonoma VM image (`smithr-sonoma.img`) for:
 - SSH key auth configured
 
 ### `build-*` (dynamic)
-- Created on build lease acquire, deleted on release
+- Created on build lease acquire, deleted on unlease
 - Naming: `build-<first-8-chars-of-lease-id>`
 - UIDs start at 600
 - Staff group (GID 20)

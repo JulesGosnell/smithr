@@ -10,7 +10,7 @@ NFS JSON + flock phone pool with a proper server:
 
 - **Docker event subscription** via docker-java — push-based, not polling
 - **Atom-based state** — all mutations via `swap!` for thread-safety
-- **SSH tunnel management** — tunnels created on lease, destroyed on release/GC
+- **SSH tunnel management** — tunnels created on lease, destroyed on unlease/GC
 - **REST API** — OpenAPI 3.1 spec at `resources/openapi.yaml`
 - **Reagent dashboard** — real-time resource status with 4s polling
 
@@ -24,7 +24,7 @@ NFS JSON + flock phone pool with a proper server:
 | `hammar.config` | Loads `hammar.edn` via Aero. Checks `HAMMAR_CONFIG` env var first |
 | `hammar.state` | Single atom holding `{:resources {} :leases {} :hosts {}}`. All queries and mutations |
 | `hammar.docker` | Docker client creation, container inspection, event subscription. One thread per host |
-| `hammar.lease` | `acquire!` / `release!` / `gc-expired-leases!`. Manages SSH tunnel lifecycle |
+| `hammar.lease` | `acquire!` / `unlease!` / `gc-expired-leases!`. Manages SSH tunnel lifecycle |
 | `hammar.api` | Reitit router with Muuntaja. Serves API + static files |
 | `hammar.handlers` | Ring handlers for each endpoint. Serializes Clojure maps to JSON with underscore keys |
 | `hammar.compose` | Shells out to `docker compose` CLI for up/down/ps |
@@ -92,7 +92,7 @@ Client uses tunnel port to connect
   ↓
 Client: DELETE /api/leases/{id}  (or TTL expires → GC reaps it)
   ↓
-release! → swap! state atom:
+unlease! → swap! state atom:
   1. Mark resource :warm again
   2. Remove lease entry
   3. .destroyForcibly on tunnel process → client disconnected
@@ -103,7 +103,7 @@ release! → swap! state atom:
 Leases provision SSH tunnels so clients never talk directly to containers:
 
 - On **acquire**: allocate a tunnel port, start socat/SSH bridge
-- On **release/GC**: `.destroyForcibly` on the tunnel process
+- On **unlease/GC**: `.destroyForcibly` on the tunnel process
 - This forcibly disconnects the client — better than losing control
 
 Tunnel port allocation starts at 17000 and increments. The actual tunnel
@@ -156,7 +156,7 @@ cd hammar && npm install && npm run dev
 - All Clojure namespaces compile cleanly
 - API smoke-tested: health, resources, hosts, lease acquire, lease list all return correct JSON
 - Docker event subscription connects to local daemon
-- Lease acquire/release with atomic state transitions
+- Lease acquire/unlease with atomic state transitions
 - GC loop for expired leases
 - Dashboard HTML/CSS ready, ClojureScript components written
 
@@ -166,6 +166,6 @@ cd hammar && npm install && npm run dev
 2. **ClojureScript build** — `npm install && npx shadow-cljs release app` not yet run
 3. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
 4. **Remote host connection** — TCP Docker daemon connection (prognathodon) untested
-5. **Integration test** — full flow: start containers → discover → lease → release → GC
+5. **Integration test** — full flow: start containers → discover → lease → unlease → GC
 6. **iOS cascading leases** — leasing an iOS phone should hold its parent macOS VM
 7. **Bash CLI migration** — update `bin/smithr-phone` to call Hammar API instead of NFS JSON

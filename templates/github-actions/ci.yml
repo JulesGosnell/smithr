@@ -101,9 +101,9 @@ jobs:
             --config smithr.yml \
             --device ${{ steps.phone.outputs.handle }}
 
-      - name: Release phone
+      - name: Unlease phone
         if: always()
-        run: $SMITHR_ROOT/bin/smithr phone release ${{ steps.phone.outputs.handle }}
+        run: $SMITHR_ROOT/bin/smithr phone unlease ${{ steps.phone.outputs.handle }}
 
   # ─── Deploy Phase ─────────────────────────────────────────────────
   deploy:

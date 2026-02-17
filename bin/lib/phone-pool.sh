@@ -2,7 +2,7 @@
 # smithr/bin/lib/phone-pool.sh — Phone pool management core
 #
 # Manages warm pools of Android emulators and iOS simulators.
-# Phones can be acquired (leased), used for testing, and released back.
+# Phones can be acquired (leased), used for testing, and unleased back.
 #
 # State is tracked in a JSON file on NFS for cross-machine coordination.
 # Uses flock-based locking for concurrent access safety.
@@ -140,9 +140,9 @@ pool_acquire() {
     echo "$phone_id"
 }
 
-# Release a leased phone back to the pool
-# Usage: pool_release <phone_id>
-pool_release() {
+# Unlease a phone back to the pool
+# Usage: pool_unlease <phone_id>
+pool_unlease() {
     local phone_id="$1"
 
     local state
@@ -164,7 +164,7 @@ pool_release() {
     state=$(echo "$state" | jq "del(.leases[] | select(.phone_id == \"${phone_id}\"))")
 
     write_state "$state"
-    log_ok "Released phone: ${phone_id}"
+    log_ok "Unleased phone: ${phone_id}"
 }
 
 # List all phones and their status

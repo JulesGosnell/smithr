@@ -19,7 +19,7 @@
       :post {:handler h/acquire-lease}}]
     ["/leases/:id"
      {:get    {:handler h/get-lease}
-      :delete {:handler h/release-lease}}]
+      :delete {:handler h/unlease}}]
     ["/hosts" {:get {:handler h/list-hosts}}]
     ["/workspaces" {:get {:handler h/list-workspaces}}]
     ["/workspaces/:name" {:get    {:handler h/get-workspace}

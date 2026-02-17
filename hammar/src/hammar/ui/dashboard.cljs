@@ -116,17 +116,17 @@
                   ^{:key "build"} [:button.btn.lease
                                    {:on-click #(api/acquire-lease! (:type resource) (:platform resource) "build")}
                                    "Add Build"]
-                  ;; Release buttons for each active lease
+                  ;; Unlease buttons for each active lease
                   (for [l active-leases]
                     ^{:key (str "rel-" (:id l))}
                     [:button.btn.release
-                     {:on-click #(api/release-lease! (:id l))
+                     {:on-click #(api/unlease! (:id l))
                       :style {:font-size "0.75rem"}}
-                     (str "Release " (or (:macos_user l) (subs (:id l) 0 8)))]))
+                     (str "Unlease " (or (:macos_user l) (subs (:id l) 0 8)))]))
         "leased" (when lease
                    [:button.btn.release
-                    {:on-click #(api/release-lease! (:id lease))}
-                    "Release"])
+                    {:on-click #(api/unlease! (:id lease))}
+                    "Unlease"])
         nil)
       (when vnc-port
         [:a.btn.vnc {:href (str "vnc://localhost:" vnc-port) :target "_blank"

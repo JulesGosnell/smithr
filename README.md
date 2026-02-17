@@ -25,10 +25,10 @@ Smithr provides reusable infrastructure for mobile app development teams:
 # Warm up 4 Android phones
 ./bin/smithr phone warm --count 4
 
-# Acquire a phone, run a test, release it
+# Acquire a phone, run a test, unlease it
 PHONE=$(./bin/smithr phone get --type pixel_7)
 ./bin/smithr test run training --device "$PHONE"
-./bin/smithr phone release "$PHONE"
+./bin/smithr phone unlease "$PHONE"
 ```
 
 ## Project Structure

@@ -141,11 +141,11 @@
              :body   {:error "bad_request"
                       :message (.getMessage e)}}))))))
 
-(defn release-lease
+(defn unlease
   "DELETE /api/leases/:id"
   [request]
   (let [id (get-in request [:path-params :id])]
-    (if (lease/release! id)
+    (if (lease/unlease! id)
       {:status 204 :body nil}
       (not-found (str "Lease not found: " id)))))
 
@@ -197,7 +197,7 @@
   (let [ws-name (get-in request [:path-params :name])]
     (if-let [ws (state/workspace ws-name)]
       (if (= (:status ws) :leased)
-        (conflict (str "Workspace '" ws-name "' is currently leased — release the lease first"))
+        (conflict (str "Workspace '" ws-name "' is currently leased — unlease it first"))
         (do
           (lease/purge-workspace! ws-name)
           {:status 204 :body nil}))

@@ -254,8 +254,8 @@ docker compose \
 smithr phone get --type android        # → handle: megalodon:android:5557
 smithr phone get --type ios            # → handle: prognathodon:ios:50922
 
-# Release it back to the pool
-smithr phone release <handle>
+# Unlease it back to the pool
+smithr phone unlease <handle>
 
 # List all phones across all hosts
 smithr phone list
@@ -268,7 +268,7 @@ smithr phone status
 
 ```
   COLD                    WARM                    LEASED                  CLEANING
-  (not running)  ──boot──▶ (running,      ──get──▶ (in use by     ──release──▶ (uninstalling
+  (not running)  ──boot──▶ (running,      ──get──▶ (in use by     ──unlease──▶ (uninstalling
                             idle,                   a test)                      app, wiping
                             in pool)                                             data)
                      ▲                                                    │
@@ -300,7 +300,7 @@ smithr phone status
 
 - Push-based state via Docker event subscription (docker-java)
 - Atom-based concurrency (`swap!`) — no filesystem locking
-- SSH tunnels created on lease acquire, destroyed on release/GC
+- SSH tunnels created on lease acquire, destroyed on unlease/GC
 - REST API on port 7070 with real-time Reagent dashboard
 - OpenAPI 3.1 spec at `hammar/resources/openapi.yaml`
 
@@ -429,9 +429,9 @@ jobs:
             --config smithr.yml \
             --device ${{ steps.phone.outputs.handle }}
 
-      - name: Release phone
+      - name: Unlease phone
         if: always()
-        run: smithr phone release ${{ steps.phone.outputs.handle }}
+        run: smithr phone unlease ${{ steps.phone.outputs.handle }}
 
   deploy:
     needs: test
@@ -456,10 +456,10 @@ Server Start (once)
         │
         ▼
 Test Phase (parallel matrix)
-├── Test 1: get phone → run test → release phone
-├── Test 2: get phone → run test → release phone
-├── Test 3: get phone → run test → release phone
-└── Test 4: get phone → run test → release phone
+├── Test 1: get phone → run test → unlease phone
+├── Test 2: get phone → run test → unlease phone
+├── Test 3: get phone → run test → unlease phone
+└── Test 4: get phone → run test → unlease phone
         │
         ▼ (all green)
 Deploy Phase
@@ -569,8 +569,8 @@ smithr/
 │   ├── lib/
 │   │   ├── common.sh           # Shared utilities (logging, die, wait_for_healthy)
 │   │   ├── config.sh           # smithr.yml parser (Python/PyYAML → JSON → jq)
-│   │   └── phone-pool.sh      # Phone pool management (acquire/release/state)
-│   ├── smithr-phone            # Phone subcommand (get/release/list/status/warm/clean)
+│   │   └── phone-pool.sh      # Phone pool management (acquire/unlease/state)
+│   ├── smithr-phone            # Phone subcommand (get/unlease/list/status/warm/clean)
 │   ├── smithr-server           # Server subcommand (start/stop/status/ensure)
 │   ├── smithr-sandbox          # Sandbox subcommand (start/stop/list)
 │   ├── smithr-build            # Build subcommand

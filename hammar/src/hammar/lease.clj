@@ -1,7 +1,7 @@
 (ns hammar.lease
-  "Lease acquire/release/GC logic.
+  "Lease acquire/unlease/GC logic.
    Uses swap! on state atom for atomic compare-and-set semantics.
-   Manages SSH tunnels: created on acquire, destroyed on release/GC."
+   Manages SSH tunnels: created on acquire, destroyed on unlease/GC."
   (:require [clojure.tools.logging :as log]
             [hammar.state :as state]
             [hammar.macos :as macos])
@@ -57,7 +57,7 @@
 ;; Lease acquire
 ;; ---------------------------------------------------------------------------
 
-(declare release!)
+(declare unlease!)
 
 (defn- valid-workspace-name?
   "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."
@@ -73,7 +73,7 @@
    or :phone (exclusive access, default for backwards compat).
 
    :workspace — optional named workspace for warm/persistent builds.
-   If provided, the macOS user persists across leases (not deleted on release).
+   If provided, the macOS user persists across leases (not deleted on unlease).
 
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
@@ -197,7 +197,7 @@
             ;; User creation failed — rollback
             (do
               (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
-              (release! lease-id)
+              (unlease! lease-id)
               nil)))
         ;; Phone lease: start tunnel (legacy behavior)
         (let [tunnel (start-tunnel! lease-id resource)]
@@ -210,22 +210,22 @@
           (assoc lease :connection {:tunnel-port (:port tunnel)}))))))
 
 ;; ---------------------------------------------------------------------------
-;; Lease release
+;; Unlease
 ;; ---------------------------------------------------------------------------
 
-(defn release!
-  "Release a lease: update resource state, remove lease, stop tunnel.
+(defn unlease!
+  "Unlease a resource: update resource state, remove lease, stop tunnel.
    For build leases: removes from active-leases, deletes macOS user.
    For phone leases: marks resource warm (legacy behavior).
-   Returns true if lease was found and released."
+   Returns true if lease was found and unleased."
   [lease-id]
-  (let [released-lease (atom nil)]
+  (let [unleased-lease (atom nil)]
     (swap! state/state
            (fn [s]
              (if-let [lease (get-in s [:leases lease-id])]
                (let [resource-id (:resource-id lease)
                      build? (= (:lease-type lease) :build)]
-                 (reset! released-lease lease)
+                 (reset! unleased-lease lease)
                  (if build?
                    ;; Build lease: remove from active-leases
                    (let [new-active (disj (get-in s [:resources resource-id :active-leases] #{})
@@ -243,7 +243,7 @@
                        (assoc-in [:resources resource-id :updated-at] (Instant/now))
                        (update :leases dissoc lease-id))))
                s)))
-    (when-let [lease @released-lease]
+    (when-let [lease @unleased-lease]
       ;; Clean up outside the atom swap
       (when (= (:lease-type lease) :build)
         (if (:workspace lease)
@@ -265,12 +265,12 @@
                     (catch Exception e
                       (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e))))))))))
       (stop-tunnel! lease-id)
-      (log/info "Lease released:" lease-id
+      (log/info "Lease unleased:" lease-id
                 (when (= (:lease-type lease) :build)
                   (str (if (:workspace lease)
                          (str "(workspace: " (:workspace lease) ")")
                          (str "(build user: " (:macos-user lease) ")"))))))
-    (boolean @released-lease)))
+    (boolean @unleased-lease)))
 
 ;; ---------------------------------------------------------------------------
 ;; Workspace management
@@ -317,7 +317,7 @@
        (log/info "GC: expiring lease" (:id lease)
                  "resource:" (:resource-id lease)
                  "lessee:" (:lessee lease))
-       (release! (:id lease)))
+       (unlease! (:id lease)))
      (count expired))))
 
 (defn start-gc-loop!

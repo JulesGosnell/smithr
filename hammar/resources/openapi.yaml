@@ -141,8 +141,8 @@ paths:
         "404":
           description: Lease not found
     delete:
-      operationId: releaseLease
-      summary: Release a lease
+      operationId: unleaseLease
+      summary: Unlease a resource
       parameters:
         - name: id
           in: path
@@ -151,7 +151,7 @@ paths:
             type: string
       responses:
         "204":
-          description: Lease released
+          description: Lease unleased
         "404":
           description: Lease not found
 
@@ -161,7 +161,7 @@ paths:
       summary: List all workspaces
       description: |
         Returns all named workspaces across all macOS VMs.
-        Workspaces are persistent build environments that survive lease releases.
+        Workspaces are persistent build environments that persist across unleases.
       responses:
         "200":
           description: List of workspaces

@@ -107,8 +107,8 @@ smithr phone list
 # Acquire a phone for testing
 handle=$(smithr phone get --platform ios)
 
-# Release when done
-smithr phone release "$handle"
+# Unlease when done
+smithr phone unlease "$handle"
 
 # Shut down
 smithr phone shutdown --all

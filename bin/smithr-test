@@ -6,7 +6,7 @@
 #   2. Install the app (APK for Android, .app for iOS)
 #   3. Setup port forwarding (socat)
 #   4. Run Maestro tests
-#   5. Release the phone back to the pool
+#   5. Unlease the phone back to the pool
 #
 # Platform differences:
 #   Android: ADB + local Maestro
@@ -32,7 +32,7 @@ Usage:
   smithr test install <handle> <app>      Install app on a phone
 
 Options:
-  --device <handle>     Use a specific phone handle (skip acquire/release)
+  --device <handle>     Use a specific phone handle (skip acquire/unlease)
   --apk <path>          Path to APK (Android) or .app/.app.tar.gz (iOS)
   --app <path>          Alias for --apk (preferred for iOS)
   --platform <p>        Platform: android or ios (default: android)
@@ -40,7 +40,7 @@ Options:
   --no-forwarding       Skip socat port forwarding setup
   --junit <path>        Output JUnit XML report
   --project-dir DIR     Project directory (default: current dir)
-  --keep-phone          Don't release phone after test (for debugging)
+  --keep-phone          Don't unlease phone after test (for debugging)
   --help                Show this help
 
 Examples:
@@ -69,8 +69,8 @@ CONFIG_PATH=""
 
 cleanup() {
     if [[ -n "$ACQUIRED_HANDLE" ]] && ! $KEEP_PHONE; then
-        log_info "Releasing phone: ${ACQUIRED_HANDLE}"
-        "${SMITHR_ROOT}/bin/smithr-phone" release "$ACQUIRED_HANDLE" 2>/dev/null || true
+        log_info "Unleasing phone: ${ACQUIRED_HANDLE}"
+        "${SMITHR_ROOT}/bin/smithr-phone" unlease "$ACQUIRED_HANDLE" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT

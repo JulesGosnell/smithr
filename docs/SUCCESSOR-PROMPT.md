@@ -38,7 +38,7 @@ Verify the container starts, connects to Docker socket, discovers managed contai
 When leasing an iOS phone (simulator), its parent macOS VM should be automatically
 held. The `smithr.resource.parent` label links child → parent. Implement in `lease.clj`:
 - On acquire of iOS phone: check if parent VM has a lease, if not create a hold-lease
-- On release: only release parent if no other children are leased
+- On unlease: only unlease parent if no other children are leased
 
 ### 5. Integration Test
 Full flow with live Docker:
@@ -46,13 +46,13 @@ Full flow with live Docker:
 2. Start Smithr service: `clojure -M:run`
 3. Verify `GET /api/resources` shows the emulator
 4. `POST /api/leases` acquires it
-5. `DELETE /api/leases/{id}` releases it
+5. `DELETE /api/leases/{id}` unleases it
 6. Wait for TTL expiry to test GC
 
 ### 6. Bash CLI Migration
 Update `bin/smithr-phone` to call the Clojure API:
 - `smithr phone get --type android` → `curl -X POST localhost:7070/api/leases -d '{"type":"phone","platform":"android"}'`
-- `smithr phone release <handle>` → `curl -X DELETE localhost:7070/api/leases/{id}`
+- `smithr phone unlease <handle>` → `curl -X DELETE localhost:7070/api/leases/{id}`
 - `smithr phone list` → `curl localhost:7070/api/resources`
 
 ### 7. Remote Docker Host

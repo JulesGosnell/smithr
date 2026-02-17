@@ -3,7 +3,7 @@
 #
 # Usage:
 #   smithr phone get    --type <device>    Acquire a phone from the warm pool
-#   smithr phone release <handle>          Return a phone to the pool
+#   smithr phone unlease <handle>           Return a phone to the pool
 #   smithr phone list                      List all phones and their status
 #   smithr phone status                    Show pool summary
 #   smithr phone warm   [--count N]        Pre-warm N phones (default: from config)
@@ -24,8 +24,8 @@ Usage:
   smithr phone get --type <device> [--platform android|ios]
       Acquire a warm phone. Returns a handle on stdout.
 
-  smithr phone release <handle>
-      Release a leased phone back to the pool.
+  smithr phone unlease <handle>
+      Unlease a phone back to the pool.
 
   smithr phone list
       List all phones and their status.
@@ -68,9 +68,9 @@ cmd_get() {
     with_lock pool_acquire "$PLATFORM" "${DEVICE_TYPE:-any}"
 }
 
-cmd_release() {
-    local handle="${1:?Usage: smithr phone release <handle>}"
-    with_lock pool_release "$handle"
+cmd_unlease() {
+    local handle="${1:?Usage: smithr phone unlease <handle>}"
+    with_lock pool_unlease "$handle"
 }
 
 cmd_list() {
@@ -257,7 +257,7 @@ cmd_shutdown() {
 # Dispatch
 case "${1:-}" in
     get)     shift; cmd_get "$@" ;;
-    release) shift; cmd_release "$@" ;;
+    unlease) shift; cmd_unlease "$@" ;;
     list)    cmd_list ;;
     status)  cmd_status ;;
     warm)    shift; cmd_warm "$@" ;;

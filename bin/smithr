@@ -5,7 +5,7 @@
 #   smithr <command> [options]
 #
 # Commands:
-#   phone     Manage the phone pool (get, release, list, status, warm)
+#   phone     Manage the phone pool (get, unlease, list, status, warm)
 #   server    Manage shared server environments (start, stop, status)
 #   sandbox   Manage development sandboxes (start, stop, list)
 #   build     Build project artifacts
@@ -34,7 +34,7 @@ Usage:
   smithr <command> [options]
 
 Commands:
-  phone      Manage the phone pool (get, release, list, status, warm)
+  phone      Manage the phone pool (get, unlease, list, status, warm)
   server     Manage shared server environments (start, stop, status)
   sandbox    Manage development sandboxes (start, stop, list)
   build      Build project artifacts
@@ -52,7 +52,7 @@ Examples:
   smithr doctor                           # Check prerequisites
   smithr phone warm --count 4             # Pre-warm 4 Android phones
   smithr phone get --type pixel-7         # Acquire a phone
-  smithr phone release megalodon:5557     # Return a phone to the pool
+  smithr phone unlease megalodon:5557      # Return a phone to the pool
   smithr server start                     # Start shared server env
   smithr test run training --device auto  # Run test with auto-assigned phone
 

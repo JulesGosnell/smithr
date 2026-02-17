@@ -83,10 +83,10 @@
      :response-format :json
      :keywords?       true}))
 
-(defn release-lease! [lease-id]
+(defn unlease! [lease-id]
   (DELETE (str base-url "/api/leases/" lease-id)
     {:handler       (fn [_] (fetch-all!))
-     :error-handler (partial handle-error "Release")}))
+     :error-handler (partial handle-error "Unlease")}))
 
 (defn purge-workspace! [workspace-name]
   (DELETE (str base-url "/api/workspaces/" workspace-name)
