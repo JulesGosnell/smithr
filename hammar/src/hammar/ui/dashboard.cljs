@@ -265,9 +265,9 @@
   (let [t (:type event)
         lessee (or (:lessee event) "?")
         container (or (:container event) (:resource event) "?")
-        lease-type (or (:lease_type event) "")
+        lease-type (or (:lease-type event) "")
         ttl (:ttl event)
-        held (:held_seconds event)
+        held (:held-seconds event)
         ws (:workspace event)]
     (case t
       "lease"   (str lessee " leases " container
