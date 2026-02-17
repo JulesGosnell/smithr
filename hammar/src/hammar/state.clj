@@ -3,9 +3,10 @@
    All state mutations happen via swap! for atomicity.")
 
 (defonce state
-  (atom {:resources {}   ;; resource-id -> Resource
-         :leases    {}   ;; lease-id -> Lease
-         :hosts     {}}  ;; host-label -> Host
+  (atom {:resources  {}   ;; resource-id -> Resource
+         :leases     {}   ;; lease-id -> Lease
+         :hosts      {}   ;; host-label -> Host
+         :workspaces {}}  ;; workspace-name -> Workspace
          ))
 
 ;; ---------------------------------------------------------------------------
@@ -92,6 +93,17 @@
                (and (= (:status r) :warm)
                     (= (:type r) resource-type)
                     (= (:platform r) platform)))))
+
+;; ---------------------------------------------------------------------------
+;; Workspace operations
+;; ---------------------------------------------------------------------------
+
+(defn workspaces
+  "Get all workspaces."
+  ([] (vals (:workspaces @state)))
+  ([pred] (filter pred (workspaces))))
+
+(defn workspace [name] (get-in @state [:workspaces name]))
 
 (defn available-for-build
   "Get macOS VMs available for a shared build lease.

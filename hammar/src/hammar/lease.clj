@@ -59,6 +59,12 @@
 
 (declare release!)
 
+(defn- valid-workspace-name?
+  "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."
+  [name]
+  (and (string? name)
+       (re-matches #"[a-zA-Z][a-zA-Z0-9-]{2,30}" name)))
+
 (defn acquire!
   "Atomically acquire a lease on an available resource.
    Returns the lease map on success, nil if no resource available.
@@ -66,30 +72,56 @@
    :lease-type can be :build (shared, concurrent access to macOS VM)
    or :phone (exclusive access, default for backwards compat).
 
+   :workspace — optional named workspace for warm/persistent builds.
+   If provided, the macOS user persists across leases (not deleted on release).
+
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
-  [{:keys [type platform ttl-seconds lessee lease-type]
+  [{:keys [type platform ttl-seconds lessee lease-type workspace]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
+  ;; Validate workspace name if provided
+  (when (and workspace (not (valid-workspace-name? workspace)))
+    (log/warn "Invalid workspace name:" workspace)
+    (throw (ex-info "Invalid workspace name" {:workspace workspace})))
+  ;; Check if workspace is already leased
+  (when workspace
+    (when-let [ws (state/workspace workspace)]
+      (when (= (:status ws) :leased)
+        (log/warn "Workspace" workspace "is already leased by" (:lease-id ws))
+        (throw (ex-info "Workspace is already leased"
+                        {:workspace workspace :lease-id (:lease-id ws)})))))
   (let [lease-id    (str (UUID/randomUUID))
         now         (Instant/now)
         expires-at  (.plus now (Duration/ofSeconds ttl-seconds))
         lease-type  (keyword lease-type)
+        ;; Force build lease-type when workspace is specified
+        lease-type  (if workspace :build lease-type)
         result      (atom nil)]
     ;; Atomic swap: find resource and update state
     (swap! state/state
            (fn [s]
-             (let [candidates (if (= lease-type :build)
-                                ;; Build: warm or shared with capacity
-                                (->> (vals (:resources s))
-                                     (filter #(and (= (:type %) :vm)
-                                                   (= (:platform %) (keyword platform))
-                                                   (or (= (:status %) :warm)
-                                                       (and (= (:status %) :shared)
-                                                            (< (count (:active-leases % #{}))
-                                                               (:max-slots % 10))))))
-                                     (sort-by :id))
+             (let [;; If workspace exists, prefer its resource
+                   ws-resource-id (when workspace
+                                    (:resource-id (get-in s [:workspaces workspace])))
+                   candidates (if (= lease-type :build)
+                                (if ws-resource-id
+                                  ;; Workspace already assigned to a resource — use it
+                                  (let [r (get-in s [:resources ws-resource-id])]
+                                    (when (and r (#{:warm :shared} (:status r))
+                                               (< (count (:active-leases r #{}))
+                                                  (:max-slots r 10)))
+                                      [r]))
+                                  ;; Build: warm or shared with capacity
+                                  (->> (vals (:resources s))
+                                       (filter #(and (= (:type %) :vm)
+                                                     (= (:platform %) (keyword platform))
+                                                     (or (= (:status %) :warm)
+                                                         (and (= (:status %) :shared)
+                                                              (< (count (:active-leases % #{}))
+                                                                 (:max-slots % 10))))))
+                                       (sort-by :id)))
                                 ;; Phone: warm only (exclusive)
                                 (->> (vals (:resources s))
                                      (filter #(and (= (:status %) :warm)
@@ -97,23 +129,27 @@
                                                    (= (:platform %) (keyword platform))))
                                      (sort-by :id)))]
                (if-let [resource (first candidates)]
-                 (let [lease {:id          lease-id
-                              :resource-id (:id resource)
-                              :host        (:host resource)
-                              :lessee      lessee
-                              :lease-type  lease-type
-                              :ttl-seconds ttl-seconds
-                              :acquired-at now
-                              :expires-at  expires-at}]
+                 (let [lease (cond-> {:id          lease-id
+                                      :resource-id (:id resource)
+                                      :host        (:host resource)
+                                      :lessee      lessee
+                                      :lease-type  lease-type
+                                      :ttl-seconds ttl-seconds
+                                      :acquired-at now
+                                      :expires-at  expires-at}
+                               workspace (assoc :workspace workspace))]
                    (reset! result {:lease lease :resource resource})
                    (if (= lease-type :build)
                      ;; Build lease: add to active-leases, mark shared
-                     (-> s
-                         (update-in [:resources (:id resource) :active-leases]
-                                    (fnil conj #{}) lease-id)
-                         (assoc-in [:resources (:id resource) :status] :shared)
-                         (assoc-in [:resources (:id resource) :updated-at] now)
-                         (assoc-in [:leases lease-id] lease))
+                     (cond-> s
+                       true (update-in [:resources (:id resource) :active-leases]
+                                       (fnil conj #{}) lease-id)
+                       true (assoc-in [:resources (:id resource) :status] :shared)
+                       true (assoc-in [:resources (:id resource) :updated-at] now)
+                       true (assoc-in [:leases lease-id] lease)
+                       ;; Update workspace status
+                       workspace (assoc-in [:workspaces workspace :status] :leased)
+                       workspace (assoc-in [:workspaces workspace :lease-id] lease-id))
                      ;; Phone lease: exclusive, mark leased (legacy behavior)
                      (-> s
                          (assoc-in [:resources (:id resource) :status] :leased)
@@ -124,32 +160,45 @@
                  s))))
     (when-let [{:keys [lease resource]} @result]
       (if (= lease-type :build)
-        ;; Build lease: create macOS user, then start tunnel
-        (if-let [user-info (macos/create-user! resource lease-id)]
-          (let [tunnel (start-tunnel! lease-id resource)
-                {:keys [ssh-host ssh-port]} (:connection resource)
-                connection {:tunnel-port (:port tunnel)
-                            :ssh-user    (:macos-user user-info)
-                            :ssh-host    ssh-host
-                            :ssh-port    (or ssh-port 10022)
-                            :home-dir    (:home-dir user-info)}]
-            ;; Update lease with connection and user info
-            (swap! state/state
-                   (fn [s]
-                     (-> s
-                         (assoc-in [:leases lease-id :connection] connection)
-                         (assoc-in [:leases lease-id :macos-user] (:macos-user user-info)))))
-            (log/info "Build lease acquired:" lease-id "resource:" (:id resource)
-                      "lessee:" lessee "user:" (:macos-user user-info)
-                      "tunnel-port:" (:port tunnel))
-            (assoc lease
-                   :connection connection
-                   :macos-user (:macos-user user-info)))
-          ;; User creation failed — rollback
-          (do
-            (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
-            (release! lease-id)
-            nil))
+        ;; Build lease: create/ensure macOS user, then start tunnel
+        (let [user-info (if workspace
+                          (macos/ensure-user! resource workspace)
+                          (macos/create-user! resource lease-id))]
+          (if user-info
+            (let [tunnel (start-tunnel! lease-id resource)
+                  {:keys [ssh-host ssh-port]} (:connection resource)
+                  connection {:tunnel-port (:port tunnel)
+                              :ssh-user    (:macos-user user-info)
+                              :ssh-host    ssh-host
+                              :ssh-port    (or ssh-port 10022)
+                              :home-dir    (:home-dir user-info)}]
+              ;; Update lease and workspace state
+              (swap! state/state
+                     (fn [s]
+                       (cond-> s
+                         true (assoc-in [:leases lease-id :connection] connection)
+                         true (assoc-in [:leases lease-id :macos-user] (:macos-user user-info))
+                         ;; Register/update workspace
+                         workspace (assoc-in [:workspaces workspace]
+                                             {:name        workspace
+                                              :resource-id (:id resource)
+                                              :macos-user  (:macos-user user-info)
+                                              :status      :leased
+                                              :lease-id    lease-id
+                                              :created-at  (or (:created-at (get-in s [:workspaces workspace]))
+                                                               now)}))))
+              (log/info (if workspace "Workspace" "Build") "lease acquired:" lease-id
+                        "resource:" (:id resource) "lessee:" lessee
+                        "user:" (:macos-user user-info)
+                        (when workspace (str "workspace:" workspace)))
+              (assoc lease
+                     :connection connection
+                     :macos-user (:macos-user user-info)))
+            ;; User creation failed — rollback
+            (do
+              (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
+              (release! lease-id)
+              nil)))
         ;; Phone lease: start tunnel (legacy behavior)
         (let [tunnel (start-tunnel! lease-id resource)]
           (swap! state/state
@@ -197,19 +246,58 @@
     (when-let [lease @released-lease]
       ;; Clean up outside the atom swap
       (when (= (:lease-type lease) :build)
-        (when-let [macos-user (:macos-user lease)]
-          (let [resource (state/resource (:resource-id lease))]
-            (when resource
-              (future
-                (try
-                  (macos/delete-user! resource macos-user)
-                  (catch Exception e
-                    (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e)))))))))
+        (if (:workspace lease)
+          ;; Workspace lease: mark workspace idle, keep user
+          (do
+            (swap! state/state
+                   (fn [s]
+                     (-> s
+                         (assoc-in [:workspaces (:workspace lease) :status] :idle)
+                         (assoc-in [:workspaces (:workspace lease) :lease-id] nil))))
+            (log/info "Workspace" (:workspace lease) "returned to idle"))
+          ;; Ephemeral build: delete user
+          (when-let [macos-user (:macos-user lease)]
+            (let [resource (state/resource (:resource-id lease))]
+              (when resource
+                (future
+                  (try
+                    (macos/delete-user! resource macos-user)
+                    (catch Exception e
+                      (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e))))))))))
       (stop-tunnel! lease-id)
       (log/info "Lease released:" lease-id
                 (when (= (:lease-type lease) :build)
-                  (str "(build user: " (:macos-user lease) ")"))))
+                  (str (if (:workspace lease)
+                         (str "(workspace: " (:workspace lease) ")")
+                         (str "(build user: " (:macos-user lease) ")"))))))
     (boolean @released-lease)))
+
+;; ---------------------------------------------------------------------------
+;; Workspace management
+;; ---------------------------------------------------------------------------
+
+(defn purge-workspace!
+  "Delete a workspace and its macOS user account.
+   Only works when workspace is idle (not leased).
+   Returns true if purged, false if not found or busy."
+  [workspace-name]
+  (let [ws (state/workspace workspace-name)]
+    (cond
+      (nil? ws)
+      (do (log/warn "Workspace not found:" workspace-name) false)
+
+      (= (:status ws) :leased)
+      (do (log/warn "Cannot purge leased workspace:" workspace-name) false)
+
+      :else
+      (let [resource (state/resource (:resource-id ws))]
+        ;; Delete macOS user
+        (when resource
+          (macos/delete-user! resource (:macos-user ws)))
+        ;; Remove from state
+        (swap! state/state update :workspaces dissoc workspace-name)
+        (log/info "Purged workspace:" workspace-name)
+        true))))
 
 ;; ---------------------------------------------------------------------------
 ;; Garbage collection

@@ -39,6 +39,12 @@
       (inc (Integer/parseInt (str/trim (:out result))))
       600)))
 
+(defn user-exists?
+  "Check if a macOS user exists on the VM."
+  [resource username]
+  (let [result (ssh-exec! resource (str "dscl . -read /Users/" username " UniqueID 2>/dev/null"))]
+    (= 0 (:exit result))))
+
 (defn create-user!
   "Create a macOS user account for a build lease.
    Returns {:macos-user string :home-dir string} on success, nil on failure."
@@ -76,6 +82,50 @@
           (log/error "Failed to create macOS user" username
                      "on" (:id resource) ":" (:err result))
           nil)))))
+
+(defn create-named-user!
+  "Create a macOS user with a specific username (for workspaces).
+   Returns {:macos-user string :home-dir string} on success, nil on failure."
+  [resource username]
+  (let [home-dir (str "/Users/" username)
+        uid (next-uid resource)]
+    (log/info "Creating workspace user" username "uid:" uid "on" (:id resource))
+    (let [cmds [(str "sudo dscl . -create /Users/" username)
+                (str "sudo dscl . -create /Users/" username " UserShell /bin/bash")
+                (str "sudo dscl . -create /Users/" username " RealName 'Workspace " username "'")
+                (str "sudo dscl . -create /Users/" username " UniqueID " uid)
+                (str "sudo dscl . -create /Users/" username " PrimaryGroupID 20")
+                (str "sudo dscl . -create /Users/" username " NFSHomeDirectory " home-dir)
+                (str "sudo createhomedir -c -u " username)
+                (str "sudo dscl . -append /Groups/com.apple.access_ssh GroupMembership " username)
+                (str "sudo mkdir -p " home-dir "/.ssh")
+                (str "sudo cp /Users/smithr/.ssh/authorized_keys " home-dir "/.ssh/")
+                (str "sudo chown -R " username ":staff " home-dir "/.ssh")
+                (str "sudo chmod 700 " home-dir "/.ssh")
+                (str "sudo chmod 600 " home-dir "/.ssh/authorized_keys")
+                (str "sudo bash -c 'printf \"eval \\$(/usr/libexec/path_helper -s)\\nexport LANG=en_US.UTF-8\\nexport LC_ALL=en_US.UTF-8\\n\" > " home-dir "/.bashrc'")
+                (str "sudo bash -c 'echo \"source ~/.bashrc\" > " home-dir "/.bash_profile'")
+                (str "sudo chown " username ":staff " home-dir "/.bashrc " home-dir "/.bash_profile")]
+          combined (str/join " && " cmds)
+          result (ssh-exec! resource combined)]
+      (if (= 0 (:exit result))
+        (do
+          (log/info "Created workspace user" username "on" (:id resource))
+          {:macos-user username :home-dir home-dir})
+        (do
+          (log/error "Failed to create workspace user" username
+                     "on" (:id resource) ":" (:err result))
+          nil)))))
+
+(defn ensure-user!
+  "Ensure a macOS user exists (for warm/workspace builds).
+   Creates the user if it doesn't exist, returns info either way."
+  [resource username]
+  (if (user-exists? resource username)
+    (do
+      (log/info "Workspace user" username "already exists on" (:id resource))
+      {:macos-user username :home-dir (str "/Users/" username)})
+    (create-named-user! resource username)))
 
 (defn delete-user!
   "Delete a macOS user account and home directory."

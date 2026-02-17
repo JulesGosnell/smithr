@@ -21,6 +21,9 @@
      {:get    {:handler h/get-lease}
       :delete {:handler h/release-lease}}]
     ["/hosts" {:get {:handler h/list-hosts}}]
+    ["/workspaces" {:get {:handler h/list-workspaces}}]
+    ["/workspaces/:name" {:get    {:handler h/get-workspace}
+                          :delete {:handler h/purge-workspace}}]
     ["/health" {:get {:handler h/health-check}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])
 

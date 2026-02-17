@@ -5,7 +5,7 @@ info:
     Manages phones, emulators, macOS VMs, and iOS simulators across
     multiple hosts. Push-based state via Docker events, atomic leasing
     with SSH tunnel provisioning.
-  version: "0.1.0"
+  version: "0.2.0"
   contact:
     name: Smithr
     url: https://github.com/JulesGosnell/smithr
@@ -108,8 +108,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Lease"
+        "400":
+          description: Invalid request (e.g., bad workspace name)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "409":
-          description: No matching resource available
+          description: No matching resource available or workspace already leased
           content:
             application/json:
               schema:
@@ -148,6 +154,62 @@ paths:
           description: Lease released
         "404":
           description: Lease not found
+
+  /api/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List all workspaces
+      description: |
+        Returns all named workspaces across all macOS VMs.
+        Workspaces are persistent build environments that survive lease releases.
+      responses:
+        "200":
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workspace"
+
+  /api/workspaces/{name}:
+    get:
+      operationId: getWorkspace
+      summary: Get a workspace by name
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "404":
+          description: Workspace not found
+    delete:
+      operationId: purgeWorkspace
+      summary: Purge a workspace (delete macOS user and home directory)
+      description: |
+        Permanently deletes the workspace, its macOS user account, and home directory.
+        Only works when the workspace is idle (not currently leased).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Workspace purged
+        "404":
+          description: Workspace not found
+        "409":
+          description: Workspace is currently leased
 
   /api/hosts:
     get:
@@ -282,6 +344,15 @@ components:
           enum: [build, phone]
           default: phone
           description: Type of lease - build (shared, concurrent) or phone (exclusive)
+        workspace:
+          type: string
+          pattern: "^[a-zA-Z][a-zA-Z0-9-]{2,30}$"
+          description: |
+            Named workspace for warm/persistent builds. When provided, the macOS
+            user account and home directory persist across lease releases, so
+            subsequent builds can reuse cached dependencies and source code.
+            Implies lease_type=build. Only one lease per workspace at a time.
+          example: artha-build-1
 
     Lease:
       type: object
@@ -308,12 +379,42 @@ components:
           type: string
           enum: [build, phone]
           description: Type of lease
+        workspace:
+          type: string
+          description: Workspace name (warm builds only)
+          example: artha-build-1
         macos_user:
           type: string
           description: macOS user account (build leases only)
           example: build-a1b2c3d4
         connection:
           $ref: "#/components/schemas/Connection"
+
+    Workspace:
+      type: object
+      required: [name, resource_id, macos_user, status]
+      properties:
+        name:
+          type: string
+          description: Workspace name (also the macOS username)
+          example: artha-build-1
+        resource_id:
+          type: string
+          description: macOS VM resource this workspace lives on
+        macos_user:
+          type: string
+          description: macOS user account
+        status:
+          type: string
+          enum: [idle, leased]
+          description: Whether the workspace is currently in use
+        lease_id:
+          type: string
+          format: uuid
+          description: Active lease ID (when status is leased)
+        created_at:
+          type: string
+          format: date-time
 
     Host:
       type: object

@@ -156,6 +156,41 @@
                    :font-size "0.85rem"}}
      err]))
 
+(defn workspace-card [ws]
+  (let [status (:status ws)
+        leased? (= status "leased")]
+    [:div.resource-card {:class (if leased? "shared" "warm")}
+     [:div.resource-id (:name ws)]
+     [:div.resource-meta
+      [:span.badge "workspace"]
+      [:span.badge (:macos_user ws)]
+      [:span.badge {:style {:background (if leased? "var(--red)" "var(--green)")
+                            :color "white"}}
+       status]]
+     (when leased?
+       (when-let [lease (some #(when (= (:id %) (:lease_id ws)) %) @state/leases)]
+         [:div.lease-info
+          [:span.lessee (:lessee lease)]
+          [:span " | "]
+          [:span.ttl (time-remaining (:expires_at lease))]]))
+     [:div {:style {:margin-top "0.5rem" :display "flex" :gap "0.5rem"}}
+      (when-not leased?
+        [:button.btn.release
+         {:on-click #(api/purge-workspace! (:name ws))
+          :style {:background "var(--red)" :color "white" :font-size "0.75rem"}}
+         "Purge"])]]))
+
+(defn workspace-panel []
+  (let [wss @state/workspaces]
+    (when (seq wss)
+      [:div.host-panel
+       [:div.host-header
+        [:h2 "Workspaces"]
+        [:span.host-status.connected (str (count wss) " workspace" (when (> (count wss) 1) "s"))]]
+       [:div.resources
+        (for [ws (sort-by :name wss)]
+          ^{:key (:name ws)} [workspace-card ws])]])))
+
 (defn dashboard []
   (let [host-labels (->> @state/resources
                          (map :host)
@@ -171,6 +206,7 @@
      [header]
      [error-banner]
      [summary-bar]
+     [workspace-panel]
      [:div.hosts
       (if (seq all-hosts)
         (for [h all-hosts]

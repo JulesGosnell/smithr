@@ -118,16 +118,28 @@
 (defn acquire-lease
   "POST /api/leases"
   [request]
-  (let [body   (:body-params request)
-        params {:type        (or (:type body) (get body "type"))
-                :platform    (or (:platform body) (get body "platform"))
-                :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
-                :lessee      (or (:lessee body) (get body "lessee") "anonymous")
-                :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}]
+  (let [body      (:body-params request)
+        workspace (or (:workspace body) (get body "workspace"))
+        params    (cond-> {:type        (or (:type body) (get body "type"))
+                           :platform    (or (:platform body) (get body "platform"))
+                           :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
+                           :lessee      (or (:lessee body) (get body "lessee") "anonymous")
+                           :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}
+                    workspace (assoc :workspace workspace))]
     (log/info "Lease request:" params)
-    (if-let [result (lease/acquire! params)]
-      (json-response 201 (serialize-lease result))
-      (conflict (str "No available " (:type params) ":" (:platform params) " resource")))))
+    (try
+      (if-let [result (lease/acquire! params)]
+        (json-response 201 (serialize-lease result))
+        (conflict (str "No available " (:type params) ":" (:platform params) " resource")))
+      (catch clojure.lang.ExceptionInfo e
+        (let [data (ex-data e)]
+          (if (:lease-id data)
+            ;; Workspace already leased
+            (conflict (str "Workspace '" (:workspace data) "' is already leased"))
+            ;; Invalid workspace name
+            {:status 400
+             :body   {:error "bad_request"
+                      :message (.getMessage e)}}))))))
 
 (defn release-lease
   "DELETE /api/leases/:id"
@@ -145,14 +157,51 @@
 (defn health-check
   "GET /api/health"
   [_request]
-  (let [hosts     (state/hosts)
-        resources (state/resources)
-        leases    (state/leases)
+  (let [hosts      (state/hosts)
+        resources  (state/resources)
+        leases     (state/leases)
+        workspaces (state/workspaces)
         all-connected? (every? :connected? hosts)]
-    (json-response {:status    (if all-connected? "ok" "degraded")
-                    :hosts     (count hosts)
-                    :resources (count resources)
-                    :leases    (count leases)})))
+    (json-response {:status     (if all-connected? "ok" "degraded")
+                    :hosts      (count hosts)
+                    :resources  (count resources)
+                    :leases     (count leases)
+                    :workspaces (count workspaces)})))
+
+;; ---------------------------------------------------------------------------
+;; Workspace handlers
+;; ---------------------------------------------------------------------------
+
+(defn- serialize-workspace [ws]
+  (-> ws
+      (update :status name)
+      (update :created-at (fn [t] (when t (str t))))
+      kw->underscore))
+
+(defn list-workspaces
+  "GET /api/workspaces"
+  [_request]
+  (json-response (mapv serialize-workspace (state/workspaces))))
+
+(defn get-workspace
+  "GET /api/workspaces/:name"
+  [request]
+  (let [ws-name (get-in request [:path-params :name])]
+    (if-let [ws (state/workspace ws-name)]
+      (json-response (serialize-workspace ws))
+      (not-found (str "Workspace not found: " ws-name)))))
+
+(defn purge-workspace
+  "DELETE /api/workspaces/:name"
+  [request]
+  (let [ws-name (get-in request [:path-params :name])]
+    (if-let [ws (state/workspace ws-name)]
+      (if (= (:status ws) :leased)
+        (conflict (str "Workspace '" ws-name "' is currently leased — release the lease first"))
+        (do
+          (lease/purge-workspace! ws-name)
+          {:status 204 :body nil}))
+      (not-found (str "Workspace not found: " ws-name)))))
 
 (defn serve-openapi
   "GET /openapi.yaml"
