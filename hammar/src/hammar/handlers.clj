@@ -202,6 +202,16 @@
           {:status 204 :body nil}))
       (not-found (str "Workspace not found: " ws-name)))))
 
+(defn list-events
+  "GET /api/events"
+  [request]
+  (let [params (:query-params request)
+        limit  (some-> (get params "limit") parse-long)
+        events (if limit
+                 (state/events limit)
+                 (state/events))]
+    (json-response (vec events))))
+
 (defn serve-openapi
   "GET /openapi.yaml"
   [_request]

@@ -6,7 +6,8 @@
   (atom {:resources  {}   ;; resource-id -> Resource
          :leases     {}   ;; lease-id -> Lease
          :hosts      {}   ;; host-label -> Host
-         :workspaces {}}  ;; workspace-name -> Workspace
+         :workspaces {}   ;; workspace-name -> Workspace
+         :events     []}  ;; vec of event maps, newest last
          ))
 
 ;; ---------------------------------------------------------------------------
@@ -116,6 +117,37 @@
                         (and (= (:status r) :shared)
                              (< (count (:active-leases r #{}))
                                 (:max-slots r 10))))))))
+
+;; ---------------------------------------------------------------------------
+;; Event log
+;; ---------------------------------------------------------------------------
+
+(def ^:private max-events 500)
+(def ^:private max-age-hours 24)
+
+(defn record-event!
+  "Append an event to the audit log. Trims by count and age."
+  [event-type data]
+  (let [now    (java.time.Instant/now)
+        cutoff (.minus now (java.time.Duration/ofHours max-age-hours))
+        event  (assoc data
+                 :type event-type
+                 :timestamp (str now))]
+    (swap! state update :events
+           (fn [evts]
+             (let [evts (conj evts event)
+                   ;; Trim by age
+                   evts (filterv #(pos? (compare (:timestamp %) (str cutoff))) evts)
+                   ;; Trim by count
+                   evts (if (> (count evts) max-events)
+                          (vec (drop (- (count evts) max-events) evts))
+                          evts)]
+               evts)))))
+
+(defn events
+  "Get all events, optionally limited to last n."
+  ([] (:events @state))
+  ([n] (take-last n (:events @state))))
 
 (defn available-for-phone
   "Get macOS VMs available for an exclusive phone lease.

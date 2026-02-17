@@ -57,7 +57,7 @@ sudo dscl . -create "/Users/${USERNAME}" RealName "Build ${USERNAME}"
 sudo dscl . -create "/Users/${USERNAME}" UniqueID "${UID_NUM}"
 sudo dscl . -create "/Users/${USERNAME}" PrimaryGroupID 20
 sudo dscl . -create "/Users/${USERNAME}" NFSHomeDirectory "${HOME_DIR}"
-sudo createhomedir -c -u "${USERNAME}" 2>/dev/null || sudo mkdir -p "${HOME_DIR}"
+sudo createhomedir -c -u "${USERNAME}" >/dev/null 2>&1 || sudo mkdir -p "${HOME_DIR}"
 
 # Add to SSH access group (required by macOS for SSH login)
 sudo dscl . -append /Groups/com.apple.access_ssh GroupMembership "${USERNAME}"
@@ -73,6 +73,14 @@ sudo chmod 600 "${HOME_DIR}/.ssh/authorized_keys"
 sudo bash -c "printf 'eval \$(/usr/libexec/path_helper -s)\nexport LANG=en_US.UTF-8\nexport LC_ALL=en_US.UTF-8\n' > ${HOME_DIR}/.bashrc"
 sudo bash -c "echo 'source ~/.bashrc' > ${HOME_DIR}/.bash_profile"
 sudo chown "${USERNAME}:staff" "${HOME_DIR}/.bashrc" "${HOME_DIR}/.bash_profile"
+
+# Copy CoreSimulator config from smithr (includes SDK-to-runtime overrides)
+SMITHR_CORESIM="/Users/smithr/Library/Developer/CoreSimulator"
+if [[ -f "${SMITHR_CORESIM}/RuntimeMap.plist" ]]; then
+    sudo mkdir -p "${HOME_DIR}/Library/Developer/CoreSimulator"
+    sudo cp "${SMITHR_CORESIM}/RuntimeMap.plist" "${HOME_DIR}/Library/Developer/CoreSimulator/"
+    sudo chown -R "${USERNAME}:staff" "${HOME_DIR}/Library"
+fi
 
 echo "Created user ${USERNAME} at ${HOME_DIR}" >&2
 echo "${HOME_DIR}"

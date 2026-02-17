@@ -1,7 +1,8 @@
 (ns hammar.macos
   "macOS user lifecycle management via SSH.
    Creates and deletes per-build user accounts on macOS VMs
-   for isolated concurrent build access."
+   for isolated concurrent build access.
+   Scripts are bootstrapped onto VMs via scp from the local repo."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
@@ -19,16 +20,40 @@
           candidates (remove nil?
                        [configured
                         "layers/scripts/ios/ssh/macos-ssh-key"
+                        "../layers/scripts/ios/ssh/macos-ssh-key"
                         "/ssh-key/macos-ssh-key"])
-          found (or (first (filter #(.exists (java.io.File. %)) candidates))
-                    (first candidates))]
-      (log/info "Resolved SSH key path:" found)
-      found)))
+          found (first (filter #(.exists (java.io.File. %)) candidates))]
+      (if found
+        (let [abs (.getCanonicalPath (java.io.File. found))]
+          (log/info "Resolved SSH key path:" abs)
+          abs)
+        (do
+          (log/warn "No SSH key found, tried:" (pr-str candidates))
+          (first candidates))))))
 
 (defn- ssh-key-path [] @cached-ssh-key-path)
 
-(defn- ssh-exec!
-  "Execute a command on a macOS VM via SSH.
+;; ---------------------------------------------------------------------------
+;; Bootstrap — sync build-user scripts to VM via scp
+;; ---------------------------------------------------------------------------
+
+(def ^:private remote-script-dir "/Users/smithr/bin")
+(def ^:private local-script-dir "layers/scripts/ios/build-user")
+
+(defonce ^:private bootstrapped-vms
+  (atom #{}))
+
+(defn- resolve-script-dir
+  "Find the local build-user scripts directory."
+  []
+  (let [candidates [local-script-dir
+                    (str "../" local-script-dir)]
+        found (first (filter #(.isDirectory (java.io.File. %)) candidates))]
+    (when found
+      (.getCanonicalPath (java.io.File. found)))))
+
+(defn- ssh-exec-raw!
+  "Execute a command on a macOS VM via SSH (no bootstrap check).
    Returns {:exit int :out string :err string}."
   [resource cmd]
   (let [{:keys [ssh-host ssh-port]} (:connection resource)
@@ -46,6 +71,49 @@
                 "err:" (str/trim (:err result))))
     result))
 
+(defn- bootstrap!
+  "Ensure build-user scripts are synced to the VM.
+   Copies scripts from the local repo to the VM via scp.
+   Idempotent — tracks bootstrapped VMs in memory."
+  [resource]
+  (let [rid (:id resource)]
+    (when-not (@bootstrapped-vms rid)
+      (let [script-dir (resolve-script-dir)]
+        (if-not script-dir
+          (do (log/error "Cannot find local script directory" local-script-dir)
+              false)
+          (let [{:keys [ssh-host ssh-port]} (:connection resource)
+                key-path (ssh-key-path)
+                _ (log/info "Bootstrapping scripts on" rid "from" script-dir)
+                ;; Create remote dir
+                mkdir-result (ssh-exec-raw! resource
+                               (str "mkdir -p " remote-script-dir))
+                ;; scp scripts
+                scp-result (when (= 0 (:exit mkdir-result))
+                             (sh "scp" "-r"
+                                 "-i" key-path
+                                 "-o" "StrictHostKeyChecking=no"
+                                 "-P" (str (or ssh-port 10022))
+                                 (str script-dir "/.")
+                                 (str "smithr@" ssh-host ":" remote-script-dir "/")))]
+            (if (and scp-result (= 0 (:exit scp-result)))
+              (do
+                (log/info "Bootstrapped scripts on" rid)
+                (swap! bootstrapped-vms conj rid)
+                true)
+              (do
+                (log/error "Failed to bootstrap scripts on" rid
+                           ":" (or (:err scp-result) (:err mkdir-result)))
+                false))))))))
+
+(defn- ssh-exec!
+  "Execute a command on a macOS VM via SSH.
+   Ensures the smithr repo is bootstrapped before execution.
+   Returns {:exit int :out string :err string}."
+  [resource cmd]
+  (bootstrap! resource)
+  (ssh-exec-raw! resource cmd))
+
 (defn user-exists?
   "Check if a macOS user exists on the VM."
   [resource username]
@@ -60,7 +128,7 @@
   [resource username real-name]
   (log/info "Creating macOS user" username "on" (:id resource))
   (let [result (ssh-exec! resource
-                          (str "/Users/smithr/bin/create-build-user.sh " username))]
+                          (str remote-script-dir "/create-build-user.sh " username))]
     (if (= 0 (:exit result))
       (let [home-dir (str/trim (:out result))]
         (log/info "Created macOS user" username "on" (:id resource)
@@ -107,7 +175,7 @@
   [resource macos-user]
   (log/info "Deleting macOS user" macos-user "on" (:id resource))
   (let [result (ssh-exec! resource
-                          (str "/Users/smithr/bin/delete-build-user.sh " macos-user))]
+                          (str remote-script-dir "/delete-build-user.sh " macos-user))]
     (when (not= 0 (:exit result))
       (log/warn "Failed to fully clean up user" macos-user
                 "on" (:id resource) ":" (:err result)))
@@ -116,7 +184,7 @@
 (defn list-build-users
   "List existing build user accounts on a macOS VM via list-build-users.sh."
   [resource]
-  (let [result (ssh-exec! resource "/Users/smithr/bin/list-build-users.sh")]
+  (let [result (ssh-exec! resource (str remote-script-dir "/list-build-users.sh"))]
     (if (and (= 0 (:exit result))
              (not (str/blank? (:out result))))
       (str/split-lines (str/trim (:out result)))

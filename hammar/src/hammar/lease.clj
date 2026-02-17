@@ -218,6 +218,15 @@
                         "resource:" (:id resource) "lessee:" lessee
                         "user:" (:macos-user user-info)
                         (when workspace (str "workspace:" workspace)))
+              (state/record-event! "lease"
+                {:lessee    lessee
+                 :container (:container resource)
+                 :resource  (:id resource)
+                 :lease-id  lease-id
+                 :lease-type "build"
+                 :ttl       ttl-seconds
+                 :workspace workspace
+                 :user      (:macos-user user-info)})
               (assoc lease
                      :connection connection
                      :macos-user (:macos-user user-info)))
@@ -254,6 +263,13 @@
                     "lessee:" lessee "ttl:" ttl-seconds "s"
                     "tunnel-port:" (:port tunnel)
                     (when parent-lease-id (str "parent-hold:" parent-lease-id)))
+          (state/record-event! "lease"
+            {:lessee    lessee
+             :container (:container resource)
+             :resource  (:id resource)
+             :lease-id  lease-id
+             :lease-type "phone"
+             :ttl       ttl-seconds})
           (cond-> (assoc lease :connection {:tunnel-port (:port tunnel)})
             parent-lease-id (assoc :parent-lease-id parent-lease-id)))))))
 
@@ -321,7 +337,16 @@
                 (when (= (:lease-type lease) :build)
                   (str (if (:workspace lease)
                          (str "(workspace: " (:workspace lease) ")")
-                         (str "(build user: " (:macos-user lease) ")"))))))
+                         (str "(build user: " (:macos-user lease) ")")))))
+      (state/record-event! "unlease"
+        {:lessee       (:lessee lease)
+         :container    (some-> (state/resource (:resource-id lease)) :container)
+         :resource     (:resource-id lease)
+         :lease-id     lease-id
+         :lease-type   (some-> (:lease-type lease) name)
+         :workspace    (:workspace lease)
+         :held-seconds (when-let [acq (:acquired-at lease)]
+                         (.getSeconds (Duration/between acq (Instant/now))))}))
     (boolean @unleased-lease)))
 
 ;; ---------------------------------------------------------------------------
@@ -369,6 +394,11 @@
        (log/info "GC: expiring lease" (:id lease)
                  "resource:" (:resource-id lease)
                  "lessee:" (:lessee lease))
+       (state/record-event! "gc"
+         {:lessee    (:lessee lease)
+          :container (some-> (state/resource (:resource-id lease)) :container)
+          :resource  (:resource-id lease)
+          :lease-id  (:id lease)})
        (unlease! (:id lease)))
      (count expired))))
 

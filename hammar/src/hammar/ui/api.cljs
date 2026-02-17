@@ -45,11 +45,19 @@
      :response-format :json
      :keywords?       true}))
 
+(defn fetch-events! []
+  (GET (str base-url "/api/events?limit=50")
+    {:handler         #(reset! state/events %)
+     :error-handler   (partial handle-error "Events")
+     :response-format :json
+     :keywords?       true}))
+
 (defn fetch-all! []
   (fetch-resources!)
   (fetch-leases!)
   (fetch-hosts!)
   (fetch-workspaces!)
+  (fetch-events!)
   (fetch-health!))
 
 (defn acquire-lease!

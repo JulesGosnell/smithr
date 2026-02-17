@@ -24,7 +24,8 @@
     ["/workspaces" {:get {:handler h/list-workspaces}}]
     ["/workspaces/:name" {:get    {:handler h/get-workspace}
                           :delete {:handler h/purge-workspace}}]
-    ["/health" {:get {:handler h/health-check}}]]
+    ["/health" {:get {:handler h/health-check}}]
+    ["/events" {:get {:handler h/list-events}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])
 
 (defn app

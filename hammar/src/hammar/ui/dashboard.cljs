@@ -23,7 +23,8 @@
         :else (str (int (/ delta 3600)) "h " (int (/ (mod delta 3600) 60)) "m")))))
 
 (defn- countdown-urgency
-  "Return urgency class based on % of TTL remaining."
+  "Return urgency class based on % of TTL remaining.
+   Final 20% is urgent (red pulsing)."
   [expires-at ttl-seconds]
   (when (and expires-at ttl-seconds (pos? ttl-seconds))
     (let [exp (.getTime (js/Date. expires-at))
@@ -32,7 +33,7 @@
           pct (/ remaining ttl-seconds)]
       (cond
         (<= pct 0)   "expired"
-        (<= pct 0.1) "urgent"
+        (<= pct 0.2) "urgent"
         (<= pct 0.5) "warning"
         :else         "ok"))))
 
@@ -240,6 +241,66 @@
   (when-let [err @state/error]
     [:div.error-banner err]))
 
+;; ---------------------------------------------------------------------------
+;; Audit pane — event history
+;; ---------------------------------------------------------------------------
+
+(defn- format-time
+  "Format ISO timestamp to HH:MM:SS."
+  [ts]
+  (when ts
+    (let [d (js/Date. ts)]
+      (str (.padStart (str (.getHours d)) 2 "0") ":"
+           (.padStart (str (.getMinutes d)) 2 "0") ":"
+           (.padStart (str (.getSeconds d)) 2 "0")))))
+
+(defn- format-duration [seconds]
+  (when (and seconds (pos? seconds))
+    (cond
+      (>= seconds 3600) (str (int (/ seconds 3600)) "h " (int (/ (mod seconds 3600) 60)) "m")
+      (>= seconds 60)   (str (int (/ seconds 60)) "m " (int (mod seconds 60)) "s")
+      :else              (str (int seconds) "s"))))
+
+(defn- event-description [event]
+  (let [t (:type event)
+        lessee (or (:lessee event) "?")
+        container (or (:container event) (:resource event) "?")
+        lease-type (or (:lease_type event) "")
+        ttl (:ttl event)
+        held (:held_seconds event)
+        ws (:workspace event)]
+    (case t
+      "lease"   (str lessee " leases " container
+                     (when (seq lease-type) (str " (" lease-type ")"))
+                     (when ws (str " workspace:" ws))
+                     (when ttl (str " for " (format-duration ttl))))
+      "unlease" (str lessee " unleases " container
+                     (when ws (str " workspace:" ws))
+                     (when held (str " held " (format-duration held))))
+      "gc"      (str "GC expires " container " (" lessee ")")
+      (str t " " container))))
+
+(defn- event-icon [event-type]
+  (case event-type
+    "lease"   "\uD83D\uDD12"   ;; 🔒
+    "unlease" "\uD83D\uDD11"   ;; 🔑
+    "gc"      "\uD83D\uDDD1"   ;; 🗑
+    "\u2022"))                   ;; •
+
+(defn audit-pane []
+  (let [events (reverse @state/events)]
+    [:div.audit-pane
+     [:div.audit-header "History"]
+     [:div.audit-log
+      (if (seq events)
+        (for [[i event] (map-indexed vector events)]
+          ^{:key i}
+          [:div.audit-entry {:class (:type event)}
+           [:span.audit-time (format-time (:timestamp event))]
+           [:span.audit-icon (event-icon (:type event))]
+           [:span.audit-desc (event-description event)]])
+        [:div.audit-empty "No events yet"])]]))
+
 (defn dashboard []
   (let [all-resources @state/resources
         host-labels (->> all-resources (map :host) distinct sort)
@@ -252,4 +313,5 @@
       (if (seq all-hosts)
         (for [h all-hosts]
           ^{:key h} [host-box h all-resources])
-        [:div.empty "No hosts connected. Waiting for Docker events..."])]]))
+        [:div.empty "No hosts connected. Waiting for Docker events..."])]
+     [audit-pane]]))
