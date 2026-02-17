@@ -55,8 +55,8 @@ smithr/
 ├── layers/                     ← Docker Compose layers
 │   ├── hammar.yml              ← Clojure service container (port 7070)
 │   ├── android.yml             ← Android emulator (labelled smithr.managed=true)
-│   ├── ios.yml                 ← macOS VM (labelled smithr.managed=true)
-│   ├── ios-sim.yml             ← iOS Simulator sidecar (labelled)
+│   ├── xcode.yml               ← macOS+Xcode VM (labelled smithr.managed=true)
+│   ├── ios.yml                 ← iOS Simulator sidecar (labelled)
 │   ├── email.yml               ← Mock Resend email API (port 3100)
 │   ├── sms.yml                 ← Mock Twilio SMS API (port 3200)
 │   ├── network.yml, database.yml, dns.yml, tls-proxy.yml, dind.yml, metro.yml
@@ -122,7 +122,7 @@ labels:
   smithr.resource.type: "phone"       # phone | vm
   smithr.resource.platform: "android" # android | ios | macos
   smithr.resource.pool: "android"     # pool grouping
-  smithr.resource.parent: "smithr-ios-fe"  # (optional) parent container
+  smithr.resource.parent: "smithr-xcode-fe"  # (optional) parent container
 ```
 
 ## Config Files

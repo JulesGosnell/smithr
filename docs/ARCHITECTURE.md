@@ -205,8 +205,8 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | TLS Proxy | `layers/tls-proxy.yml` | Caddy with pre-generated CA |
 | Database | `layers/database.yml` | PostgreSQL + Redis |
 | Android Phone | `layers/android.yml` | Parameterised Android emulator |
-| iOS macOS VM | `layers/ios.yml` | macOS VM via Docker-OSX (QEMU/KVM) |
-| iOS Simulator | `layers/ios-sim.yml` | iOS Simulator sidecar (boots inside macOS VM) |
+| Xcode VM | `layers/xcode.yml` | macOS+Xcode VM via Docker-OSX (QEMU/KVM) |
+| iOS Simulator | `layers/ios.yml` | iOS Simulator sidecar (boots inside Xcode VM) |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
 | Smithr Service | `layers/hammar.yml` | Clojure control plane (port 7070) |
 
@@ -630,8 +630,8 @@ smithr/
 │   ├── dns.yml                 # dnsmasq for service discovery
 │   ├── tls-proxy.yml           # Caddy TLS termination
 │   ├── android.yml             # Parameterised Android emulator
-│   ├── ios.yml                 # macOS VM via Docker-OSX (QEMU/KVM)
-│   ├── ios-sim.yml             # iOS Simulator sidecar (boots inside macOS VM)
+│   ├── xcode.yml               # macOS+Xcode VM via Docker-OSX (QEMU/KVM)
+│   ├── ios.yml                 # iOS Simulator sidecar (boots inside Xcode VM)
 │   ├── metro.yml               # React Native Metro bundler
 │   ├── dind.yml                # Docker-in-Docker daemon (for sandboxes)
 │   └── scripts/

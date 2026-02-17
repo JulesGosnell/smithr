@@ -254,8 +254,8 @@ cmd_warm() {
             SMITHR_MACOS_IP="$ip" \
             docker compose \
                 -f "${SMITHR_ROOT}/layers/network.yml" \
+                -f "${SMITHR_ROOT}/layers/xcode.yml" \
                 -f "${SMITHR_ROOT}/layers/ios.yml" \
-                -f "${SMITHR_ROOT}/layers/ios-sim.yml" \
                 -p "$project_name" \
                 up -d
 

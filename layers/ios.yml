@@ -1,113 +1,73 @@
 # layers/ios.yml
 #
-# iOS Phone Layer - macOS VM with iOS Simulator
+# iOS Simulator Sidecar - Boots iOS Simulator inside the macOS VM
 #
-# Runs macOS Sonoma via Docker-OSX (QEMU) with iOS Simulator.
-# Uses QCOW2 overlays so the base image is never modified.
+# This adds an Alpine sidecar container that SSHs into the macOS VM
+# and boots the iOS Simulator with the configured device.
 #
-# Architecture Stack:
-#   Linux Host (Fedora)
-#   +-- Docker Container (sickcodes/docker-osx)
-#       +-- QEMU/KVM Virtual Machine
-#           +-- macOS Sonoma
-#               +-- Xcode + iOS Simulator
-#                   +-- Your iOS App
+# Requires: layers/xcode.yml (provides the 'macos' service)
 #
-# Requirements:
-#   - KVM available (/dev/kvm) for hardware virtualisation
-#   - macOS base image at configured path
-#   - ~22GB RAM per macOS VM instance
-#
-# Apple Constraint:
-#   Only ONE instance of each iPhone model per macOS VM.
-#   For duplicate models, use separate macOS VMs (separate compose instances).
+# Architecture:
+#   ios.yml
+#   +-- xcode.yml (macos service)
+#       +-- macOS VM + Simulator (booted by ios sidecar)
 #
 # Usage:
 #   SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
-#     docker compose -f layers/network.yml -f layers/ios.yml up -d
+#     docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml up -d
 #
-# Environment Variables:
-#   SMITHR_PREFIX            - Container name prefix (default: smithr)
-#   SMITHR_IOS_RUNE         - VM instance ID (default: 0)
-#   SMITHR_MACOS_IMAGE       - Path to macOS base image (REQUIRED)
-#   SMITHR_MACOS_RAM         - RAM for macOS VM in GB (default: 22)
-#   SMITHR_MACOS_CORES       - CPU cores for VM (default: 4)
-#   SMITHR_MACOS_CPU         - CPU model (default: Haswell-noTSX) - CRITICAL for AMD
-#   SMITHR_MACOS_VGA         - VGA type (default: vmware)
-#   SMITHR_MACOS_VNC_PORT    - Host VNC port (default: 5999)
-#   SMITHR_MACOS_SSH_PORT    - Host SSH port (default: 50922)
-#   SMITHR_MACOS_IP          - Fixed IP on smithr-network (default: 10.21.0.40)
-#   SMITHR_IOS_DEVICE        - iOS device model (default: iPhone 16)
-#   SMITHR_IOS_RUNTIME       - iOS runtime version (default: iOS 18.3)
-#   SMITHR_MACOS_SSH_USER    - SSH user on macOS (default: smithr)
-#   SMITHR_MACOS_MAX_SLOTS   - Max concurrent build leases per VM (default: 10)
-#   SMITHR_SCRIPTS_DIR       - Path to iOS scripts (default: ./layers/scripts/ios)
-#
-# Networking:
-#   macOS guest uses QEMU NAT (10.0.2.x). For server connectivity,
-#   use socat inside the container to bridge ports.
+# The sidecar:
+#   1. Waits for macOS to become healthy (SSH + Dock running)
+#   2. Shuts down any existing simulator devices (clean slate)
+#   3. Boots the requested device by UUID
+#   4. Opens Simulator.app
+#   5. Verifies device is booted
+#   6. Stays running so healthcheck can verify
+
+include:
+  - xcode.yml
 
 services:
-  macos:
-    image: sickcodes/docker-osx:latest
-    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}
-    # Use our custom launch script that omits the unnecessary InstallMedia drive
-    entrypoint: ["/bin/bash"]
-    command: ["/launch.sh"]
-    devices:
-      - /dev/kvm
-    ports:
-      - "${SMITHR_MACOS_SSH_PORT:-50922}:10022"
-      - "${SMITHR_MACOS_VNC_PORT:-5999}:5999"
+  ios:
+    image: alpine:latest
+    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_XCODE_RUNE:-fe}
+    depends_on:
+      macos:
+        condition: service_healthy
     volumes:
-      # Mount disk image to the path QEMU expects
-      - "${SMITHR_MACOS_IMAGE:?SMITHR_MACOS_IMAGE must be set}:/home/arch/OSX-KVM/mac_hdd_ng.img"
-      # Custom launch script (no BaseSystem/InstallMedia needed)
-      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/launch-preinstalled.sh:/launch.sh:z"
-      # Health check scripts
-      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/macos-healthcheck.sh:/macos-healthcheck.sh:z"
-      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ios-healthcheck.sh:/ios-healthcheck.sh:z"
-      # SSH key for health checks
+      # Mount simulator boot script
+      - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ios-sim-boot.sh:/boot.sh:z"
       - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ssh/macos-ssh-key:/ssh-key/macos-ssh-key:z"
-      # Shared folder - available at /mnt/hostshare in macOS via virtio-9p
-      # Default to an empty temp dir if no project share is needed
-      - "${SMITHR_MACOS_SHARE:-/tmp/smithr-macos-share}:/mnt/hostshare:z"
     environment:
-      RAM: "${SMITHR_MACOS_RAM:-22}"
-      CORES: "${SMITHR_MACOS_CORES:-4}"
-      CPU: "${SMITHR_MACOS_CPU:-Haswell-noTSX}"
-      VGA: "${SMITHR_MACOS_VGA:-vmware}"
-      DISPLAY: ""
-      # VNC display :99 = port 5999
-      EXTRA: "-display none -vnc 0.0.0.0:99,password=off"
-      # Volatile by default (QCOW2 overlay protects base image)
-      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-fe}"
-      # Skip OpenCore boot picker (saves ~30s)
-      NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
-      BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"
-      # iOS Simulator configuration (used by healthcheck)
+      SSH_HOST: "${SMITHR_PREFIX:-smithr}-xcode-${SMITHR_XCODE_RUNE:-fe}"
+      SSH_PORT: "10022"
+      SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
+      SSH_KEY: "/ssh-key/macos-ssh-key"
       IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
-      SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache openssh-client
+        # Copy key to writable location (source mount may be :ro)
+        cp /ssh-key/macos-ssh-key /tmp/macos-ssh-key
+        chmod 600 /tmp/macos-ssh-key
+        export SSH_KEY=/tmp/macos-ssh-key
+        exec /boot.sh
     labels:
       smithr.managed: "true"
-      smithr.resource.type: "vm"
-      smithr.resource.platform: "macos"
+      smithr.resource.type: "phone"
+      smithr.resource.platform: "ios"
       smithr.resource.pool: "ios"
-      smithr.resource.max-slots: "${SMITHR_MACOS_MAX_SLOTS:-10}"
+      smithr.resource.parent: "${SMITHR_PREFIX:-smithr}-xcode-${SMITHR_XCODE_RUNE:-fe}"
     healthcheck:
-      # macOS health check: verifies SSH responsive + Dock running (desktop ready)
-      test: ["CMD", "bash", "/macos-healthcheck.sh"]
+      # Check that Simulator has a booted device
+      test: ["CMD-SHELL", "ssh -i /tmp/macos-ssh-key -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes -p $${SSH_PORT} $${SSH_USER}@$${SSH_HOST} \"xcrun simctl list devices booted 2>/dev/null | grep -qF '$${IOS_DEVICE} ('\""]
       interval: 5s
-      timeout: 10s
+      timeout: 5s
       retries: 60
-      start_period: 60s
+      start_period: 30s
     networks:
       default:
-        ipv4_address: ${SMITHR_MACOS_IP:-10.21.0.40}
+        # No fixed IP needed for sidecar
     restart: "no"
-
-networks:
-  default:
-    external: true
-    name: ${SMITHR_NETWORK_NAME:-smithr-network}

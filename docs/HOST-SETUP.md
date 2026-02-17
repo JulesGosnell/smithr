@@ -43,7 +43,7 @@ docker compose -f layers/android.yml up -d
 
 ```bash
 SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
-  docker compose -f layers/ios.yml up -d
+  docker compose -f layers/xcode.yml up -d
 ```
 
 **Note:** Each macOS VM needs ~22GB RAM. Adjust `SMITHR_MACOS_RAM` if needed.

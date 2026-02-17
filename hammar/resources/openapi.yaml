@@ -288,7 +288,7 @@ components:
         parent:
           type: string
           description: Parent container name (iOS simulators reference their macOS VM)
-          example: smithr-ios-fe
+          example: smithr-xcode-fe
         lease_id:
           type: string
           description: Active lease ID if leased

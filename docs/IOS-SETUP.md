@@ -81,11 +81,11 @@ ls -la /srv/shared/images/artha-sonoma.img
 # 2. Start the macOS VM + iOS Simulator
 cd /home/jules/src/smithr
 SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
-  docker compose -f layers/network.yml -f layers/ios.yml -f layers/ios-sim.yml up -d
+  docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml up -d
 
 # 3. Wait for healthy status
-docker inspect smithr-ios-0 --format '{{.State.Health.Status}}'     # macOS VM
-docker inspect smithr-ios-0-sim --format '{{.State.Health.Status}}' # iOS Simulator
+docker inspect smithr-xcode-fe --format '{{.State.Health.Status}}'  # macOS+Xcode VM
+docker inspect smithr-ios-fe --format '{{.State.Health.Status}}'    # iOS Simulator
 
 # 4. Verify via SSH
 ssh -i layers/scripts/ios/ssh/macos-ssh-key -o StrictHostKeyChecking=no -p 50922 smithr@localhost \
@@ -162,8 +162,8 @@ ssh -i "$SSH_KEY" -p 50922 smithr@localhost "
 
 | Container | Purpose | Ports |
 |-----------|---------|-------|
-| `smithr-ios-0` | macOS VM (QEMU/KVM) | SSH: 50922, VNC: 5999 |
-| `smithr-ios-0-sim` | Alpine sidecar (boots Simulator via SSH) | - |
+| `smithr-xcode-fe` | macOS+Xcode VM (QEMU/KVM) | SSH: 50922, VNC: 5999 |
+| `smithr-ios-fe` | Alpine sidecar (boots Simulator via SSH) | - |
 
 ### Networking
 
@@ -249,8 +249,8 @@ Two-stage health checking:
 ### In Smithr Repository
 ```
 layers/
-  ios.yml              # macOS VM Docker Compose
-  ios-sim.yml          # iOS Simulator sidecar Compose
+  xcode.yml            # macOS+Xcode VM Docker Compose
+  ios.yml              # iOS Simulator sidecar Compose
   scripts/ios/
     launch-preinstalled.sh   # Custom QEMU launch (no InstallMedia)
     ios-sim-boot.sh          # Boots Simulator via SSH

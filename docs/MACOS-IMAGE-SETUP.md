@@ -52,7 +52,7 @@ The image was prepared using `layers/scripts/ios/prep-smithr-image.sh`:
 # Boot in persistent mode (writes directly to image)
 SMITHR_MACOS_IMAGE=/srv/shared/images/smithr-sonoma.img \
 SMITHR_MACOS_PERSISTENT=1 \
-  docker compose -f layers/network.yml -f layers/ios.yml up -d
+  docker compose -f layers/network.yml -f layers/xcode.yml up -d
 
 # Wait for boot, then run prep
 ./layers/scripts/ios/prep-smithr-image.sh 50922 localhost --remove-claude
