@@ -67,6 +67,8 @@ KEEP_PHONE=false
 ACQUIRED_HANDLE=""
 CONFIG_PATH=""
 
+SMITHR_API="${SMITHR_API_URL:-http://localhost:7070}"
+
 cleanup() {
     if [[ -n "$ACQUIRED_HANDLE" ]] && ! $KEEP_PHONE; then
         log_info "Unleasing phone: ${ACQUIRED_HANDLE}"
@@ -363,21 +365,23 @@ cmd_run_android() {
         ACQUIRED_HANDLE=$("${SMITHR_ROOT}/bin/smithr-phone" get --platform "$PLATFORM" 2>/dev/null) || die "Could not acquire phone from pool"
         log_ok "Acquired phone: ${ACQUIRED_HANDLE}"
 
-        local adb_port
-        adb_port=$(echo "$ACQUIRED_HANDLE" | cut -d: -f3)
-        adb_target="localhost:${adb_port}"
-
-        # Derive container name from port
-        local idx=$((adb_port - 5555))
-        container_name="smithr-android-${idx}"
+        # Query the API for tunnel port
+        local lease_info
+        lease_info=$(curl -sf "${SMITHR_API}/api/leases/${ACQUIRED_HANDLE}" 2>/dev/null) || die "Could not get lease info"
+        local tunnel_port
+        tunnel_port=$(echo "$lease_info" | jq -r '.connection.tunnel_port // empty')
+        if [[ -n "$tunnel_port" ]]; then
+            adb_target="localhost:${tunnel_port}"
+        else
+            # Fallback: try ADB port from connection
+            local adb_port
+            adb_port=$(echo "$lease_info" | jq -r '.connection.adb_port // empty')
+            local adb_host
+            adb_host=$(echo "$lease_info" | jq -r '.connection.adb_host // "localhost"')
+            adb_target="${adb_host}:${adb_port:-5555}"
+        fi
     else
         adb_target="$DEVICE"
-        # Try to derive container name
-        local port="${adb_target##*:}"
-        if [[ "$port" =~ ^[0-9]+$ ]]; then
-            local idx=$((port - 5555))
-            container_name="smithr-android-${idx}"
-        fi
     fi
 
     # Connect ADB
@@ -468,7 +472,18 @@ cmd_run_ios() {
         log_info "Acquiring iOS phone from pool..."
         ACQUIRED_HANDLE=$("${SMITHR_ROOT}/bin/smithr-phone" get --platform ios 2>/dev/null) || die "Could not acquire iOS phone from pool"
         log_ok "Acquired phone: ${ACQUIRED_HANDLE}"
-        ssh_port=$(echo "$ACQUIRED_HANDLE" | cut -d: -f3)
+
+        # Query the API for tunnel port
+        local lease_info
+        lease_info=$(curl -sf "${SMITHR_API}/api/leases/${ACQUIRED_HANDLE}" 2>/dev/null) || die "Could not get lease info"
+        local tunnel_port
+        tunnel_port=$(echo "$lease_info" | jq -r '.connection.tunnel_port // empty')
+        if [[ -n "$tunnel_port" ]]; then
+            ssh_port="$tunnel_port"
+        else
+            ssh_port=$(echo "$lease_info" | jq -r '.connection.ssh_port // "10022"')
+            ssh_host=$(echo "$lease_info" | jq -r '.connection.ssh_host // "localhost"')
+        fi
     else
         # --device can be host:port or just port
         if [[ "$DEVICE" == *:* ]]; then

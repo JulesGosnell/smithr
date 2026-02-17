@@ -16,38 +16,44 @@ SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${SMITHR_ROOT}/bin/lib/common.sh"
 source "${SMITHR_ROOT}/bin/lib/phone-pool.sh"
 
+# Smithr API endpoint
+SMITHR_API="${SMITHR_API_URL:-http://localhost:7070}"
+
 usage() {
     cat <<EOF
 smithr phone — Manage the phone pool
 
 Usage:
-  smithr phone get --type <device> [--platform android|ios]
-      Acquire a warm phone. Returns a handle on stdout.
+  smithr phone get [--platform android|ios] [--ttl 1800] [--lessee name]
+      Acquire a warm phone via the Smithr API. Returns lease ID on stdout.
 
-  smithr phone unlease <handle>
+  smithr phone unlease <lease-id>
       Unlease a phone back to the pool.
 
-  smithr phone list
-      List all phones and their status.
+  smithr phone info <lease-id>
+      Show connection details for a lease.
+
+  smithr phone list [--platform android|ios] [--status warm|leased|shared]
+      List all resources and their status.
 
   smithr phone status
-      Show pool summary with lease details.
+      Show pool summary.
 
   smithr phone warm [--platform android] [--type pixel_7] [--count 4]
       Pre-warm phones into the pool. Starts containers and waits for health.
-
-  smithr phone reap
-      Clean up expired leases (run via cron for automated cleanup).
 
   smithr phone shutdown [--all]
       Gracefully shut down phones. Reverse order of startup.
       --all shuts down every phone. Without --all, only idle phones.
 
 Options:
-  --platform     Phone platform: android or ios (default: android)
-  --type         Device type/model (default: pixel_7 for android, iPhone 16 for ios)
-  --count        Number of phones to warm (default: 1)
+  --platform     Phone platform: android, ios, or macos (default: android)
+  --ttl          Lease duration in seconds (default: 1800)
+  --lessee       Lessee identifier (default: \$USER)
   --help         Show this help
+
+Environment:
+  SMITHR_API_URL   API endpoint (default: http://localhost:7070)
 EOF
 }
 
@@ -55,30 +61,118 @@ EOF
 PLATFORM="android"
 DEVICE_TYPE=""
 COUNT=1
+TTL=1800
+LESSEE="${USER:-anonymous}"
+STATUS_FILTER=""
+
+# API helper: call the Smithr API
+api_call() {
+    local method="$1" path="$2"
+    shift 2
+    local url="${SMITHR_API}${path}"
+    local result
+    result=$(curl -sf -X "$method" -H "Content-Type: application/json" "$@" "$url" 2>/dev/null) || {
+        log_error "API call failed: $method $path" >&2
+        return 1
+    }
+    echo "$result"
+}
 
 cmd_get() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --type) DEVICE_TYPE="$2"; shift 2 ;;
             --platform) PLATFORM="$2"; shift 2 ;;
+            --ttl) TTL="$2"; shift 2 ;;
+            --lessee) LESSEE="$2"; shift 2 ;;
             *) die "Unknown option for get: $1" ;;
         esac
     done
 
-    with_lock pool_acquire "$PLATFORM" "${DEVICE_TYPE:-any}"
+    # Map platform to resource type
+    local res_type="phone"
+    if [[ "$PLATFORM" == "macos" ]]; then
+        res_type="vm"
+    fi
+
+    local body
+    body=$(jq -n \
+        --arg type "$res_type" \
+        --arg platform "$PLATFORM" \
+        --argjson ttl "$TTL" \
+        --arg lessee "$LESSEE" \
+        '{type: $type, platform: $platform, ttl_seconds: $ttl, lessee: $lessee}')
+
+    local response
+    response=$(api_call POST /api/leases -d "$body") || die "Failed to acquire lease"
+
+    local lease_id tunnel_port resource_id
+    lease_id=$(echo "$response" | jq -r '.id')
+    tunnel_port=$(echo "$response" | jq -r '.connection.tunnel_port // empty')
+    resource_id=$(echo "$response" | jq -r '.resource_id')
+
+    log_ok "Acquired lease: ${lease_id}" >&2
+    log_info "  Resource: ${resource_id}" >&2
+    [[ -n "$tunnel_port" ]] && log_info "  Tunnel: localhost:${tunnel_port}" >&2
+
+    # Output lease ID on stdout (this is the handle)
+    echo "$lease_id"
 }
 
 cmd_unlease() {
-    local handle="${1:?Usage: smithr phone unlease <handle>}"
-    with_lock pool_unlease "$handle"
+    local lease_id="${1:?Usage: smithr phone unlease <lease-id>}"
+    api_call DELETE "/api/leases/${lease_id}" >/dev/null || die "Failed to unlease ${lease_id}"
+    log_ok "Unleased: ${lease_id}"
+}
+
+cmd_info() {
+    local lease_id="${1:?Usage: smithr phone info <lease-id>}"
+    local response
+    response=$(api_call GET "/api/leases/${lease_id}") || die "Lease not found: ${lease_id}"
+    echo "$response" | jq .
 }
 
 cmd_list() {
-    pool_list
+    local query=""
+    [[ "$PLATFORM" != "android" ]] && query="?platform=${PLATFORM}"
+    [[ -n "$STATUS_FILTER" ]] && {
+        if [[ -n "$query" ]]; then
+            query="${query}&status=${STATUS_FILTER}"
+        else
+            query="?status=${STATUS_FILTER}"
+        fi
+    }
+
+    local response
+    response=$(api_call GET "/api/resources${query}") || die "Failed to list resources"
+
+    echo "$response" | jq -r '.[] | "\(.id)\t\(.platform)\t\(.status)\t\(.container)"' | \
+        column -t -s $'\t' -N "ID,PLATFORM,STATUS,CONTAINER"
 }
 
 cmd_status() {
-    pool_status
+    local response
+    response=$(api_call GET /api/health) || die "Failed to get status"
+
+    local status hosts resources leases
+    status=$(echo "$response" | jq -r '.status')
+    hosts=$(echo "$response" | jq -r '.hosts')
+    resources=$(echo "$response" | jq -r '.resources')
+    leases=$(echo "$response" | jq -r '.leases')
+
+    echo -e "${BOLD}Smithr Status${NC}"
+    echo -e "  Status:    $(if [[ "$status" == "ok" ]]; then echo -e "${GREEN}${status}${NC}"; else echo -e "${RED}${status}${NC}"; fi)"
+    echo -e "  Hosts:     ${hosts}"
+    echo -e "  Resources: ${resources}"
+    echo -e "  Leases:    ${leases}"
+
+    if [[ $leases -gt 0 ]]; then
+        echo ""
+        echo -e "${BOLD}Active Leases:${NC}"
+        local lease_list
+        lease_list=$(api_call GET /api/leases) || return 0
+        echo "$lease_list" | jq -r '.[] | "  \(.id | .[0:8])  \(.resource_id)  \(.lessee)  \(.expires_at)"'
+    fi
 }
 
 cmd_warm() {
@@ -133,8 +227,8 @@ cmd_warm() {
             # Wait for the emulator to boot
             wait_for_healthy "smithr-android-${i}" 300
 
-            # Register in the pool
-            with_lock pool_register "$hostname" "android" "$default_type" "$port" "$ip"
+            # Clojure service auto-discovers via Docker events
+            log_ok "Android phone ${i} started (Smithr will auto-discover)"
         elif [[ "$PLATFORM" == "ios" ]]; then
             # iOS uses macOS VM + iOS Simulator
             # Port allocation: SSH starts at 50922, VNC at 5999
@@ -174,18 +268,14 @@ cmd_warm() {
             log_info "Waiting for iOS Simulator to boot..."
             wait_for_healthy "$sim_container" 300
 
-            # Register in the pool — use SSH port as the "port" identifier
-            with_lock pool_register "$hostname" "ios" "$default_type" "$ssh_port" "$ip"
+            # Clojure service auto-discovers via Docker events
+            log_ok "iOS phone ${i} started (Smithr will auto-discover)"
         else
             die "Unknown platform: $PLATFORM (expected: android or ios)"
         fi
     done
 
     log_ok "All ${COUNT} phone(s) warmed and registered"
-}
-
-cmd_reap() {
-    with_lock pool_reap
 }
 
 cmd_shutdown() {
@@ -197,71 +287,45 @@ cmd_shutdown() {
         esac
     done
 
-    local state
-    state=$(read_state)
-
-    local phones
-    if $all; then
-        phones=$(echo "$state" | jq -r '.phones[].id')
-    else
-        phones=$(echo "$state" | jq -r '.phones[] | select(.status == "warm") | .id')
+    # Get resources from the API
+    local query=""
+    if ! $all; then
+        query="?status=warm"
     fi
 
-    if [[ -z "$phones" ]]; then
+    local resources
+    resources=$(api_call GET "/api/resources${query}") || die "Failed to list resources"
+
+    local ids
+    ids=$(echo "$resources" | jq -r '.[].container')
+
+    if [[ -z "$ids" || "$ids" == "null" ]]; then
         log_info "No phones to shut down"
         return 0
     fi
 
-    # Shutdown in reverse order (last started → first stopped)
-    phones=$(echo "$phones" | tac)
+    while IFS= read -r container; do
+        [[ -n "$container" ]] || continue
+        log_info "Shutting down: ${container}"
 
-    while IFS= read -r phone_id; do
-        log_info "Shutting down: ${phone_id}"
+        # Stop the container directly
+        docker stop --time 30 "$container" 2>/dev/null || true
 
-        # Extract the compose project name from the phone ID
-        local platform port idx
-        platform=$(echo "$phone_id" | cut -d: -f2)
-        port=$(echo "$phone_id" | cut -d: -f3)
-        if [[ "$platform" == "ios" ]]; then
-            idx=$((port - 50922))
-        else
-            idx=$((port - 5555))
-        fi
-        local project_name="smithr-phone-${platform}-${idx}"
-
-        if [[ "$platform" == "ios" ]]; then
-            docker compose \
-                -f "${SMITHR_ROOT}/layers/network.yml" \
-                -f "${SMITHR_ROOT}/layers/ios.yml" \
-                -f "${SMITHR_ROOT}/layers/ios-sim.yml" \
-                -p "$project_name" \
-                down --timeout 60 2>/dev/null || true
-        else
-            docker compose -p "$project_name" down --timeout 30 2>/dev/null || true
-        fi
-
-        # Remove from pool state
-        with_lock bash -c "
-            state=\$(cat '$PHONE_STATE_FILE')
-            state=\$(echo \"\$state\" | jq 'del(.phones[] | select(.id == \"${phone_id}\"))')
-            state=\$(echo \"\$state\" | jq 'del(.leases[] | select(.phone_id == \"${phone_id}\"))')
-            echo \"\$state\" > '${PHONE_STATE_FILE}'
-        "
-
-        log_ok "Shut down: ${phone_id}"
-    done <<< "$phones"
+        # Clojure service will detect the 'die' event and remove from state
+        log_ok "Shut down: ${container}"
+    done <<< "$ids"
 
     log_ok "Phone shutdown complete"
 }
 
 # Dispatch
 case "${1:-}" in
-    get)     shift; cmd_get "$@" ;;
-    unlease) shift; cmd_unlease "$@" ;;
-    list)    cmd_list ;;
-    status)  cmd_status ;;
-    warm)    shift; cmd_warm "$@" ;;
-    reap)    cmd_reap ;;
+    get)      shift; cmd_get "$@" ;;
+    unlease)  shift; cmd_unlease "$@" ;;
+    info)     shift; cmd_info "$@" ;;
+    list)     shift 2>/dev/null || true; cmd_list ;;
+    status)   cmd_status ;;
+    warm)     shift; cmd_warm "$@" ;;
     shutdown) shift; cmd_shutdown "$@" ;;
     help|--help|-h) usage ;;
     *) usage; exit 1 ;;

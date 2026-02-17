@@ -92,18 +92,17 @@ jobs:
       - name: Acquire phone
         id: phone
         run: |
-          HANDLE=$($SMITHR_ROOT/bin/smithr phone get --type android)
-          echo "handle=$HANDLE" >> $GITHUB_OUTPUT
+          LEASE_ID=$($SMITHR_ROOT/bin/smithr phone get --platform android)
+          echo "lease_id=$LEASE_ID" >> $GITHUB_OUTPUT
 
       - name: Run E2E test (${{ matrix.test }})
         run: |
           $SMITHR_ROOT/bin/smithr test run ${{ matrix.test }} \
-            --config smithr.yml \
-            --device ${{ steps.phone.outputs.handle }}
+            --config smithr.yml
 
       - name: Unlease phone
         if: always()
-        run: $SMITHR_ROOT/bin/smithr phone unlease ${{ steps.phone.outputs.handle }}
+        run: $SMITHR_ROOT/bin/smithr phone unlease ${{ steps.phone.outputs.lease_id }}
 
   # ─── Deploy Phase ─────────────────────────────────────────────────
   deploy:

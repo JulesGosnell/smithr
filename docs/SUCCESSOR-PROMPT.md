@@ -49,11 +49,15 @@ Full flow with live Docker:
 5. `DELETE /api/leases/{id}` unleases it
 6. Wait for TTL expiry to test GC
 
-### 6. Bash CLI Migration
-Update `bin/smithr-phone` to call the Clojure API:
-- `smithr phone get --type android` → `curl -X POST localhost:7070/api/leases -d '{"type":"phone","platform":"android"}'`
-- `smithr phone unlease <handle>` → `curl -X DELETE localhost:7070/api/leases/{id}`
-- `smithr phone list` → `curl localhost:7070/api/resources`
+### 6. Bash CLI Migration ✅
+Done. `bin/smithr-phone` now calls the Clojure REST API via curl/jq:
+- `smithr phone get --platform android` → `POST /api/leases`, outputs lease UUID
+- `smithr phone unlease <lease-id>` → `DELETE /api/leases/{id}`
+- `smithr phone info <lease-id>` → `GET /api/leases/{id}` (new command)
+- `smithr phone list` → `GET /api/resources`
+- `smithr phone status` → `GET /api/health` + `GET /api/leases`
+- `smithr phone warm` still uses Docker Compose directly (Clojure auto-discovers via events)
+- `smithr phone reap` removed (Clojure GC handles this)
 
 ### 7. Remote Docker Host
 Test TCP connection to second host (prognathodon):

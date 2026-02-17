@@ -250,12 +250,15 @@ docker compose \
 ### Core Interface
 
 ```bash
-# Acquire a warm phone from the pool
-smithr phone get --type android        # → handle: megalodon:android:5557
-smithr phone get --type ios            # → handle: prognathodon:ios:50922
+# Acquire a warm phone from the pool (returns lease UUID on stdout)
+smithr phone get --platform android    # → e.g. 3fa85f64-5717-4562-b3fc-2c963f66afa6
+smithr phone get --platform ios        # → e.g. 7c9e6679-7425-40de-944b-e07fc1f90ae7
 
 # Unlease it back to the pool
-smithr phone unlease <handle>
+smithr phone unlease <lease-id>
+
+# Show connection details for a lease
+smithr phone info <lease-id>
 
 # List all phones across all hosts
 smithr phone list
@@ -467,17 +470,16 @@ jobs:
 
       - name: Acquire phone
         id: phone
-        run: echo "handle=$(smithr phone get --type android)" >> $GITHUB_OUTPUT
+        run: echo "lease_id=$(smithr phone get --platform android)" >> $GITHUB_OUTPUT
 
       - name: Run E2E test
         run: |
           smithr test run ${{ matrix.test }} \
-            --config smithr.yml \
-            --device ${{ steps.phone.outputs.handle }}
+            --config smithr.yml
 
       - name: Unlease phone
         if: always()
-        run: smithr phone unlease ${{ steps.phone.outputs.handle }}
+        run: smithr phone unlease ${{ steps.phone.outputs.lease_id }}
 
   deploy:
     needs: test
