@@ -20,14 +20,14 @@
   (atom 17000))
 
 (defn cleanup-stale-tunnels!
-  "Kill orphaned socat tunnel processes from previous Hammar sessions.
+  "Kill orphaned SSH tunnel processes from previous Hammar sessions.
    Called on startup before accepting new leases."
   []
   (try
-    (let [{:keys [exit out]} (shell/sh "pkill" "-f" "socat TCP-LISTEN:170")]
+    (let [{:keys [exit]} (shell/sh "pkill" "-f" "ssh -N.*-L 170")]
       (if (zero? exit)
-        (log/info "Cleaned up stale socat tunnel processes")
-        (log/debug "No stale socat tunnels to clean up")))
+        (log/info "Cleaned up stale SSH tunnel processes")
+        (log/debug "No stale SSH tunnels to clean up")))
     (catch Exception e
       (log/debug "No stale tunnels (pkill:" (.getMessage e) ")"))))
 
@@ -37,11 +37,24 @@
   (let [port (swap! next-tunnel-port inc)]
     (dec port)))
 
+(defn- docker-network-ip?
+  "Is this a Docker network IP (10.x.x.x) reachable only from the local host?"
+  [host]
+  (and host (re-matches #"10\.\d+\.\d+\.\d+" host)))
+
+(defn- resolve-tunnel-route
+  "Given a target host:port, determine SSH -L forward and hop host.
+   Docker network IPs → hop via localhost (same host can reach Docker network).
+   Remote hostnames → hop via that host, forward to localhost on the remote."
+  [target-host target-port]
+  (if (docker-network-ip? target-host)
+    {:fwd-host target-host :fwd-port target-port :hop "localhost"}
+    {:fwd-host "localhost" :fwd-port target-port :hop (or target-host "localhost")}))
+
 (defn- start-tunnel!
-  "Start a socat tunnel for a lease. Returns tunnel info map.
-   Android: forwards tunnel-port → adb-host:adb-port
-   macOS:   forwards tunnel-port → ssh-host:ssh-port
-   iOS:     forwards tunnel-port → parent macOS VM's ssh-host:ssh-port"
+  "Start an SSH tunnel for a lease. Returns tunnel info map.
+   Uses `ssh -N -L` for port forwarding. One SSH process per lease.
+   Kill the process → client is disconnected."
   [lease-id resource]
   (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
         tunnel-port (allocate-tunnel-port!)
@@ -54,18 +67,27 @@
                           (log/info "iOS tunnel: routing to parent" (:id parent)
                                     "at" (get-in parent [:connection :ssh-host]))
                           (:connection parent))))
-        target      (case platform
-                      :android (str (or adb-host "localhost") ":" (or adb-port 5555))
-                      :macos   (str (or ssh-host "localhost") ":" (or ssh-port 10022))
-                      :ios     (let [conn (or parent-conn (:connection resource))]
-                                 (str (or (:ssh-host conn) "localhost") ":"
-                                      (or (:ssh-port conn) 10022)))
-                      (str "localhost:0"))
-        cmd         ["socat"
-                     (str "TCP-LISTEN:" tunnel-port ",fork,reuseaddr,bind=0.0.0.0")
-                     (str "TCP:" target)]]
-    (log/info "Starting tunnel on port" tunnel-port "for lease" lease-id
-              "-> resource" (:id resource) "target:" target)
+        ;; Determine the target we need to reach
+        [target-host target-port]
+        (case platform
+          :android [(or adb-host "localhost") (or adb-port 5555)]
+          :macos   [(or ssh-host "localhost") (or ssh-port 10022)]
+          :ios     (let [conn (or parent-conn (:connection resource))]
+                     [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
+          ["localhost" 0])
+        ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname
+        {:keys [fwd-host fwd-port hop]} (resolve-tunnel-route target-host target-port)
+        target-str (str fwd-host ":" fwd-port " via " hop)
+        cmd ["ssh" "-N"
+             "-o" "StrictHostKeyChecking=no"
+             "-o" "BatchMode=yes"
+             "-o" "ExitOnForwardFailure=yes"
+             "-o" "ServerAliveInterval=30"
+             "-o" "ServerAliveCountMax=3"
+             "-L" (str tunnel-port ":" fwd-host ":" fwd-port)
+             hop]]
+    (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
+              "→" target-str)
     (try
       (let [proc (-> (ProcessBuilder. ^java.util.List cmd)
                      (.redirectErrorStream true)
@@ -73,23 +95,27 @@
             tunnel-info {:port        tunnel-port
                          :process     proc
                          :resource-id (:id resource)
-                         :target      target
+                         :target      target-str
                          :started-at  (Instant/now)}]
         (swap! tunnels assoc lease-id tunnel-info)
-        (log/info "Tunnel started: port" tunnel-port "→" target "pid" (.pid proc))
+        ;; Brief pause to let SSH establish the forwarding
+        (Thread/sleep 500)
+        (if (.isAlive proc)
+          (log/info "SSH tunnel started: port" tunnel-port "→" target-str "pid" (.pid proc))
+          (log/error "SSH tunnel exited immediately on port" tunnel-port
+                     "— check SSH access to" hop))
         tunnel-info)
       (catch Exception e
-        (log/error "Failed to start tunnel on port" tunnel-port ":" (.getMessage e))
-        ;; Return info without process — tunnel won't work but lease proceeds
+        (log/error "Failed to start SSH tunnel on port" tunnel-port ":" (.getMessage e))
         (let [tunnel-info {:port        tunnel-port
                            :resource-id (:id resource)
-                           :target      target
+                           :target      target-str
                            :started-at  (Instant/now)}]
           (swap! tunnels assoc lease-id tunnel-info)
           tunnel-info)))))
 
 (defn- stop-tunnel!
-  "Stop and clean up a socat tunnel for a lease."
+  "Stop and clean up an SSH tunnel for a lease."
   [lease-id]
   (when-let [tunnel (get @tunnels lease-id)]
     (log/info "Stopping tunnel on port" (:port tunnel) "for lease" lease-id
