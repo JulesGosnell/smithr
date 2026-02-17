@@ -1,0 +1,235 @@
+/* Smithr Dashboard Styles */
+
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e0e0e6;
+  --text-dim: #8888a0;
+  --green: #22c55e;
+  --green-bg: #0a2a1a;
+  --red: #ef4444;
+  --red-bg: #2a0a0a;
+  --yellow: #eab308;
+  --yellow-bg: #2a2a0a;
+  --grey: #6b7280;
+  --grey-bg: #1f2028;
+  --blue: #3b82f6;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  color: var(--text-dim);
+  font-size: 1.2rem;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.header h1 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.header .status {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.header .status.connected { color: var(--green); }
+.header .status.disconnected { color: var(--red); }
+
+/* Summary Bar */
+.summary {
+  display: flex;
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary .stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.summary .stat .value {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.summary .stat .label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Host Panels */
+.hosts {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.host-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.host-panel .host-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+
+.host-panel .host-header h2 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.host-panel .host-header .host-status {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.host-status.connected {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.host-status.disconnected {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+/* Resource Cards */
+.resources {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.resource-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.resource-card.warm {
+  border-color: var(--green);
+  background: var(--green-bg);
+}
+
+.resource-card.leased {
+  border-color: var(--red);
+  background: var(--red-bg);
+}
+
+.resource-card.booting {
+  border-color: var(--yellow);
+  background: var(--yellow-bg);
+}
+
+.resource-card.dead {
+  border-color: var(--grey);
+  background: var(--grey-bg);
+  opacity: 0.6;
+}
+
+.resource-card .resource-id {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.resource-card .resource-meta {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  display: flex;
+  gap: 0.5rem;
+}
+
+.resource-card .resource-meta .badge {
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+}
+
+.resource-card .lease-info {
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.resource-card .lease-info .lessee {
+  color: var(--red);
+  font-weight: 500;
+}
+
+.resource-card .lease-info .ttl {
+  color: var(--text-dim);
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.15s;
+}
+
+.btn:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.btn.lease {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.btn.release {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Empty state */
+.empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-dim);
+}

@@ -1,0 +1,156 @@
+(ns hammar.handlers
+  "Ring handler implementations for the Hammar API."
+  (:require [hammar.state :as state]
+            [hammar.lease :as lease]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.tools.logging :as log])
+  (:import [java.time Instant]))
+
+;; ---------------------------------------------------------------------------
+;; Response helpers
+;; ---------------------------------------------------------------------------
+
+(defn- json-response
+  ([body] (json-response 200 body))
+  ([status body]
+   {:status status
+    :body   body}))
+
+(defn- not-found [msg]
+  {:status 404
+   :body   {:error "not_found" :message msg}})
+
+(defn- conflict [msg]
+  {:status 409
+   :body   {:error "conflict" :message msg}})
+
+;; ---------------------------------------------------------------------------
+;; Serialization helpers
+;; ---------------------------------------------------------------------------
+
+(defn- serialize-instant [^Instant inst]
+  (when inst (str inst)))
+
+(defn- kw->underscore
+  "Convert a keyword map to underscore-string keys for JSON."
+  [m]
+  (into {}
+        (map (fn [[k v]]
+               [(-> (name k) (clojure.string/replace "-" "_") keyword)
+                (if (map? v) (kw->underscore v) v)]))
+        m))
+
+(defn- serialize-resource [r]
+  (-> r
+      (update :type name)
+      (update :platform name)
+      (update :status name)
+      (update :updated-at serialize-instant)
+      (dissoc :parent)
+      kw->underscore))
+
+(defn- serialize-lease [l]
+  (-> l
+      (update :acquired-at serialize-instant)
+      (update :expires-at serialize-instant)
+      kw->underscore))
+
+(defn- serialize-host [h]
+  (let [resource-count (->> (state/resources)
+                            (filter #(= (:host %) (:label h)))
+                            count)]
+    {:label          (:label h)
+     :docker_uri     (:docker-uri h)
+     :connected      (:connected? h)
+     :resource_count resource-count}))
+
+;; ---------------------------------------------------------------------------
+;; Handlers
+;; ---------------------------------------------------------------------------
+
+(defn list-resources
+  "GET /api/resources"
+  [request]
+  (let [params     (:query-params request)
+        type-f     (get params "type")
+        platform-f (get params "platform")
+        status-f   (get params "status")
+        host-f     (get params "host")
+        resources  (cond->> (state/resources)
+                     type-f     (filter #(= (name (:type %)) type-f))
+                     platform-f (filter #(= (name (:platform %)) platform-f))
+                     status-f   (filter #(= (name (:status %)) status-f))
+                     host-f     (filter #(= (:host %) host-f)))]
+    (json-response (mapv serialize-resource resources))))
+
+(defn get-resource
+  "GET /api/resources/:id"
+  [request]
+  (let [id (get-in request [:path-params :id])]
+    (if-let [resource (state/resource id)]
+      (json-response (serialize-resource resource))
+      (not-found (str "Resource not found: " id)))))
+
+(defn list-leases
+  "GET /api/leases"
+  [request]
+  (let [params  (:query-params request)
+        lessee  (get params "lessee")
+        leases  (cond->> (state/leases)
+                  lessee (filter #(= (:lessee %) lessee)))]
+    (json-response (mapv serialize-lease leases))))
+
+(defn get-lease
+  "GET /api/leases/:id"
+  [request]
+  (let [id (get-in request [:path-params :id])]
+    (if-let [l (state/lease id)]
+      (json-response (serialize-lease l))
+      (not-found (str "Lease not found: " id)))))
+
+(defn acquire-lease
+  "POST /api/leases"
+  [request]
+  (let [body   (:body-params request)
+        params {:type        (or (:type body) (get body "type"))
+                :platform    (or (:platform body) (get body "platform"))
+                :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
+                :lessee      (or (:lessee body) (get body "lessee") "anonymous")}]
+    (log/info "Lease request:" params)
+    (if-let [result (lease/acquire! params)]
+      (json-response 201 (serialize-lease result))
+      (conflict (str "No available " (:type params) ":" (:platform params) " resource")))))
+
+(defn release-lease
+  "DELETE /api/leases/:id"
+  [request]
+  (let [id (get-in request [:path-params :id])]
+    (if (lease/release! id)
+      {:status 204 :body nil}
+      (not-found (str "Lease not found: " id)))))
+
+(defn list-hosts
+  "GET /api/hosts"
+  [_request]
+  (json-response (mapv serialize-host (state/hosts))))
+
+(defn health-check
+  "GET /api/health"
+  [_request]
+  (let [hosts     (state/hosts)
+        resources (state/resources)
+        leases    (state/leases)
+        all-connected? (every? :connected? hosts)]
+    (json-response {:status    (if all-connected? "ok" "degraded")
+                    :hosts     (count hosts)
+                    :resources (count resources)
+                    :leases    (count leases)})))
+
+(defn serve-openapi
+  "GET /openapi.yaml"
+  [_request]
+  (let [spec (slurp (io/resource "openapi.yaml"))]
+    {:status  200
+     :headers {"Content-Type" "text/yaml; charset=utf-8"}
+     :body    spec}))

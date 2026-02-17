@@ -38,20 +38,23 @@ find_smithr_root() {
 }
 
 # Load smithr.yml configuration
-# Sets SMITHR_CONFIG_* variables from the YAML file
+# Parses YAML via Python and caches as JSON for jq queries
+# Usage: load_config [path]
 load_config() {
-    local config_path="${SMITHR_CONFIG:-./smithr.yml}"
+    local config_path="${1:-${SMITHR_CONFIG:-./smithr.yml}}"
+
+    # Source the config parser
+    local smithr_root
+    smithr_root="${SMITHR_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+    source "${smithr_root}/bin/lib/config.sh"
 
     if [[ ! -f "$config_path" ]]; then
         log_warn "No smithr.yml found at: ${config_path}"
-        log_warn "Using defaults. Create smithr.yml for project-specific configuration."
         return 0
     fi
 
-    log_info "Loading config from: ${config_path}"
-    # Simple YAML parsing via grep/sed for flat keys
-    # For nested keys, we'll need yq or a proper parser
-    export SMITHR_CONFIG_FILE="$config_path"
+    log_info "Loading config: ${config_path}"
+    smithr_config_load "$config_path" || die "Failed to parse: ${config_path}"
 }
 
 # Wait for a Docker container's health check to pass

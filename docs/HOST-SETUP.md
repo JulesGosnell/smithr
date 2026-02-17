@@ -1,0 +1,151 @@
+# Adding a New Smithr Host
+
+Guide for setting up a new machine as a Smithr-managed Docker host.
+
+## Prerequisites
+
+- Docker installed and running
+- SSH access from the Hammar host (megalodon)
+- KVM available (`/dev/kvm`) for emulators/VMs
+- GPU available (`/dev/dri`) for Android emulators (optional)
+
+## Step 1: Clone the Smithr repo
+
+```bash
+mkdir -p ~/src && cd ~/src
+git clone git@github.com:JulesGosnell/smithr.git
+cd smithr
+```
+
+## Step 2: Create the smithr-network
+
+```bash
+docker network create --subnet=10.21.0.0/16 smithr-network
+```
+
+## Step 3: Create the custom Android entrypoint
+
+The entrypoint script must exist for Android containers:
+
+```bash
+ls docker/shared/android-entrypoint.sh  # should exist from clone
+```
+
+## Step 4: Start containers
+
+### Android emulator
+
+```bash
+docker compose -f layers/android.yml up -d
+```
+
+### macOS VM (requires macOS image)
+
+```bash
+SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+  docker compose -f layers/ios.yml up -d
+```
+
+**Note:** Each macOS VM needs ~22GB RAM. Adjust `SMITHR_MACOS_RAM` if needed.
+
+### Multiple instances (use different runes and ports)
+
+```bash
+# Second Android emulator
+SMITHR_ANDROID_RUNE=ur \
+SMITHR_ANDROID_ADB_PORT=5556 \
+SMITHR_ANDROID_VNC_PORT=5901 \
+SMITHR_ANDROID_NOVNC_PORT=6081 \
+SMITHR_ANDROID_IP=10.21.0.31 \
+  docker compose -f layers/android.yml -p smithr-android-ur up -d
+```
+
+## Step 5: Connect to Hammar
+
+Hammar (on megalodon) connects to remote Docker daemons to subscribe to
+events and discover managed containers. Two options:
+
+### Option A: SSH tunnel (recommended, no Docker config changes)
+
+From megalodon, create a persistent SSH tunnel:
+
+```bash
+ssh -fNL <local-port>:/var/run/docker.sock <hostname>
+```
+
+Example for prognathodon:
+
+```bash
+ssh -fNL 2375:/var/run/docker.sock prognathodon
+```
+
+Then add to `hammar/resources/hammar.edn`:
+
+```edn
+{:label "prognathodon"
+ :docker-uri "tcp://localhost:2375"}
+```
+
+### Option B: Docker TCP listener (exposes Docker daemon)
+
+On the remote host, create a systemd override:
+
+```bash
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/tcp.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+```
+
+**Warning:** This exposes Docker without TLS. Only use on trusted networks.
+
+Then add to `hammar/resources/hammar.edn`:
+
+```edn
+{:label "prognathodon"
+ :docker-uri "tcp://prognathodon:2375"}
+```
+
+### Restart Hammar
+
+After updating `hammar.edn`, restart Hammar to connect to the new host.
+
+## Step 6: Verify
+
+Check the dashboard at http://localhost:7070 — the new host should appear
+with its containers. Or via API:
+
+```bash
+curl http://localhost:7070/api/hosts
+curl http://localhost:7070/api/resources
+```
+
+## SELinux (Fedora/RHEL)
+
+All Docker volume mounts must include the `:z` suffix for SELinux
+relabelling. This is already handled in the compose files. If you
+add custom volumes, always use `:z`:
+
+```yaml
+volumes:
+  - ./my-script.sh:/my-script.sh:z    # :z is required on Fedora
+```
+
+## Per-Host Notes
+
+### megalodon (primary)
+
+- Hammar runs here
+- Docker socket: `unix:///var/run/docker.sock`
+- IPs: Android 10.21.0.30, macOS 10.21.0.40
+
+### prognathodon (secondary)
+
+- Connected via SSH tunnel: `ssh -fNL 2375:/var/run/docker.sock prognathodon`
+- Docker URI in hammar.edn: `tcp://localhost:2375`
+- macOS image available via NFS at `/srv/shared/images/artha-sonoma.img`
+- Docker images pre-pulled: `budtmo/docker-android:emulator_9.0`, `sickcodes/docker-osx:latest`

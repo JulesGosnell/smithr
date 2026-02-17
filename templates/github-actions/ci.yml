@@ -2,13 +2,13 @@
 #
 # This workflow:
 # 1. Builds server, Android APK, and iOS app in parallel
-# 2. Starts a shared server environment (once)
+# 2. Starts a shared server environment (DB, Redis, TLS, DNS, project API)
 # 3. Runs E2E tests in parallel, each acquiring a phone from the warm pool
 # 4. Deploys on success (main branch only)
 #
 # Prerequisites:
 # - Self-hosted runners with Smithr installed
-# - smithr.yml in project root
+# - smithr.yml in project root (see smithr.yml.example)
 # - Phone pool pre-warmed (via systemd or manual smithr phone warm)
 #
 # Customise the TODOs below for your project.
@@ -27,7 +27,6 @@ concurrency:
 
 env:
   SMITHR_ROOT: /path/to/smithr  # TODO: Set to your Smithr installation path
-  ARTIFACT_DIR: /srv/shared/${{ github.repository_owner }}-ci/${{ github.run_id }}
 
 jobs:
   # ─── Build Phase (Parallel) ───────────────────────────────────────
@@ -36,15 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create artifact directory
-        run: mkdir -p "$ARTIFACT_DIR"
-
-      - name: Build server
+      - name: Build server Docker image
         run: |
-          # TODO: Replace with your server build commands
+          # TODO: Replace with your server build command
+          # docker build -t myapp-api .
           echo "Building server..."
-          # docker build -t myapp-api:${{ github.run_id }} .
-          # docker save myapp-api:${{ github.run_id }} | gzip > "$ARTIFACT_DIR/server.tar.gz"
 
   build-android:
     runs-on: [self-hosted, linux]
@@ -53,10 +48,9 @@ jobs:
 
       - name: Build Android APK
         run: |
-          # TODO: Replace with your Android build commands
+          # TODO: Replace with your build command, or use a pre-built APK
+          # The APK path is configured in smithr.yml (mobile.android.apk)
           echo "Building Android APK..."
-          # pnpm mobile:build:android
-          # cp app-release.apk "$ARTIFACT_DIR/"
 
   build-ios:
     runs-on: [self-hosted, linux]
@@ -65,9 +59,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build iOS app
-        run: |
-          # TODO: Replace with your iOS build commands
-          echo "Building iOS app..."
+        run: echo "Building iOS app..."
 
   # ─── Server Setup (Once) ──────────────────────────────────────────
   start-server:
@@ -76,14 +68,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Start shared server
-        run: $SMITHR_ROOT/bin/smithr server ensure
-
-      - name: Run database setup
+      - name: Start shared server (idempotent)
         run: |
-          # TODO: Replace with your DB setup commands
-          echo "Running migrations and seed..."
-          # pnpm db:migrate && pnpm db:seed
+          # This starts DB, Redis, TLS, DNS, runs project DB setup
+          # (migrations, seeds), and starts the project API server.
+          # Safe to call multiple times — only starts if not running.
+          $SMITHR_ROOT/bin/smithr server ensure --config smithr.yml
 
   # ─── Test Phase (Parallel Matrix) ─────────────────────────────────
   e2e-test:
@@ -93,26 +83,23 @@ jobs:
       fail-fast: false  # Run all tests even if one fails
       matrix:
         test:
-          - documents
-          - profile
-          - notifications
-          - schedule
-        # TODO: Add iOS when ready
-        # platform: [android, ios]
+          # TODO: Replace with your test file names (from tests.dir in smithr.yml)
+          - login-test.yaml
+          - smoke-test.yaml
     steps:
       - uses: actions/checkout@v4
 
       - name: Acquire phone
         id: phone
         run: |
-          HANDLE=$($SMITHR_ROOT/bin/smithr phone get --type pixel_7)
+          HANDLE=$($SMITHR_ROOT/bin/smithr phone get --type android)
           echo "handle=$HANDLE" >> $GITHUB_OUTPUT
 
       - name: Run E2E test (${{ matrix.test }})
         run: |
-          # TODO: Replace with your test runner
-          echo "Running ${{ matrix.test }} test on ${{ steps.phone.outputs.handle }}..."
-          # ./bin/run-${{ matrix.test }}-test.sh --device ${{ steps.phone.outputs.handle }}
+          $SMITHR_ROOT/bin/smithr test run ${{ matrix.test }} \
+            --config smithr.yml \
+            --device ${{ steps.phone.outputs.handle }}
 
       - name: Release phone
         if: always()
@@ -137,7 +124,5 @@ jobs:
     runs-on: [self-hosted, linux]
     if: always()
     steps:
-      - name: Clean up artifacts
-        run: |
-          rm -rf "$ARTIFACT_DIR" || true
-          echo "Cleaned up build artifacts"
+      - name: Stop shared server
+        run: $SMITHR_ROOT/bin/smithr server stop --config smithr.yml

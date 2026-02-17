@@ -30,7 +30,7 @@ include:
 services:
   ios-sim:
     image: alpine:latest
-    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_VM_ID:-0}-sim
+    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}-sim
     depends_on:
       macos:
         condition: service_healthy
@@ -39,7 +39,7 @@ services:
       - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ios-sim-boot.sh:/boot.sh:z"
       - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ssh/macos-ssh-key:/ssh-key/macos-ssh-key:z"
     environment:
-      SSH_HOST: "${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_VM_ID:-0}"
+      SSH_HOST: "${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}"
       SSH_PORT: "10022"
       SSH_USER: "${SMITHR_MACOS_SSH_USER:-claude}"
       SSH_KEY: "/ssh-key/macos-ssh-key"
@@ -54,6 +54,12 @@ services:
         chmod 600 /tmp/macos-ssh-key
         export SSH_KEY=/tmp/macos-ssh-key
         exec /boot.sh
+    labels:
+      smithr.managed: "true"
+      smithr.resource.type: "phone"
+      smithr.resource.platform: "ios"
+      smithr.resource.pool: "ios"
+      smithr.resource.parent: "${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}"
     healthcheck:
       # Check that Simulator has a booted device
       test: ["CMD-SHELL", "ssh -i /tmp/macos-ssh-key -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes -p $${SSH_PORT} $${SSH_USER}@$${SSH_HOST} \"xcrun simctl list devices booted 2>/dev/null | grep -qF '$${IOS_DEVICE} ('\""]

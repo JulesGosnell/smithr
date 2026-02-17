@@ -1,0 +1,322 @@
+openapi: "3.1.0"
+info:
+  title: Smithr Resource Pool API
+  description: |
+    Manages phones, emulators, macOS VMs, and iOS simulators across
+    multiple hosts. Push-based state via Docker events, atomic leasing
+    with SSH tunnel provisioning.
+  version: "0.1.0"
+  contact:
+    name: Smithr
+    url: https://github.com/JulesGosnell/smithr
+
+servers:
+  - url: http://localhost:7070
+    description: Local development
+
+paths:
+  /api/resources:
+    get:
+      operationId: listResources
+      summary: List all resources across all hosts
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [phone, vm]
+          description: Filter by resource type
+        - name: platform
+          in: query
+          schema:
+            type: string
+            enum: [android, ios, macos]
+          description: Filter by platform
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [booting, warm, leased, dead]
+          description: Filter by status
+        - name: host
+          in: query
+          schema:
+            type: string
+          description: Filter by host label
+      responses:
+        "200":
+          description: List of resources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Resource"
+
+  /api/resources/{id}:
+    get:
+      operationId: getResource
+      summary: Get a single resource by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resource details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Resource"
+        "404":
+          description: Resource not found
+
+  /api/leases:
+    get:
+      operationId: listLeases
+      summary: List active leases
+      parameters:
+        - name: lessee
+          in: query
+          schema:
+            type: string
+          description: Filter by lessee name
+      responses:
+        "200":
+          description: List of leases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lease"
+    post:
+      operationId: acquireLease
+      summary: Acquire a lease on an available resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LeaseRequest"
+      responses:
+        "201":
+          description: Lease acquired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lease"
+        "409":
+          description: No matching resource available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/leases/{id}:
+    get:
+      operationId: getLease
+      summary: Get a single lease by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lease details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lease"
+        "404":
+          description: Lease not found
+    delete:
+      operationId: releaseLease
+      summary: Release a lease
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Lease released
+        "404":
+          description: Lease not found
+
+  /api/hosts:
+    get:
+      operationId: listHosts
+      summary: List connected Docker hosts
+      responses:
+        "200":
+          description: List of hosts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Host"
+
+  /api/health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /openapi.yaml:
+    get:
+      operationId: getSpec
+      summary: Serve the raw OpenAPI spec
+      responses:
+        "200":
+          description: OpenAPI spec
+          content:
+            text/yaml:
+              schema:
+                type: string
+
+components:
+  schemas:
+    Resource:
+      type: object
+      required: [id, type, platform, host, status, container]
+      properties:
+        id:
+          type: string
+          description: Unique resource identifier (host:platform:port)
+          example: "megalodon:android:5557"
+        type:
+          type: string
+          enum: [phone, vm]
+        platform:
+          type: string
+          enum: [android, ios, macos]
+        host:
+          type: string
+          example: megalodon
+        status:
+          type: string
+          enum: [booting, warm, leased, dead]
+        container:
+          type: string
+          description: Docker container name
+          example: smithr-android-0
+        connection:
+          $ref: "#/components/schemas/Connection"
+        lease_id:
+          type: string
+          description: Active lease ID if leased
+        updated_at:
+          type: string
+          format: date-time
+
+    Connection:
+      type: object
+      description: Connection details for the resource
+      properties:
+        adb_host:
+          type: string
+          description: ADB host IP (Android)
+        adb_port:
+          type: integer
+          description: ADB port (Android)
+        ssh_host:
+          type: string
+          description: SSH host (iOS/macOS)
+        ssh_port:
+          type: integer
+          description: SSH port (iOS/macOS)
+        tunnel_port:
+          type: integer
+          description: Hammar-managed SSH tunnel port (allocated on lease)
+
+    LeaseRequest:
+      type: object
+      required: [type, platform]
+      properties:
+        type:
+          type: string
+          enum: [phone, vm]
+        platform:
+          type: string
+          enum: [android, ios, macos]
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 1800
+          description: Lease duration in seconds
+        lessee:
+          type: string
+          default: anonymous
+          description: Identifier for who is leasing
+
+    Lease:
+      type: object
+      required: [id, resource_id, lessee, ttl_seconds, acquired_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        resource_id:
+          type: string
+        host:
+          type: string
+        lessee:
+          type: string
+        ttl_seconds:
+          type: integer
+        acquired_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        connection:
+          $ref: "#/components/schemas/Connection"
+
+    Host:
+      type: object
+      required: [label, connected]
+      properties:
+        label:
+          type: string
+        docker_uri:
+          type: string
+        connected:
+          type: boolean
+        resource_count:
+          type: integer
+
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        hosts:
+          type: integer
+        resources:
+          type: integer
+        leases:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string

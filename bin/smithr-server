@@ -5,6 +5,11 @@
 # and DNS once, to be reused by all test jobs. This eliminates redundant
 # setup across a test matrix.
 #
+# With a smithr.yml config, also handles:
+#   - Project-specific database credentials
+#   - Schema migrations and seeding
+#   - Project API server (Docker image)
+#
 # Usage:
 #   smithr server start    Start the shared server environment
 #   smithr server stop     Stop and clean up (reverse startup order)
@@ -18,6 +23,7 @@ source "${SMITHR_ROOT}/bin/lib/common.sh"
 
 SMITHR_PREFIX="${SMITHR_PREFIX:-smithr}"
 COMPOSE_PROJECT="${SMITHR_PREFIX}-server"
+CONFIG_PATH=""
 
 usage() {
     cat <<EOF
@@ -26,22 +32,41 @@ smithr server — Manage shared server environments
 Usage:
   smithr server start [--config smithr.yml]
       Start the shared server (network, DB, Redis, TLS proxy, DNS).
-      If a project app-server compose file is configured, starts that too.
+      With a config, also runs DB setup and starts the project API server.
 
-  smithr server stop
+  smithr server stop [--config smithr.yml]
       Gracefully shut down in reverse startup order.
-      Order: app-server → TLS proxy → DNS → database → network
 
   smithr server status
       Check health of all server components.
 
-  smithr server ensure
+  smithr server ensure [--config smithr.yml]
       Start only if not already running (safe for CI matrix jobs).
 
 Options:
   --config <path>   Path to smithr.yml (default: ./smithr.yml)
   --help            Show this help
 EOF
+}
+
+# Parse global flags before subcommand dispatch
+parse_global_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --config) CONFIG_PATH="$2"; shift 2 ;;
+            *) break ;;
+        esac
+    done
+}
+
+# Apply project DB config (user/password/name) from smithr.yml
+apply_db_config() {
+    if smithr_config_has ".server.db"; then
+        export POSTGRES_USER=$(smithr_config ".server.db.user" "smithr")
+        export POSTGRES_PASSWORD=$(smithr_config ".server.db.password" "smithr_dev_password")
+        export POSTGRES_DB=$(smithr_config ".server.db.name" "smithr")
+        log_info "DB config: user=${POSTGRES_USER} db=${POSTGRES_DB}"
+    fi
 }
 
 # Compose files for the server stack (in startup order)
@@ -52,11 +77,6 @@ get_compose_files() {
         "${SMITHR_ROOT}/layers/dns.yml"
         "${SMITHR_ROOT}/layers/tls-proxy.yml"
     )
-
-    # Add project-specific server compose if configured
-    if [[ -n "${SMITHR_SERVER_COMPOSE:-}" && -f "${SMITHR_SERVER_COMPOSE}" ]]; then
-        files+=("${SMITHR_SERVER_COMPOSE}")
-    fi
 
     echo "${files[@]}"
 }
@@ -73,36 +93,142 @@ compose_cmd() {
     docker compose "${compose_args[@]}" -p "${COMPOSE_PROJECT}" "$@"
 }
 
+# Run project-specific DB setup commands from smithr.yml
+run_db_setup() {
+    local project_dir
+    project_dir=$(smithr_config_path "." 2>/dev/null || echo ".")
+    project_dir="${SMITHR_CONFIG_DIR:-.}"
+
+    # Export project env vars
+    smithr_config_export_env ".server.env"
+
+    local setup_cmds
+    setup_cmds=$(smithr_config_arr ".server.setup")
+
+    if [[ -z "$setup_cmds" ]]; then
+        return 0
+    fi
+
+    log_info "Running project DB setup from smithr.yml..."
+    local step=1
+
+    while IFS= read -r cmd; do
+        [[ -n "$cmd" ]] || continue
+        log_info "  Step ${step}: ${cmd}"
+        (cd "$project_dir" && eval "$cmd") || die "DB setup step ${step} failed: ${cmd}"
+        step=$((step + 1))
+    done <<< "$setup_cmds"
+
+    log_ok "DB setup complete (${step} steps)"
+}
+
+# Start the project's API server container
+start_api_server() {
+    local api_compose
+    api_compose=$(smithr_config ".server.api.compose")
+    [[ -n "$api_compose" ]] || return 0
+
+    local project_dir="${SMITHR_CONFIG_DIR:-.}"
+    local compose_path="${project_dir}/${api_compose}"
+
+    [[ -f "$compose_path" ]] || die "API compose file not found: ${compose_path}"
+
+    local container
+    container=$(smithr_config ".server.api.container" "artha-api")
+    local health_timeout
+    health_timeout=$(smithr_config ".server.api.health_timeout" "60")
+
+    log_info "Starting project API server..."
+
+    # Export API-specific env vars
+    smithr_config_export_env ".server.api.env"
+
+    # Build compose args — we need the API compose file
+    # but also need network connectivity to smithr-network
+    local compose_args=("-f" "$compose_path")
+
+    # If there's a depends compose file (for service definitions like postgres/redis),
+    # we need to handle the network differently — the API container joins smithr-network
+    docker compose ${compose_args[@]} \
+        -p "${COMPOSE_PROJECT}" \
+        up -d --build 2>&1 || die "Failed to start API server"
+
+    # Connect API container to smithr-network if not already
+    docker network connect "${SMITHR_NETWORK_NAME:-smithr-network}" "$container" 2>/dev/null || true
+
+    # Wait for health
+    local health_url
+    health_url=$(smithr_config ".server.api.health_url")
+    if [[ -n "$health_url" ]]; then
+        log_info "Waiting for API health: ${health_url}"
+        local elapsed=0
+        while [[ $elapsed -lt $health_timeout ]]; do
+            if curl -sf "$health_url" >/dev/null 2>&1; then
+                log_ok "API server is healthy (${elapsed}s)"
+                return 0
+            fi
+            sleep 2
+            elapsed=$((elapsed + 2))
+        done
+        log_warn "API server did not pass health check within ${health_timeout}s"
+    else
+        wait_for_healthy "$container" "$health_timeout"
+    fi
+}
+
+# Stop the project's API server container
+stop_api_server() {
+    local api_compose
+    api_compose=$(smithr_config ".server.api.compose" 2>/dev/null)
+    [[ -n "$api_compose" ]] || return 0
+
+    local project_dir="${SMITHR_CONFIG_DIR:-.}"
+    local compose_path="${project_dir}/${api_compose}"
+    [[ -f "$compose_path" ]] || return 0
+
+    log_info "Stopping API server..."
+    docker compose -f "$compose_path" -p "${COMPOSE_PROJECT}" down --timeout 30 2>/dev/null || true
+}
+
 cmd_start() {
+    # Load config if provided
+    if [[ -n "$CONFIG_PATH" ]]; then
+        load_config "$CONFIG_PATH"
+        apply_db_config
+    fi
+
     log_info "Starting shared server environment..."
 
-    # Start in dependency order. Docker Compose handles depends_on,
-    # but we log each phase for visibility.
+    # Phase 1: Network
     log_info "Phase 1: Creating network..."
     docker network create "${SMITHR_NETWORK_NAME:-smithr-network}" \
         --subnet="${SMITHR_NETWORK_SUBNET:-10.21.0.0/16}" 2>/dev/null || true
 
+    # Phase 2: Database + cache
     log_info "Phase 2: Starting database + cache..."
     compose_cmd up -d postgres redis
     wait_for_healthy "${SMITHR_PREFIX}-postgres" 60
     wait_for_healthy "${SMITHR_PREFIX}-redis" 30
 
+    # Phase 3: DNS
     log_info "Phase 3: Starting DNS..."
     compose_cmd up -d dns 2>/dev/null || log_warn "DNS service not available (optional)"
 
+    # Phase 4: TLS proxy
     log_info "Phase 4: Starting TLS proxy..."
     compose_cmd up -d tls-proxy
     wait_for_healthy "${SMITHR_PREFIX}-tls-proxy" 30
 
-    # Phase 5: Project-specific server (if configured)
-    if [[ -n "${SMITHR_SERVER_COMPOSE:-}" ]]; then
-        log_info "Phase 5: Starting app server..."
-        compose_cmd up -d
-        # Run project setup commands if configured
-        if [[ -n "${SMITHR_SERVER_SETUP_CMD:-}" ]]; then
-            log_info "Running server setup: ${SMITHR_SERVER_SETUP_CMD}"
-            eval "${SMITHR_SERVER_SETUP_CMD}"
-        fi
+    # Phase 5: Project-specific DB setup (from smithr.yml)
+    if [[ -n "$CONFIG_PATH" ]] && smithr_config_has ".server.setup"; then
+        log_info "Phase 5: Project database setup..."
+        run_db_setup
+    fi
+
+    # Phase 6: Project API server (from smithr.yml)
+    if [[ -n "$CONFIG_PATH" ]] && smithr_config_has ".server.api.compose"; then
+        log_info "Phase 6: Starting project API server..."
+        start_api_server
     fi
 
     log_ok "Shared server environment is ready"
@@ -110,9 +236,15 @@ cmd_start() {
 }
 
 cmd_stop() {
+    # Load config for API server cleanup
+    if [[ -n "$CONFIG_PATH" ]]; then
+        load_config "$CONFIG_PATH"
+        stop_api_server
+    fi
+
     log_info "Stopping shared server environment (reverse order)..."
 
-    # Stop in reverse order: app → proxy → DNS → database → network
+    # Stop in reverse order: proxy → DNS → database → network
     compose_cmd down --timeout 30
 
     # Optionally remove the network (only if no other services use it)
@@ -158,6 +290,26 @@ cmd_status() {
         esac
     done
 
+    # Check project API server if configured
+    if [[ -n "$CONFIG_PATH" ]]; then
+        load_config "$CONFIG_PATH" 2>/dev/null
+        local api_container
+        api_container=$(smithr_config ".server.api.container" 2>/dev/null)
+        if [[ -n "$api_container" ]]; then
+            local status
+            status=$(docker inspect --format='{{.State.Health.Status}}' "$api_container" 2>/dev/null || echo "not_running")
+            case "$status" in
+                healthy)
+                    echo -e "  ${GREEN}✓${NC} api (${api_container}): healthy"
+                    ;;
+                *)
+                    echo -e "  ${RED}✗${NC} api (${api_container}): ${status}"
+                    all_healthy=false
+                    ;;
+            esac
+        fi
+    fi
+
     echo ""
     if $all_healthy; then
         log_ok "All services healthy"
@@ -180,9 +332,16 @@ cmd_ensure() {
     cmd_start
 }
 
+# Parse subcommand
+SUBCMD="${1:-}"
+shift 2>/dev/null || true
+
+# Parse remaining flags
+parse_global_flags "$@"
+
 # Dispatch
-case "${1:-}" in
-    start)  shift; cmd_start "$@" ;;
+case "$SUBCMD" in
+    start)  cmd_start ;;
     stop)   cmd_stop ;;
     status) cmd_status ;;
     ensure) cmd_ensure ;;

@@ -1,0 +1,16 @@
+# Clojure
+.cpcache/
+.nrepl-port
+target/
+
+# clj-kondo / LSP caches
+.clj-kondo/.cache/
+.lsp/.cache/
+
+# Shadow CLJS
+.shadow-cljs/
+node_modules/
+resources/public/js/
+
+# npm
+package-lock.json

@@ -65,6 +65,7 @@ JUNIT_PATH=""
 PROJECT_DIR="."
 KEEP_PHONE=false
 ACQUIRED_HANDLE=""
+CONFIG_PATH=""
 
 cleanup() {
     if [[ -n "$ACQUIRED_HANDLE" ]] && ! $KEEP_PHONE; then
@@ -75,6 +76,16 @@ cleanup() {
 trap cleanup EXIT
 
 find_apk() {
+    # Check config first
+    if [[ -n "$CONFIG_PATH" ]]; then
+        local config_apk
+        config_apk=$(smithr_config_path ".mobile.android.apk" 2>/dev/null)
+        if [[ -n "$config_apk" && -f "$config_apk" ]]; then
+            echo "$config_apk"
+            return 0
+        fi
+    fi
+
     local search_dir="${PROJECT_DIR}/mobile/android/app/build/outputs/apk"
     local apk
 
@@ -198,10 +209,46 @@ ios_install_app() {
 
 find_tests() {
     local tests_dir="${PROJECT_DIR}/tests/maestro"
+
+    # Check config for test directory
+    if [[ -n "$CONFIG_PATH" ]]; then
+        local config_tests_dir
+        config_tests_dir=$(smithr_config ".tests.dir")
+        if [[ -n "$config_tests_dir" ]]; then
+            tests_dir="${SMITHR_CONFIG_DIR}/${config_tests_dir}"
+        fi
+    fi
+
     if [[ ! -d "$tests_dir" ]]; then
         die "No tests directory found at: $tests_dir"
     fi
-    find "$tests_dir" -name "*.yaml" -o -name "*.yml" | sort
+    find "$tests_dir" -maxdepth 1 -name "*.yaml" -o -name "*.yml" | sort
+}
+
+# Set up ADB reverse port mappings from config
+# This lets the emulator's localhost reach the host's services
+setup_adb_reverse() {
+    local adb_target="$1"
+
+    # From config
+    if [[ -n "$CONFIG_PATH" ]]; then
+        local mappings
+        mappings=$(smithr_config_arr ".network.adb_reverse")
+        if [[ -n "$mappings" ]]; then
+            log_info "Setting up ADB reverse port mappings..."
+            while IFS= read -r mapping; do
+                [[ -n "$mapping" ]] || continue
+                local device_port="${mapping%% *}"
+                local host_port="${mapping##* }"
+                log_info "  adb reverse tcp:${device_port} tcp:${host_port}"
+                adb -s "$adb_target" reverse "tcp:${device_port}" "tcp:${host_port}" 2>/dev/null || \
+                    log_warn "Failed to set up reverse for port ${device_port}"
+            done <<< "$mappings"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 # Resolve test files into an array (used by both Android and iOS runners)
@@ -342,9 +389,14 @@ cmd_run_android() {
     log_info "Installing APK on ${adb_target}..."
     adb -s "$adb_target" install -r "$APK_PATH" 2>&1 || die "APK install failed"
 
-    # Setup port forwarding if container is known
-    if $FORWARDING && [[ -n "$container_name" ]]; then
-        setup_forwarding "$container_name" "$SERVER_PORT" "${SERVER_URL#http://}" || true
+    # Setup ADB reverse from config (preferred) or socat forwarding (fallback)
+    if $FORWARDING; then
+        if ! setup_adb_reverse "$adb_target" 2>/dev/null; then
+            # Fall back to socat forwarding if no config
+            if [[ -n "$container_name" ]]; then
+                setup_forwarding "$container_name" "$SERVER_PORT" "${SERVER_URL#http://}" || true
+            fi
+        fi
     fi
 
     # Find and run tests
@@ -536,6 +588,7 @@ shift 2>/dev/null || true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --config) CONFIG_PATH="$2"; shift 2 ;;
         --device) DEVICE="$2"; shift 2 ;;
         --apk|--app) APK_PATH="$2"; shift 2 ;;
         --platform) PLATFORM="$2"; shift 2 ;;
@@ -555,6 +608,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Load config if provided
+if [[ -n "$CONFIG_PATH" ]]; then
+    load_config "$CONFIG_PATH"
+    # Use config dir as project dir if not explicitly set
+    if [[ "$PROJECT_DIR" == "." ]]; then
+        PROJECT_DIR="$SMITHR_CONFIG_DIR"
+    fi
+fi
 
 case "$SUBCMD" in
     run)     cmd_run ;;

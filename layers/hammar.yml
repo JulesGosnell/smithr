@@ -1,0 +1,49 @@
+# layers/hammar.yml
+#
+# Smithr Resource Pool Manager (Clojure service)
+#
+# Manages phones, emulators, macOS VMs via Docker event subscription
+# and REST API with real-time dashboard.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/hammar.yml up -d
+#
+# Ports:
+#   7070 — Smithr API + dashboard
+#   8090 — shadow-cljs dev server (dev only)
+#   7888 — nREPL (dev only)
+
+services:
+  hammar:
+    container_name: smithr-hammar
+    image: clojure:temurin-21-tools-deps-bookworm-slim
+    working_dir: /app
+    command: clojure -M:run
+    ports:
+      - "7070:7070"
+      - "8090:8090"
+      - "7888:7888"
+    volumes:
+      - ../hammar:/app:z
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      - hammar-m2:/root/.m2:z
+    networks:
+      default:
+        ipv4_address: 10.21.0.20
+    environment:
+      - HAMMAR_CONFIG=/app/resources/hammar.edn
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7070/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  hammar-m2:
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

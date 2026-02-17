@@ -19,7 +19,7 @@
 12. [Directory Structure](#directory-structure)
 13. [Naming Conventions](#naming-conventions)
 14. [Demo Application](#demo-application)
-15. [Migration Path for Arthur](#migration-path-for-arthur)
+15. [Migration Path for Artha](#migration-path-for-artha)
 
 ---
 
@@ -205,33 +205,33 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | TLS Proxy | `layers/tls-proxy.yml` | Caddy with pre-generated CA |
 | Database | `layers/database.yml` | PostgreSQL + Redis |
 | Android Phone | `layers/android.yml` | Parameterised Android emulator |
-| iOS Phone | `layers/ios.yml` | macOS VM + iOS Simulator |
+| iOS macOS VM | `layers/ios.yml` | macOS VM via Docker-OSX (QEMU/KVM) |
+| iOS Simulator | `layers/ios-sim.yml` | iOS Simulator sidecar (boots inside macOS VM) |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
+| Smithr Service | `layers/hammar.yml` | Clojure control plane (port 7070) |
 
-### Project Layers (provided by the consuming project)
+### Project Layers
 
-| Layer | File | Provides |
-|-------|------|----------|
-| App Server | `layers/app-server.yml` | The project's API/web server |
-| App Build | `layers/app-build.yml` | Build instructions for the app |
-| Test Runner | `layers/test-runner.yml` | Test execution (Maestro, Playwright, etc.) |
+Projects don't provide their own compose layers. Instead, they supply a `smithr.yml` configuration file (see [Configuration System](#configuration-system)) that tells Smithr how to set up the database, start the project's API server (via the project's own compose file), find or build the mobile app, and run tests.
 
 ### Composition Examples
 
-**CI test job:**
+Layers are composed by the `smithr` CLI commands, not invoked directly. The server command combines the base infrastructure layers:
+
 ```bash
+# smithr server start internally runs:
 docker compose \
   -f layers/network.yml \
   -f layers/database.yml \
-  -f layers/tls-proxy.yml \
   -f layers/dns.yml \
-  -f layers/android.yml \
-  -f project/app-server.yml \
-  -p "smithr-ci-test-training-$(date +%s)" \
+  -f layers/tls-proxy.yml \
+  -p "smithr-server" \
   up -d
 ```
 
-**Sandbox:**
+The project's API server is started separately (via `smithr.yml` config), using the project's own compose file and connecting to the smithr-network.
+
+**Sandbox (all layers):**
 ```bash
 docker compose \
   -f layers/dind.yml \
@@ -241,8 +241,7 @@ docker compose \
   -f layers/dns.yml \
   -f layers/metro.yml \
   -f layers/android.yml \
-  -f project/app-server.yml \
-  -p "smithr-sandbox-ulfr" \
+  -p "smithr-sandbox-rune" \
   up -d
 ```
 
@@ -252,8 +251,8 @@ docker compose \
 
 ```bash
 # Acquire a warm phone from the pool
-smithr phone get --type pixel-7        # → handle: megalodon:android:5557
-smithr phone get --type iphone-16      # → handle: prognathodon:ios:vm1:iphone-16
+smithr phone get --type android        # → handle: megalodon:android:5557
+smithr phone get --type ios            # → handle: prognathodon:ios:50922
 
 # Release it back to the pool
 smithr phone release <handle>
@@ -280,7 +279,7 @@ smithr phone status
 ### Android Pool
 
 - Each phone is a separate `budtmo/docker-android` container on smithr-network
-- No restriction on duplicate models — run N identical Pixel 7s
+- Default device profile: Nexus 5 (works on API 28 and API 34; `pixel_7` does NOT exist as a profile name)
 - ~4 cores + 4GB RAM per emulator → 4 phones per 16-core/64GB host
 - KVM + GPU passthrough for performance
 - Unique IP (10.21.0.30, .31, .32...), ADB port (5555, 5556...), VNC port (5900, 5901...)
@@ -297,15 +296,16 @@ smithr phone status
 
 ### State Management
 
-Phone pool state tracked in JSON on NFS:
+**Clojure control plane** (see [CLOJURE-SERVICE.md](CLOJURE-SERVICE.md)):
 
-```
-/srv/shared/smithr/phone-pool/state.json
-```
+- Push-based state via Docker event subscription (docker-java)
+- Atom-based concurrency (`swap!`) — no filesystem locking
+- SSH tunnels created on lease acquire, destroyed on release/GC
+- REST API on port 7070 with real-time Reagent dashboard
+- OpenAPI 3.1 spec at `hammar/resources/openapi.yaml`
 
-- flock-based locking for concurrent access
-- Each entry has a TTL (default: 30 min) for abandoned phone cleanup
-- Cron job reaps expired leases
+Legacy NFS JSON + flock system (`/srv/shared/smithr/phone-pool/state.json`)
+is being replaced by the Clojure service.
 
 ### Sandbox Phone Visibility
 
@@ -347,14 +347,27 @@ Instead of each test job spinning up its own database, API server, and TLS proxy
 
 ```bash
 # Start the shared server environment
+# Without --config: starts base infrastructure only (DB, Redis, TLS, DNS)
+# With --config: also runs project DB setup + starts project API server
 smithr server start --config smithr.yml
+
+# Idempotent start (safe for CI — only starts if not already running)
+smithr server ensure --config smithr.yml
 
 # Check server health
 smithr server status
 
-# Stop when done
-smithr server stop
+# Stop when done (reverse startup order)
+smithr server stop --config smithr.yml
 ```
+
+Startup phases (with `--config`):
+1. **Network** — create smithr-network (10.21.0.0/16)
+2. **Database + cache** — postgres + redis, wait for healthy
+3. **DNS** — dnsmasq (optional)
+4. **TLS proxy** — Caddy with pre-generated CA
+5. **Project DB setup** — run `server.setup` commands from smithr.yml (e.g. Prisma migrations)
+6. **Project API server** — start via project's compose file, wait for health check
 
 The server starts once per CI pipeline run (or stays always-on for sandboxes). All phone-based test jobs connect to it.
 
@@ -380,7 +393,7 @@ Smithr provides 4 named sandbox slots with fixed port allocations:
 | Tyr     | 5998     | 8084       | ☄     |
 | Vali    | 5999     | 8085       | 🏹    |
 
-(All Norse, all monosyllabic, no collisions with Arthur's Ulfr/Bjorn/Arn/Orm.)
+(All Norse, all monosyllabic, no collisions with Artha's Ulfr/Bjorn/Arn/Orm.)
 
 ## CI Mode
 
@@ -403,15 +416,18 @@ jobs:
       matrix:
         test: [documents, profile, notifications, schedule]
     steps:
-      - name: Start shared server (once, first job only)
+      - name: Start shared server (idempotent — safe for matrix)
         run: smithr server ensure --config smithr.yml
 
       - name: Acquire phone
         id: phone
-        run: echo "handle=$(smithr phone get --type pixel-7)" >> $GITHUB_OUTPUT
+        run: echo "handle=$(smithr phone get --type android)" >> $GITHUB_OUTPUT
 
       - name: Run E2E test
-        run: smithr test run ${{ matrix.test }} --device ${{ steps.phone.outputs.handle }}
+        run: |
+          smithr test run ${{ matrix.test }} \
+            --config smithr.yml \
+            --device ${{ steps.phone.outputs.handle }}
 
       - name: Release phone
         if: always()
@@ -452,170 +468,178 @@ Deploy Phase
 
 ## Configuration System
 
-Projects consume Smithr via a `smithr.yml` configuration file:
+Projects consume Smithr via a `smithr.yml` configuration file placed in the project root. All paths are relative to the directory containing the config file.
+
+### Parser Implementation
+
+The config parser (`bin/lib/config.sh`) uses Python3 + PyYAML to convert YAML to JSON, then jq to query values. This avoids complex Bash YAML parsing while requiring only standard tools (Python3, jq).
+
+```bash
+source bin/lib/config.sh
+smithr_config_load ./smithr.yml              # Parse and cache as JSON
+smithr_config ".project.name"                # Query a scalar → "artha"
+smithr_config ".server.db.user" "smithr"     # Query with default
+smithr_config_arr ".server.setup"            # Query array → one line per element
+smithr_config_has ".server.api.compose"      # Check if key exists → true/false
+smithr_config_export_env ".server.env"       # Export all key-value pairs as env vars
+smithr_config_path ".mobile.android.apk"     # Resolve path relative to config dir
+```
+
+### Config Schema
 
 ```yaml
 # smithr.yml — project-specific Smithr configuration
 project:
-  name: artha
-  repo: JulesGosnell/artha
-  prefix: artha                    # Docker container prefix
+  name: artha                              # Project identifier
+  app_id: com.artha.healthcare             # Mobile app package ID
 
 server:
-  compose_file: docker/api.yml    # project's server compose
-  health_check: "curl -f http://localhost:3000/api/health"
-  setup_commands:
-    - "pnpm db:migrate"
-    - "pnpm db:seed"
+  # Database configuration (overrides Smithr defaults)
+  db:
+    user: artha
+    password: artha_dev_password
+    name: artha
 
-build:
-  android:
-    command: "pnpm mobile:build:android"
-    artifact: "apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
-  ios:
-    command: "pnpm mobile:build:ios"
-    artifact: "apps/mobile/ios/build/ArthaHealthcare.app"
-  server:
-    command: "docker build -t ${PROJECT_NAME}-api ."
-    artifact: "${PROJECT_NAME}-api:latest"
+  # Environment variables for project setup commands
+  env:
+    DATABASE_URL: "postgresql://artha:artha_dev_password@localhost:5432/artha"
+    REDIS_URL: "redis://localhost:6379"
+    AUTH_SECRET: "ci-secret-for-testing"
 
-phones:
+  # Commands to run after database is healthy (in order)
+  # Run from the project root directory
+  setup:
+    - "pnpm install --frozen-lockfile"
+    - "pnpm --filter @artha/db exec prisma generate"
+    - "psql $DATABASE_URL -c \"ALTER DATABASE artha SET app.seed_demo = 'true';\""
+    - "pnpm --filter @artha/db exec prisma migrate deploy"
+
+  # Project API server (started via Docker Compose)
+  api:
+    compose: "docker/api.yml"              # Path to project's compose file
+    container: "artha-api"                 # Container name for health checks
+    health_url: "http://localhost:3000/api/v0/health"  # HTTP health endpoint
+    health_timeout: 60                     # Seconds to wait for healthy
+    env:                                   # Env vars for the API container
+      NODE_ENV: "production"
+      DATABASE_URL: "postgresql://artha:artha_dev_password@smithr-postgres:5432/artha"
+      REDIS_URL: "redis://smithr-redis:6379"
+
+mobile:
   android:
-    model: "pixel_7"
-    api_level: 34
-    pool_size: 4                   # warm phones per host
+    apk: "docker/images/bundles/android/app-release.apk"   # Pre-built APK path
+    build: "./bin/mobile-build.sh android prod"             # Build command
   ios:
-    models: ["iPhone 16", "iPhone 15"]
-    pool_size: 2                   # VMs per host
+    app: "docker/images/bundles/ios/ArthaHealthcare-ios.tar.gz"
 
 tests:
-  framework: maestro+playwright    # or just "playwright", "maestro", etc.
-  suites:
-    - name: documents
-      script: "bin/run-documents-test.sh"
-    - name: profile
-      script: "bin/run-profile-test.sh"
-    - name: notifications
-      script: "bin/run-notifications-test.sh"
-    - name: schedule
-      script: "bin/run-schedule-test.sh"
+  dir: "tests/mobile"                      # Directory containing test files
+  default:                                 # Tests to run by default
+    - "login-only.yaml"
+    - "smoke-test.yaml"
 
-infrastructure:
-  network_subnet: "10.21.0.0/16"  # default, override if needed
-  nfs_path: "/srv/shared"
-  macos_image: "/srv/shared/images/sonoma.img"
-  tls:
-    ca_cert: "docker/shared/tls/ca.crt"
-    ca_key: "docker/shared/tls/ca.key"
-    domain: "artha.care"           # domain for TLS termination
-
-sandboxes:
-  memory_limit: "8g"
-  workers:
-    - name: rune
-      vnc_port: 5996
-      metro_port: 8082
-    - name: sif
-      vnc_port: 5997
-      metro_port: 8083
-    - name: tyr
-      vnc_port: 5998
-      metro_port: 8084
-    - name: vali
-      vnc_port: 5999
-      metro_port: 8085
+network:
+  # ADB reverse mappings: route emulator localhost → host port
+  # Format: "device_port host_port"
+  adb_reverse:
+    - "3000 3000"
 ```
+
+### How Scripts Use the Config
+
+- **`smithr server start --config smithr.yml`**: Reads `server.db.*` for postgres credentials, runs `server.setup` commands, starts the API via `server.api.compose`, waits for `server.api.health_url`.
+- **`smithr test run --config smithr.yml`**: Reads `mobile.android.apk` to find the APK, `tests.dir` for test location, `network.adb_reverse` for port forwarding.
+- **`smithr build --config smithr.yml`**: Reads `mobile.android.build` / `mobile.ios.build` for build commands.
 
 ## Directory Structure
 
 ```
 smithr/
+├── CLAUDE.md                   # Developer guide (start here)
 ├── smithr.yml.example          # Example configuration for consuming projects
+├── README.md
+├── hammar/                     # Clojure control plane (see CLOJURE-SERVICE.md)
+│   ├── deps.edn                # Clojure deps (tools.deps)
+│   ├── shadow-cljs.edn         # ClojureScript build
+│   ├── src/hammar/             # Backend: core, state, docker, lease, api, handlers
+│   ├── src/hammar/ui/          # Frontend: Reagent dashboard
+│   └── resources/              # Config, OpenAPI spec, static assets
 ├── bin/
-│   ├── smithr                  # Main CLI entrypoint
+│   ├── smithr                  # Main CLI entrypoint (dispatches subcommands)
 │   ├── lib/
-│   │   ├── phone-pool.sh      # Phone pool management core
-│   │   ├── server-mgr.sh      # Shared server lifecycle
-│   │   ├── sandbox-mgr.sh     # Sandbox lifecycle
-│   │   ├── config.sh           # smithr.yml parser
-│   │   └── common.sh           # Shared utilities
-│   ├── smithr-phone            # Phone subcommand (get/release/list/status)
-│   ├── smithr-server           # Server subcommand (start/stop/status)
+│   │   ├── common.sh           # Shared utilities (logging, die, wait_for_healthy)
+│   │   ├── config.sh           # smithr.yml parser (Python/PyYAML → JSON → jq)
+│   │   └── phone-pool.sh      # Phone pool management (acquire/release/state)
+│   ├── smithr-phone            # Phone subcommand (get/release/list/status/warm/clean)
+│   ├── smithr-server           # Server subcommand (start/stop/status/ensure)
 │   ├── smithr-sandbox          # Sandbox subcommand (start/stop/list)
 │   ├── smithr-build            # Build subcommand
-│   ├── smithr-test             # Test subcommand
-│   └── smithr-deploy           # Deploy subcommand
+│   ├── smithr-test             # Test subcommand (run/list)
+│   └── smithr-doctor           # Diagnostics subcommand
 ├── layers/
-│   ├── dind.yml                # Docker-in-Docker daemon
-│   ├── network.yml             # smithr-network definition
-│   ├── dns.yml                 # dnsmasq service
-│   ├── tls-proxy.yml           # Caddy TLS termination
+│   ├── network.yml             # smithr-network definition (10.21.0.0/16)
 │   ├── database.yml            # PostgreSQL + Redis
+│   ├── dns.yml                 # dnsmasq for service discovery
+│   ├── tls-proxy.yml           # Caddy TLS termination
 │   ├── android.yml             # Parameterised Android emulator
-│   ├── ios.yml                 # macOS VM + iOS Simulator
-│   └── metro.yml               # React Native Metro bundler
+│   ├── ios.yml                 # macOS VM via Docker-OSX (QEMU/KVM)
+│   ├── ios-sim.yml             # iOS Simulator sidecar (boots inside macOS VM)
+│   ├── metro.yml               # React Native Metro bundler
+│   ├── dind.yml                # Docker-in-Docker daemon (for sandboxes)
+│   └── scripts/
+│       └── ios/
+│           ├── launch-preinstalled.sh  # Custom macOS launch (avoids InstallMedia dialog)
+│           ├── ios-sim-boot.sh         # Simulator boot by UUID
+│           ├── ios-healthcheck.sh      # iOS VM health probe
+│           ├── macos-healthcheck.sh    # macOS VM health probe
+│           └── ssh/                    # SSH keys for macOS VM access
 ├── docker/
-│   ├── Dockerfile.ci           # CI runner image (Node, Java, Maestro, Playwright, etc.)
-│   ├── Dockerfile.sandbox      # Sandbox image (desktop, tools, safety hooks)
-│   ├── ci-entrypoint.sh        # CI job lifecycle script
-│   ├── sandbox-entrypoint.sh   # Sandbox setup script
 │   └── shared/
-│       └── tls/
-│           ├── ca.crt          # Pre-generated CA certificate
-│           └── ca.key          # Pre-generated CA key
+│       ├── android-entrypoint.sh       # Custom Android emulator entrypoint
+│       └── tls/                        # Pre-generated CA cert/key
 ├── templates/
-│   ├── github-actions/
-│   │   ├── ci.yml              # Template CI workflow
-│   │   └── sandbox.yml         # Template sandbox workflow
-│   └── phone-pods/
-│       ├── android-pod.yml     # Template for Android phone container
-│       └── ios-pod.yml         # Template for iOS phone VM
+│   └── github-actions/
+│       └── ci.yml              # Template CI workflow for consuming projects
 ├── demo/
-│   ├── app/                    # Minimal React Native demo app
-│   ├── server/                 # Minimal Express API server
-│   ├── tests/                  # Demo Maestro + Playwright tests
+│   ├── server/                 # Minimal Fastify+Prisma API server
+│   ├── mobile/                 # Minimal Expo Router mobile app
+│   ├── tests/maestro/          # Demo Maestro tests (login, smoke)
 │   └── smithr.yml              # Demo project config
 ├── docs/
 │   ├── ARCHITECTURE.md         # This file
-│   ├── GETTING-STARTED.md      # Quick start guide
-│   ├── PHONE-AS-A-SERVICE.md   # Detailed PaaS documentation
-│   ├── CONFIGURATION.md        # smithr.yml reference
-│   ├── CI-INTEGRATION.md       # GitHub Actions integration guide
-│   ├── SANDBOX.md              # Sandbox setup and usage
-│   └── MIGRATION.md            # Guide for migrating from embedded infra
+│   ├── IOS-SETUP.md            # iOS PaaS setup guide
+│   ├── RESEARCH.md             # Research notes
+│   └── artha-lessons.md        # Lessons learned from Artha integration
 └── .github/
-    └── workflows/
-        └── smithr-ci.yml       # Smithr's own CI (tests the demo app)
+    └── workflows/              # Smithr's own CI
 ```
 
 ## Naming Conventions
 
 - **Docker prefix**: `smithr-` for all containers, networks, volumes
 - **Compose project names**: `smithr-<mode>-<name>-<id>` (e.g., `smithr-ci-training-12345`)
-- **Network**: `smithr-network` (10.21.0.0/16) — distinct from Arthur's `artha-network` (172.20.0.0/16)
-- **Sandbox workers**: Rune, Sif, Tyr, Vali (Norse, monosyllabic, no collision with Arthur's Ulfr/Bjorn/Arn/Orm)
+- **Network**: `smithr-network` (10.21.0.0/16) — distinct from Artha's networks (10.20.0.0/16 for `artha-network`, plus `artha_default` for compose services)
+- **Sandbox workers**: Rune, Sif, Tyr, Vali (Norse, monosyllabic, no collision with Artha's Ulfr/Bjorn/Arn/Orm)
 - **NFS paths**: `/srv/shared/smithr/` (separate from `/srv/shared/artha-ci/`)
 
 ## Demo Application
 
 A minimal application to prove the infrastructure works end-to-end:
 
-- **React Native app**: single screen with a counter button and a greeting from the API
-- **Express API**: single endpoint (`GET /api/hello`) backed by PostgreSQL
-- **Maestro test**: tap the button, verify counter increments, verify API greeting displays
-- **Playwright test**: create a record via the API, verify it in the database
+- **Fastify + Prisma API**: JWT auth, user CRUD, health endpoints (`/health`, `/ready`)
+- **Expo Router mobile app**: login screen, greeting from API
+- **Maestro tests**: login flow (`login.yaml`), smoke test (`smoke.yaml`)
 
-This is intentionally trivial — the point is to exercise the infrastructure, not to build a real app.
+This is intentionally trivial — the point is to exercise the infrastructure, not to build a real app. The demo has its own `smithr.yml` that configures server, database, phones, and tests.
 
-## Migration Path for Arthur
+## Migration Path for Artha
 
-Once Smithr is proven with the demo app:
+Progress towards running Artha's E2E tests through Smithr:
 
-1. **Add `smithr.yml` to Arthur** — configure Arthur's builds, tests, server, and phone requirements
-2. **Replace Arthur's `docker/` infra** — swap Arthur's compose files for Smithr layers
-3. **Replace Arthur's `bin/` scripts** — swap Arthur's CI/sandbox scripts for `smithr` CLI commands
-4. **Update Arthur's GitHub Actions** — use Smithr template workflows
-5. **Remove Arthur's embedded infra** — delete the now-redundant Docker, CI, and sandbox code
-6. **Verify** — run Arthur's full test suite through Smithr
+1. **Add `smithr.yml` to Artha** — DONE. Config at `artha/smithr.yml` with DB setup (Prisma migrations + demo seed), API server (Next.js standalone Docker image), APK paths, test directory, and ADB reverse mappings.
+2. **Config-aware Smithr commands** — DONE. `smithr server` and `smithr test` accept `--config smithr.yml` and use the config for DB setup, API lifecycle, APK discovery, and port forwarding.
+3. **Build APK with correct API URL** — IN PROGRESS. The pre-built release APK points at `https://artha.care` (baked at build time). Need to either build with `--local` flag (requires `pnpm install` + Gradle) or set up TLS+DNS to proxy `artha.care` to the local API.
+4. **Replace Artha's GitHub Actions** — TODO. Replace `artha/.github/workflows/android-e2e.yml` with a Smithr-based workflow using phone pool and shared server.
+5. **Remove Artha's embedded infra** — TODO. Delete redundant Docker, CI, and sandbox code once Smithr handles everything.
 
-This is a gradual migration. Arthur can run both systems in parallel during the transition.
+This is a gradual migration. Artha runs both systems in parallel during the transition.

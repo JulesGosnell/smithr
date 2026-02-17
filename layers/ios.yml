@@ -28,7 +28,7 @@
 #
 # Environment Variables:
 #   SMITHR_PREFIX            - Container name prefix (default: smithr)
-#   SMITHR_IOS_VM_ID         - VM instance ID (default: 0)
+#   SMITHR_IOS_RUNE         - VM instance ID (default: 0)
 #   SMITHR_MACOS_IMAGE       - Path to macOS base image (REQUIRED)
 #   SMITHR_MACOS_RAM         - RAM for macOS VM in GB (default: 22)
 #   SMITHR_MACOS_CORES       - CPU cores for VM (default: 4)
@@ -49,7 +49,7 @@
 services:
   macos:
     image: sickcodes/docker-osx:latest
-    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_VM_ID:-0}
+    container_name: ${SMITHR_PREFIX:-smithr}-ios-${SMITHR_IOS_RUNE:-fe}
     # Use our custom launch script that omits the unnecessary InstallMedia drive
     entrypoint: ["/bin/bash"]
     command: ["/launch.sh"]
@@ -80,7 +80,7 @@ services:
       # VNC display :99 = port 5999
       EXTRA: "-display none -vnc 0.0.0.0:99,password=off"
       # Volatile by default (QCOW2 overlay protects base image)
-      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-0}"
+      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-fe}"
       # Skip OpenCore boot picker (saves ~30s)
       NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
       BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"
@@ -88,6 +88,11 @@ services:
       IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
       SSH_USER: "${SMITHR_MACOS_SSH_USER:-claude}"
+    labels:
+      smithr.managed: "true"
+      smithr.resource.type: "vm"
+      smithr.resource.platform: "macos"
+      smithr.resource.pool: "ios"
     healthcheck:
       # macOS health check: verifies SSH responsive + Dock running (desktop ready)
       test: ["CMD", "bash", "/macos-healthcheck.sh"]
