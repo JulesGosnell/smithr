@@ -27,10 +27,9 @@
         connected (filterv some? host-connections)]
     (log/info "Connected to" (count connected) "of" (count (:hosts config)) "Docker hosts")
 
-    ;; Start GC loop
+    ;; Start GC loop — each instance GCs all its own leases (state is per-instance)
     (let [gc-interval (get-in config [:gc :interval-seconds] 30)
-          gc-host     (get-in config [:gc :own-host])
-          gc-future   (lease/start-gc-loop! gc-interval gc-host)]
+          gc-future   (lease/start-gc-loop! gc-interval nil)]
 
       ;; Start HTTP server
       (let [port    (get-in config [:server :port] 7070)

@@ -253,7 +253,7 @@
 
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
-  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports]
+  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports prefer-host]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -297,13 +297,13 @@
                                                          (and (= (:status %) :shared)
                                                               (< (count (:active-leases % #{}))
                                                                  (:max-slots % 10))))))
-                                       (sort-by :id)))
+                                       (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
                                 ;; Phone: warm only (exclusive)
                                 (->> (vals (:resources s))
                                      (filter #(and (= (:status %) :warm)
                                                    (= (:type %) (keyword type))
                                                    (= (:platform %) (keyword platform))))
-                                     (sort-by :id)))]
+                                     (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)
