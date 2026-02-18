@@ -1,0 +1,15 @@
+{:server {:port 7070
+          :host "0.0.0.0"}
+
+ ;; Local host first (unix socket), then remote hosts (auto-tunnelled)
+ :hosts [{:label "prognathodon"}
+         {:label "megalodon" :host-address "megalodon"}]
+
+ :gc {:interval-seconds 30
+      :own-host "prognathodon"}
+
+ :compose {:project "smithr"
+           :network "smithr-network"}
+
+ :tunnel {:key-path "/ssh-key/macos-ssh-key"
+          :base-port 17000}}

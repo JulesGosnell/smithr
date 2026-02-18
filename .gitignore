@@ -1,2 +1,4 @@
 .playwright-mcp/
 mocks/*/node_modules/
+# Host-specific symlink (points to config/<hostname>.edn)
+hammar/resources/hammar.edn

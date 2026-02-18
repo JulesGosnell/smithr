@@ -1,11 +1,9 @@
 {:server {:port 7070
           :host "0.0.0.0"}
 
- :hosts [{:label "megalodon"
-          :docker-uri "unix:///var/run/docker.sock"}
-         {:label "prognathodon"
-          :docker-uri "tcp://localhost:2375"
-          :host-address "prognathodon"}]
+ ;; Local host first (unix socket), then remote hosts (auto-tunnelled)
+ :hosts [{:label "megalodon"}
+         {:label "prognathodon" :host-address "prognathodon"}]
 
  :gc {:interval-seconds 30
       :own-host "megalodon"}
@@ -13,6 +11,5 @@
  :compose {:project "smithr"
            :network "smithr-network"}
 
- ;; SSH tunnel settings for leases
  :tunnel {:key-path "/ssh-key/macos-ssh-key"
           :base-port 17000}}

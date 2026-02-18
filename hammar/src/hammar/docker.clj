@@ -3,6 +3,7 @@
    Uses docker-java to listen for container lifecycle events
    filtered by smithr.managed=true label."
   (:require [clojure.tools.logging :as log]
+            [clojure.java.shell :as shell]
             [hammar.state :as state])
   (:import [com.github.dockerjava.core DockerClientImpl DefaultDockerClientConfig]
            [com.github.dockerjava.core.command EventsResultCallback]
@@ -209,24 +210,93 @@
 ;; Host lifecycle
 ;; ---------------------------------------------------------------------------
 
+(defonce ^:private host-tunnels
+  (atom {}))  ;; label -> {:port int, :host-address string}
+
+(def ^:private tunnel-base-port
+  "Base port for auto-allocated Docker host tunnels."
+  12375)
+
+(defonce ^:private next-tunnel-port
+  (atom tunnel-base-port))
+
+(defn- allocate-tunnel-port! []
+  (let [p @next-tunnel-port]
+    (swap! next-tunnel-port inc)
+    p))
+
+(defn- ensure-host-tunnel!
+  "Resolve the Docker URI for a host config.
+   - Local hosts (no :host-address): uses docker-uri or default unix socket.
+   - Remote hosts with docker-uri: uses it directly (user manages connectivity).
+   - Remote hosts without docker-uri: auto-creates SSH tunnel to Docker socket."
+  [{:keys [label docker-uri host-address]}]
+  (cond
+    ;; Local host — use provided URI or default unix socket
+    (not host-address)
+    (or docker-uri "unix:///var/run/docker.sock")
+
+    ;; Remote host with explicit docker-uri — use it directly
+    docker-uri
+    (do (log/info "Using configured Docker URI for" label ":" docker-uri)
+        docker-uri)
+
+    ;; Remote host, no docker-uri — auto-create SSH tunnel
+    :else
+    (if-let [existing (get @host-tunnels label)]
+      (let [uri (str "tcp://localhost:" (:port existing))]
+        (log/debug "SSH tunnel to" label "already exists on port" (:port existing))
+        uri)
+      (let [port (allocate-tunnel-port!)]
+        (log/info "Creating SSH tunnel to" label
+                  "(" host-address " → localhost:" port ")")
+        (let [result (shell/sh "ssh" "-fNL"
+                       (str port ":/var/run/docker.sock")
+                       "-o" "StrictHostKeyChecking=no"
+                       "-o" "BatchMode=yes"
+                       "-o" "ServerAliveInterval=30"
+                       "-o" "ServerAliveCountMax=3"
+                       "-o" "ExitOnForwardFailure=yes"
+                       "-o" "ConnectTimeout=10"
+                       host-address)]
+          (if (zero? (:exit result))
+            (let [uri (str "tcp://localhost:" port)]
+              (log/info "SSH tunnel to" label "established on port" port)
+              (swap! host-tunnels assoc label {:port port :host-address host-address})
+              (Thread/sleep 500)
+              uri)
+            (do
+              (log/error "Failed to create SSH tunnel to" label
+                         "exit:" (:exit result) "err:" (:err result))
+              nil)))))))
+
 (defn connect-host!
   "Connect to a Docker host: register, scan containers, subscribe to events.
+   For remote hosts (with :host-address), automatically creates an SSH tunnel
+   to the remote Docker socket. No manual tunnel setup needed.
    Returns {:client client :subscription subscription}."
   [host-config network-name]
-  (let [{:keys [label docker-uri host-address]} host-config]
-    (log/info "Connecting to Docker host" label "at" docker-uri
-              (when host-address (str "(host-address: " host-address ")")))
-    (try
-      (let [client (make-client docker-uri)]
-        ;; Verify connectivity
-        (-> client (.pingCmd) (.exec))
-        (log/info "Connected to" label)
-        (state/register-host! label docker-uri)
-        (scan-containers! client label network-name host-address)
-        (let [sub (subscribe-events! client label network-name host-address)]
-          {:client client :subscription sub :label label}))
-      (catch Exception e
-        (log/error "Failed to connect to" label ":" (.getMessage e))
-        (state/register-host! label docker-uri)
+  (let [{:keys [label host-address]} host-config
+        docker-uri (ensure-host-tunnel! host-config)]
+    (if-not docker-uri
+      (do
+        (log/error "Cannot connect to" label "— tunnel setup failed")
+        (state/register-host! label "failed")
         (state/disconnect-host! label)
-        nil))))
+        nil)
+      (do
+        (log/info "Connecting to Docker host" label "at" docker-uri
+                  (when host-address (str "(remote: " host-address ")")))
+        (try
+          (let [client (make-client docker-uri)]
+            (-> client (.pingCmd) (.exec))
+            (log/info "Connected to" label)
+            (state/register-host! label docker-uri)
+            (scan-containers! client label network-name host-address)
+            (let [sub (subscribe-events! client label network-name host-address)]
+              {:client client :subscription sub :label label}))
+          (catch Exception e
+            (log/error "Failed to connect to" label ":" (.getMessage e))
+            (state/register-host! label docker-uri)
+            (state/disconnect-host! label)
+            nil))))))
