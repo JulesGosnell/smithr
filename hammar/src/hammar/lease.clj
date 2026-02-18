@@ -52,9 +52,28 @@
     {:fwd-host target-host :fwd-port target-port :hop "localhost"}
     {:fwd-host "localhost" :fwd-port target-port :hop (or target-host "localhost")}))
 
+(defn- await-port-ready
+  "Poll localhost:port until it accepts a TCP connection. Returns true if ready,
+   false if timeout exceeded. Checks every 200ms up to timeout-ms."
+  [port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (if (> (System/currentTimeMillis) deadline)
+        false
+        (if (try
+              (let [sock (java.net.Socket.)]
+                (try
+                  (.connect sock (java.net.InetSocketAddress. "localhost" (int port)) 200)
+                  true
+                  (finally (.close sock))))
+              (catch Exception _ false))
+          true
+          (do (Thread/sleep 200) (recur)))))))
+
 (defn- start-tunnel!
   "Start an SSH tunnel for a lease. Returns tunnel info map.
    Uses `ssh -N -L` for port forwarding. One SSH process per lease.
+   Waits for the tunnel port to accept connections before returning.
    Kill the process → client is disconnected."
   [lease-id resource]
   (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
@@ -100,12 +119,14 @@
                          :target      target-str
                          :started-at  (Instant/now)}]
         (swap! tunnels assoc lease-id tunnel-info)
-        ;; Brief pause to let SSH establish the forwarding
-        (Thread/sleep 500)
-        (if (.isAlive proc)
-          (log/info "SSH tunnel started: port" tunnel-port "→" target-str "pid" (.pid proc))
-          (log/error "SSH tunnel exited immediately on port" tunnel-port
-                     "— check SSH access to" hop))
+        ;; Wait for tunnel port to actually accept connections (up to 10s)
+        (if (await-port-ready tunnel-port 10000)
+          (log/info "SSH tunnel ready: port" tunnel-port "→" target-str "pid" (.pid proc))
+          (if (.isAlive proc)
+            (log/warn "SSH tunnel process alive but port" tunnel-port
+                      "not accepting connections after 10s")
+            (log/error "SSH tunnel exited on port" tunnel-port
+                       "— check SSH access to" hop)))
         tunnel-info)
       (catch Exception e
         (log/error "Failed to start SSH tunnel on port" tunnel-port ":" (.getMessage e))
