@@ -5,7 +5,8 @@
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
             [hammar.state :as state]
-            [hammar.macos :as macos])
+            [hammar.macos :as macos]
+            [hammar.linux :as linux])
   (:import [java.time Instant Duration]
            [java.util UUID]))
 
@@ -74,6 +75,7 @@
           :macos   [(or ssh-host "localhost") (or ssh-port 10022)]
           :ios     (let [conn (or parent-conn (:connection resource))]
                      [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
+          :android-build [(or ssh-host "localhost") (or ssh-port 22)]
           ["localhost" 0])
         ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname
         {:keys [fwd-host fwd-port hop]} (resolve-tunnel-route target-host target-port)
@@ -221,6 +223,18 @@
 
 (declare unlease!)
 
+(defn- platform-user-ops
+  "Return the user management functions for a resource's platform.
+   macOS uses dscl-based scripts, Linux uses useradd/userdel."
+  [resource]
+  (if (= (:platform resource) :android-build)
+    {:ensure-user!  linux/ensure-user!
+     :create-user!  linux/create-user!
+     :delete-user!  linux/delete-user!}
+    {:ensure-user!  macos/ensure-user!
+     :create-user!  macos/create-user!
+     :delete-user!  macos/delete-user!}))
+
 (defn- valid-workspace-name?
   "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."
   [name]
@@ -322,10 +336,11 @@
                  s))))
     (when-let [{:keys [lease resource]} @result]
       (if (= lease-type :build)
-        ;; Build lease: create/ensure macOS user, then start tunnel
-        (let [user-info (if workspace
-                          (macos/ensure-user! resource workspace)
-                          (macos/create-user! resource lease-id))]
+        ;; Build lease: create/ensure user, then start tunnel
+        (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
+              user-info (if workspace
+                          (ensure-user! resource workspace)
+                          (create-user! resource lease-id))]
           (if user-info
             (let [tunnel (start-tunnel! lease-id resource)
                   {:keys [ssh-host ssh-port]} (:connection resource)
@@ -470,11 +485,12 @@
           (when-let [macos-user (:macos-user lease)]
             (let [resource (state/resource (:resource-id lease))]
               (when resource
-                (future
-                  (try
-                    (macos/delete-user! resource macos-user)
-                    (catch Exception e
-                      (log/warn "Failed to delete macOS user" macos-user ":" (.getMessage e))))))))))
+                (let [{delete-user! :delete-user!} (platform-user-ops resource)]
+                  (future
+                    (try
+                      (delete-user! resource macos-user)
+                      (catch Exception e
+                        (log/warn "Failed to delete user" macos-user ":" (.getMessage e)))))))))))
       ;; Clean up reverse port forwarding if present
       (when-let [server-ports (seq (:server-ports lease))]
         (let [resource (state/resource (:resource-id lease))
@@ -521,9 +537,10 @@
 
       :else
       (let [resource (state/resource (:resource-id ws))]
-        ;; Delete macOS user
+        ;; Delete user
         (when resource
-          (macos/delete-user! resource (:macos-user ws)))
+          (let [{delete-user! :delete-user!} (platform-user-ops resource)]
+            (delete-user! resource (:macos-user ws))))
         ;; Remove from state
         (swap! state/state update :workspaces dissoc workspace-name)
         (log/info "Purged workspace:" workspace-name)

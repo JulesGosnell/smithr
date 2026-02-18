@@ -1,0 +1,50 @@
+# layers/android-build.yml
+#
+# Android Build VM — lightweight Fedora container with Android SDK + Node.js
+# for workspace build leases (concurrent SSH sessions, user isolation).
+#
+# Same pattern as xcode.yml but Linux-native, no KVM needed.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/android-build.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX                - Container name prefix (default: smithr)
+#   SMITHR_ANDROID_BUILD_RUNE   - Instance ID (default: fe)
+#   SMITHR_ANDROID_BUILD_IP     - Fixed IP on smithr-network (default: 10.21.0.50)
+#   SMITHR_ANDROID_BUILD_MAX_SLOTS - Max concurrent build leases (default: 10)
+
+services:
+  android-build:
+    build:
+      context: ./images/android-build
+    image: smithr-android-build:latest
+    container_name: ${SMITHR_PREFIX:-smithr}-android-build-${SMITHR_ANDROID_BUILD_RUNE:-fe}
+    volumes:
+      # Mount the SSH public key to staging location (entrypoint copies to .ssh/)
+      - "${SMITHR_SSH_PUBKEY:-/srv/shared/images/ssh/macos-ssh-key.pub}:/tmp/authorized_keys:ro,z"
+      # Docker socket — allows builds inside the container to use host Docker
+      - /var/run/docker.sock:/var/run/docker.sock:z
+    labels:
+      smithr.managed: "true"
+      smithr.resource.type: "vm"
+      smithr.resource.platform: "android-build"
+      smithr.resource.pool: "android-build"
+      smithr.resource.max-slots: "${SMITHR_ANDROID_BUILD_MAX_SLOTS:-10}"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/22'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      default:
+        ipv4_address: ${SMITHR_ANDROID_BUILD_IP:-10.21.0.50}
+    security_opt:
+      - label=disable
+    restart: unless-stopped
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

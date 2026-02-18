@@ -96,6 +96,10 @@
                                      :ssh-port (if (and remote? (host-port-for 10022))
                                                  (host-port-for 10022) 10022)}
                               (host-port-for 5999) (assoc :vnc-port (host-port-for 5999)))
+                     :android-build {:ssh-host (if (and remote? (host-port-for 22))
+                                                 host-address ip)
+                                     :ssh-port (if (and remote? (host-port-for 22))
+                                                 (host-port-for 22) 22)}
                      {})]
     (cond-> {:id id
              :type res-type
@@ -106,7 +110,7 @@
              :connection connection
              :parent (get labels "smithr.resource.parent")
              :updated-at (Instant/now)}
-      (= platform :macos)
+      (#{:macos :android-build} platform)
       (assoc :max-slots (if-let [s (get labels "smithr.resource.max-slots")]
                           (Integer/parseInt s)
                           10)
