@@ -154,7 +154,9 @@
         actor (.getActor event)
         attrs (when actor (.getAttributes actor))
         managed? (= "true" (get attrs "smithr.managed"))]
-    (when managed?
+    (when (and managed?
+               ;; Skip exec events (healthchecks etc) — too noisy
+               (not (.startsWith (or action "") "exec_")))
       (let [container-id (.getId actor)]
         (log/debug "Docker event:" action "container:" container-id "on" host-label)
         (case action
