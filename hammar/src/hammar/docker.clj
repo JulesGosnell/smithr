@@ -17,13 +17,18 @@
 ;; ---------------------------------------------------------------------------
 
 (defn make-client
-  "Create a Docker client for the given URI (unix or tcp)."
-  [docker-uri]
-  (let [config (-> (DefaultDockerClientConfig/createDefaultConfigBuilder)
-                   (.withDockerHost docker-uri)
-                   (.build))
+  "Create a Docker client for the given URI (unix or tcp).
+   For TLS-secured connections, pass :tls-verify true and :cert-path
+   pointing to a directory containing ca.pem, cert.pem, key.pem."
+  [docker-uri & {:keys [tls-verify cert-path]}]
+  (let [config (cond-> (DefaultDockerClientConfig/createDefaultConfigBuilder)
+                 true       (.withDockerHost docker-uri)
+                 tls-verify (.withDockerTlsVerify (boolean tls-verify))
+                 cert-path  (.withDockerCertPath cert-path)
+                 true       (.build))
         http-client (-> (ApacheDockerHttpClient$Builder.)
                         (.dockerHost (URI. docker-uri))
+                        (.sslConfig (.getSSLConfig config))
                         (.build))]
     (DockerClientImpl/getInstance config http-client)))
 
@@ -225,12 +230,13 @@
     (swap! next-tunnel-port inc)
     p))
 
-(defn- ensure-host-tunnel!
+(defn- resolve-docker-uri
   "Resolve the Docker URI for a host config.
    - Local hosts (no :host-address): uses docker-uri or default unix socket.
-   - Remote hosts with docker-uri: uses it directly (user manages connectivity).
-   - Remote hosts without docker-uri: auto-creates SSH tunnel to Docker socket."
-  [{:keys [label docker-uri host-address]}]
+   - Remote hosts with docker-uri: uses it directly.
+   - Remote hosts with TLS: constructs tcp://<host-address>:2376.
+   - Remote hosts without docker-uri or TLS: auto-creates SSH tunnel."
+  [{:keys [label docker-uri host-address tls]}]
   (cond
     ;; Local host — use provided URI or default unix socket
     (not host-address)
@@ -241,7 +247,14 @@
     (do (log/info "Using configured Docker URI for" label ":" docker-uri)
         docker-uri)
 
-    ;; Remote host, no docker-uri — auto-create SSH tunnel
+    ;; Remote host with TLS — connect directly, no tunnel needed
+    tls
+    (let [port (get tls :port 2376)
+          uri (str "tcp://" host-address ":" port)]
+      (log/info "Using TLS connection to" label "at" uri)
+      uri)
+
+    ;; Remote host, no docker-uri, no TLS — auto-create SSH tunnel
     :else
     (if-let [existing (get @host-tunnels label)]
       (let [uri (str "tcp://localhost:" (:port existing))]
@@ -272,23 +285,30 @@
 
 (defn connect-host!
   "Connect to a Docker host: register, scan containers, subscribe to events.
-   For remote hosts (with :host-address), automatically creates an SSH tunnel
-   to the remote Docker socket. No manual tunnel setup needed.
+   Supports three remote connection modes:
+     1. TLS (preferred): set :tls {:cert-path \"/etc/smithr/tls\"} on host config
+     2. Explicit URI: set :docker-uri on host config
+     3. SSH tunnel (auto): just set :host-address, tunnel created automatically
    Returns {:client client :subscription subscription}."
   [host-config network-name]
-  (let [{:keys [label host-address]} host-config
-        docker-uri (ensure-host-tunnel! host-config)]
+  (let [{:keys [label host-address tls]} host-config
+        docker-uri (resolve-docker-uri host-config)]
     (if-not docker-uri
       (do
-        (log/error "Cannot connect to" label "— tunnel setup failed")
+        (log/error "Cannot connect to" label "— connection setup failed")
         (state/register-host! label "failed")
         (state/disconnect-host! label)
         nil)
       (do
         (log/info "Connecting to Docker host" label "at" docker-uri
-                  (when host-address (str "(remote: " host-address ")")))
+                  (when host-address (str "(remote: " host-address ")"))
+                  (when tls " [TLS]"))
         (try
-          (let [client (make-client docker-uri)]
+          (let [client (if tls
+                         (make-client docker-uri
+                                      :tls-verify true
+                                      :cert-path (:cert-path tls))
+                         (make-client docker-uri))]
             (-> client (.pingCmd) (.exec))
             (log/info "Connected to" label)
             (state/register-host! label docker-uri)

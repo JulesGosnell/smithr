@@ -1,9 +1,13 @@
 {:server {:port 7070
           :host "0.0.0.0"}
 
- ;; Local host first (unix socket), then remote hosts (auto-tunnelled)
+ ;; Local host first (unix socket), then remote hosts.
+ ;; Remote hosts use TLS — Docker daemon listens on port 2376 with mutual TLS.
+ ;; Cert dir must contain: ca.pem, cert.pem, key.pem
  :hosts [{:label "megalodon"}
-         {:label "prognathodon" :host-address "prognathodon"}]
+         {:label "prognathodon"
+          :host-address "prognathodon"
+          :tls {:cert-path "/etc/smithr/tls"}}]
 
  :gc {:interval-seconds 30
       :own-host "megalodon"}
