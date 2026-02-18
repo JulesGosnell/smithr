@@ -26,6 +26,14 @@
           found (first (filter #(.exists (java.io.File. %)) candidates))]
       (if found
         (let [abs (.getCanonicalPath (java.io.File. found))]
+          ;; SSH requires private keys to be 0600
+          (try (let [f (java.io.File. abs)]
+                 (.setReadable f false false)    ;; remove read for all
+                 (.setReadable f true true)      ;; add read for owner only
+                 (.setWritable f false false)    ;; remove write for all
+                 (.setWritable f true true)      ;; add write for owner only
+                 (.setExecutable f false false)) ;; remove execute for all
+               (catch Exception _ nil))
           (log/info "Linux SSH key resolved:" abs)
           abs)
         (do
