@@ -1,0 +1,46 @@
+# Physical iPhone proxy — exposes a USB-connected iPhone as a Smithr resource.
+#
+# Prerequisites:
+#   - iPhone connected via USB with Developer Mode enabled
+#   - iproxy available on host (libusbmuxd-utils)
+#   - Device trusted (idevicepair validate → SUCCESS)
+#
+# The host runs iproxy to bridge USB→TCP, the container proxies into smithr-network.
+#
+# Environment Variables:
+#   SMITHR_IPHONE_RUNE      - Younger Futhark rune suffix (default: oss)
+#   SMITHR_IPHONE_IP        - Container IP on smithr-network (default: 10.21.0.52)
+#   SMITHR_IPHONE_PROXY_PORT - Host port where iproxy is listening (default: 27753)
+#   SMITHR_IPHONE_MODEL     - Human-readable label (default: iPhone 12 Pro Max)
+
+services:
+  smithr-physical-iphone:
+    container_name: "smithr-ios-${SMITHR_IPHONE_RUNE:-oss}"
+    image: alpine/socat:latest
+    command: >-
+      TCP-LISTEN:27753,fork,reuseaddr
+      TCP:host.docker.internal:${SMITHR_IPHONE_PROXY_PORT:-27753}
+    extra_hosts:
+      - "host.docker.internal:10.21.0.1"
+    restart: unless-stopped
+    networks:
+      smithr-network:
+        ipv4_address: "${SMITHR_IPHONE_IP:-10.21.0.52}"
+    labels:
+      smithr.managed: "true"
+      smithr.resource.type: "phone"
+      smithr.resource.platform: "ios"
+      smithr.resource.pool: "ios"
+      smithr.resource.substrate: "physical"
+      smithr.resource.model: "${SMITHR_IPHONE_MODEL:-iPhone 12 Pro Max}"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "host.docker.internal", "${SMITHR_IPHONE_PROXY_PORT:-27753}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  smithr-network:
+    external: true
+    name: smithr-network

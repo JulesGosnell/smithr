@@ -68,6 +68,7 @@ services:
       smithr.resource.type: "phone"
       smithr.resource.platform: "android"
       smithr.resource.pool: "android"
+      smithr.resource.substrate: "emulated"
     healthcheck:
       test: ["CMD-SHELL", "adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1"]
       interval: 15s

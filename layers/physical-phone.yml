@@ -1,0 +1,41 @@
+# Physical Android phone proxy — exposes a USB-connected phone as a Smithr resource.
+#
+# The phone must have ADB over TCP enabled:
+#   adb -s <serial> tcpip <port>
+#
+# Environment Variables:
+#   SMITHR_PHYSICAL_RUNE    - Younger Futhark rune suffix (default: thurs)
+#   SMITHR_PHYSICAL_IP      - Container IP on smithr-network (default: 10.21.0.50)
+#   SMITHR_PHYSICAL_ADB_HOST - Phone's WiFi IP (required)
+#   SMITHR_PHYSICAL_ADB_PORT - Phone's ADB TCP port (default: 5557)
+#   SMITHR_PHYSICAL_MODEL   - Human-readable label (default: physical)
+
+services:
+  smithr-physical-android:
+    container_name: "smithr-android-${SMITHR_PHYSICAL_RUNE:-thurs}"
+    image: alpine/socat:latest
+    command: >-
+      TCP-LISTEN:5555,fork,reuseaddr
+      TCP:${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}:${SMITHR_PHYSICAL_ADB_PORT:-5557}
+    restart: unless-stopped
+    networks:
+      smithr-network:
+        ipv4_address: "${SMITHR_PHYSICAL_IP:-10.21.0.50}"
+    labels:
+      smithr.managed: "true"
+      smithr.resource.type: "phone"
+      smithr.resource.platform: "android"
+      smithr.resource.pool: "android"
+      smithr.resource.substrate: "physical"
+      smithr.resource.model: "${SMITHR_PHYSICAL_MODEL:-OPPO A15}"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "${SMITHR_PHYSICAL_ADB_HOST:?}", "${SMITHR_PHYSICAL_ADB_PORT:-5557}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  smithr-network:
+    external: true
+    name: smithr-network

@@ -95,6 +95,7 @@ services:
       smithr.resource.type: "vm"
       smithr.resource.platform: "macos"
       smithr.resource.pool: "ios"
+      smithr.resource.substrate: "virtual"
       smithr.resource.max-slots: "${SMITHR_MACOS_MAX_SLOTS:-10}"
     healthcheck:
       # macOS health check: verifies SSH responsive + Dock running (desktop ready)

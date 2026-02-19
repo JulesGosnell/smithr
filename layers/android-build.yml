@@ -30,6 +30,7 @@ services:
       smithr.resource.type: "vm"
       smithr.resource.platform: "android-build"
       smithr.resource.pool: "android-build"
+      smithr.resource.substrate: "virtual"
       smithr.resource.max-slots: "${SMITHR_ANDROID_BUILD_MAX_SLOTS:-10}"
     ports:
       - "${SMITHR_ANDROID_BUILD_SSH_PORT:-2222}:22"

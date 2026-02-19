@@ -55,6 +55,28 @@
       ["vm" "android-build"]      "\uD83D\uDD28"   ;; 🔨 Build hammer
       "\uD83D\uDCE6")))                             ;; 📦 Generic
 
+(defn- status-icon
+  "Return an icon for resource status."
+  [status]
+  (case status
+    "warm"    "\u2705"      ;; ✅ Available
+    "leased"  "\uD83D\uDD12"  ;; 🔒 Locked
+    "shared"  "\uD83D\uDD17"  ;; 🔗 Shared
+    "booting" "\u23F3"      ;; ⏳ Booting
+    "dead"    "\uD83D\uDC80"  ;; 💀 Dead
+    "pinned"  "\uD83D\uDCCC"  ;; 📌 Pinned
+    ""))
+
+(defn- substrate-icon
+  "Return an icon for resource substrate (how it runs)."
+  [substrate]
+  (case substrate
+    "physical"  "\uD83D\uDD0C"  ;; 🔌 Physical (plugged in)
+    "emulated"  "\uD83D\uDCBB"  ;; 💻 Emulated
+    "simulated" "\uD83C\uDFAD"  ;; 🎭 Simulated
+    "virtual"   "\u2601"        ;; ☁ Virtual
+    nil))
+
 (defn- children-of
   "Find child resources whose :parent matches container name."
   [container-name all-resources]
@@ -143,8 +165,15 @@
       [:span.box-title (:container resource)]
       [:span.box-meta
        (:type resource) " · " (:platform resource)
+       (when-let [sub (:substrate resource)]
+         (str " · " sub))
+       (when-let [model (:model resource)]
+         (str " · " model))
        (when max-slots (str " · " active-count "/" max-slots " slots"))]
-      [:span.box-status {:class status} status]
+      [:span.box-status {:class status}
+       (str (when-let [si (substrate-icon (:substrate resource))]
+              (str si " "))
+            (status-icon status) " " status)]
       (when remaining
         [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
 
