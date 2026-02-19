@@ -103,13 +103,16 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN npx playwright install chromium \
     && chmod -R a+rwX /opt/playwright
 
-# Maestro mobile testing framework — install to shared location
+# Maestro mobile testing framework — direct install from GitHub release
+# (avoids the curl installer which pulls in Linuxbrew and conflicts with
+# workspace users' own Maestro installs)
 ENV MAESTRO_HOME=/opt/maestro
-RUN mkdir -p /opt/maestro \
-    && curl -fsSL "https://get.maestro.mobile.dev" | bash \
-    && cp -a /root/.maestro/* /opt/maestro/ \
-    && chmod -R a+rX /opt/maestro \
-    && ln -sf /opt/maestro/bin/maestro /usr/local/bin/maestro
+ARG MAESTRO_VERSION=cli-2.1.0
+RUN curl -fsSL "https://github.com/mobile-dev-inc/maestro/releases/download/${MAESTRO_VERSION}/maestro.zip" \
+        -o /tmp/maestro.zip \
+    && unzip -q /tmp/maestro.zip -d /opt \
+    && rm /tmp/maestro.zip \
+    && chmod -R a+rX /opt/maestro
 
 # Gradle — pre-installed so workspace builds don't download on every cold start
 ENV GRADLE_HOME=/opt/gradle
