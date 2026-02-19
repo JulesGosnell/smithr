@@ -101,7 +101,7 @@ RUN dnf install -y \
 # Playwright with Chromium browser — install to shared location for workspace users
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN npx playwright install chromium \
-    && chmod -R a+rX /opt/playwright
+    && chmod -R a+rwX /opt/playwright
 
 # Maestro mobile testing framework — install to shared location
 ENV MAESTRO_HOME=/opt/maestro
@@ -111,12 +111,24 @@ RUN mkdir -p /opt/maestro \
     && chmod -R a+rX /opt/maestro \
     && ln -sf /opt/maestro/bin/maestro /usr/local/bin/maestro
 
+# Gradle — pre-installed so workspace builds don't download on every cold start
+ENV GRADLE_HOME=/opt/gradle
+ARG GRADLE_VERSION=8.14.3
+RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+        -o /tmp/gradle.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && mv /opt/gradle-${GRADLE_VERSION} /opt/gradle \
+    && rm /tmp/gradle.zip \
+    && chmod -R a+rX /opt/gradle \
+    && ln -sf /opt/gradle/bin/gradle /usr/local/bin/gradle
+
 # Export env vars in global profile (SSH sessions don't inherit Docker ENV)
 RUN echo 'export ANDROID_HOME=/opt/android-sdk' >> /etc/profile.d/smithr-env.sh \
     && echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> /etc/profile.d/smithr-env.sh \
     && echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright' >> /etc/profile.d/smithr-env.sh \
     && echo 'export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools"' >> /etc/profile.d/smithr-env.sh \
-    && echo 'export PATH="$PATH:/opt/maestro/bin"' >> /etc/profile.d/smithr-env.sh
+    && echo 'export GRADLE_HOME=/opt/gradle' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export PATH="$PATH:/opt/gradle/bin:/opt/maestro/bin"' >> /etc/profile.d/smithr-env.sh
 
 # Healthcheck: sshd port open
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
