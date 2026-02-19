@@ -257,7 +257,9 @@
 (defn header []
   (let [h @state/health]
     [:div.header
-     [:h1 "SMITHR"]
+     [:h1 "SMITHR"
+      (when-let [hash (:git_hash h)]
+        [:span.git-hash (str " (" hash ")")])]
      [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
       (if h
         (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "

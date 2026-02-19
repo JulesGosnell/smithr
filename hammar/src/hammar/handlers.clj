@@ -3,9 +3,17 @@
   (:require [hammar.state :as state]
             [hammar.lease :as lease]
             [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.tools.logging :as log])
   (:import [java.time Instant]))
+
+(def ^:private git-hash
+  "Git commit hash captured at load time."
+  (try
+    (-> (shell/sh "git" "rev-parse" "--short" "HEAD")
+        :out str/trim)
+    (catch Exception _ "unknown")))
 
 ;; ---------------------------------------------------------------------------
 ;; Response helpers
@@ -172,7 +180,8 @@
                     :hosts      (count hosts)
                     :resources  (count resources)
                     :leases     (count leases)
-                    :workspaces (count workspaces)})))
+                    :workspaces (count workspaces)
+                    :git-hash   git-hash})))
 
 ;; ---------------------------------------------------------------------------
 ;; Workspace handlers

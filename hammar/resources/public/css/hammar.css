@@ -54,6 +54,12 @@ body {
   letter-spacing: 0.05em;
 }
 
+.header .git-hash {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
 .header .status {
   font-size: 0.85rem;
   color: var(--text-dim);
