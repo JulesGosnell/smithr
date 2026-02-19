@@ -6,8 +6,7 @@
             [hammar.config :as config]
             [hammar.docker :as docker]
             [hammar.lease :as lease]
-            [hammar.api :as api]
-            [hammar.state :as state])
+            [hammar.api :as api])
   (:gen-class))
 
 (defonce ^:private system (atom nil))
@@ -16,12 +15,6 @@
   "Start the Hammar system: connect to Docker hosts, start GC, start HTTP server."
   [config]
   (log/info "Starting Smithr resource pool manager")
-
-  ;; Record which host this instance owns (first host in config = local)
-  (let [own-host (get-in config [:gc :own-host]
-                         (:label (first (:hosts config))))]
-    (state/set-own-host! own-host)
-    (log/info "Own host:" own-host))
 
   ;; Clean up stale socat tunnels from previous sessions
   (lease/cleanup-stale-tunnels!)
