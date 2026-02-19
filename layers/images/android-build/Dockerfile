@@ -98,30 +98,28 @@ RUN dnf install -y \
     libXfixes dbus-libs mesa-libEGL libxshmfence \
     && dnf clean all
 
-# Playwright with Chromium browser
-RUN npx playwright install chromium
+# Playwright with Chromium browser — install to shared location for workspace users
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN npx playwright install chromium \
+    && chmod -R a+rX /opt/playwright
 
-# Maestro mobile testing framework
+# Maestro mobile testing framework — install to shared location
+ENV MAESTRO_HOME=/opt/maestro
 RUN curl -fsSL "https://get.maestro.mobile.dev" | bash \
-    && ln -sf /root/.maestro/bin/maestro /usr/local/bin/maestro
+    && mv /root/.maestro/* /opt/maestro/ \
+    && chmod -R a+rX /opt/maestro \
+    && ln -sf /opt/maestro/bin/maestro /usr/local/bin/maestro
 
 # Export env vars in global profile (SSH sessions don't inherit Docker ENV)
 RUN echo 'export ANDROID_HOME=/opt/android-sdk' >> /etc/profile.d/smithr-env.sh \
     && echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright' >> /etc/profile.d/smithr-env.sh \
     && echo 'export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools"' >> /etc/profile.d/smithr-env.sh \
-    && echo 'export PATH="$PATH:/root/.maestro/bin"' >> /etc/profile.d/smithr-env.sh
+    && echo 'export PATH="$PATH:/opt/maestro/bin"' >> /etc/profile.d/smithr-env.sh
 
 # Healthcheck: sshd port open
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
     CMD bash -c 'echo > /dev/tcp/localhost/22' || exit 1
 
 # Entrypoint: fix SSH keys, fix Docker socket permissions, start sshd
-CMD bash -c '\
-  cp /tmp/authorized_keys /home/smithr/.ssh/authorized_keys && \
-  chown -R smithr:smithr /home/smithr/.ssh && \
-  chmod 700 /home/smithr/.ssh && \
-  chmod 600 /home/smithr/.ssh/authorized_keys && \
-  if [ -S /var/run/docker.sock ]; then \
-    chmod 666 /var/run/docker.sock; \
-  fi && \
-  exec /usr/sbin/sshd -D -e'
+CMD ["bash", "-c", "cp /tmp/authorized_keys /home/smithr/.ssh/authorized_keys && chown -R smithr:smithr /home/smithr/.ssh && chmod 700 /home/smithr/.ssh && chmod 600 /home/smithr/.ssh/authorized_keys && if [ -S /var/run/docker.sock ]; then chmod 666 /var/run/docker.sock; fi && exec /usr/sbin/sshd -D -e"]
