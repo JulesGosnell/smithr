@@ -23,10 +23,19 @@ set -euo pipefail
 
 USERNAME="${1:?Usage: create-build-user.sh <username> [uid]}"
 
-# Use RAM disk for ephemeral build homes when available (setup-ramdisk.sh)
+# Use RAM disk for ephemeral build homes when available and has enough space.
+# Minimum 4GB free required — iOS builds can use 25-30GB so fall back to /Users
+# for large builds automatically.
 RAMDISK_HOME="/Volumes/BuildHomes"
+MIN_FREE_MB=4096
 if [[ -d "$RAMDISK_HOME" ]] && mount | grep -q "$RAMDISK_HOME"; then
-    HOME_DIR="${RAMDISK_HOME}/${USERNAME}"
+    AVAIL_MB=$(df -m "$RAMDISK_HOME" | awk 'NR==2 {print $4}')
+    if [[ "$AVAIL_MB" -ge "$MIN_FREE_MB" ]]; then
+        HOME_DIR="${RAMDISK_HOME}/${USERNAME}"
+    else
+        echo "RAM disk low (${AVAIL_MB}MB free < ${MIN_FREE_MB}MB min), using /Users" >&2
+        HOME_DIR="/Users/${USERNAME}"
+    fi
 else
     HOME_DIR="/Users/${USERNAME}"
 fi

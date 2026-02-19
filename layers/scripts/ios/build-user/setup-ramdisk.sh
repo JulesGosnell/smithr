@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-SIZE_MB="${1:-2048}"
+SIZE_MB="${1:-8192}"
 MOUNT_POINT="/Volumes/BuildHomes"
 
 # Convert MB to 512-byte sectors for hdiutil
