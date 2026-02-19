@@ -45,12 +45,10 @@
 
 (defn- resolve-tunnel-route
   "Given a target host:port, determine SSH -L forward and hop host.
-   Docker network IPs → hop via localhost (same host can reach Docker network).
-   Remote hostnames → hop via that host, forward to localhost on the remote."
+   Always hops via localhost — avoids needing inter-host SSH keys.
+   Localhost can reach both Docker network IPs and remote hostnames."
   [target-host target-port]
-  (if (docker-network-ip? target-host)
-    {:fwd-host target-host :fwd-port target-port :hop "localhost"}
-    {:fwd-host "localhost" :fwd-port target-port :hop (or target-host "localhost")}))
+  {:fwd-host (or target-host "localhost") :fwd-port target-port :hop "localhost"})
 
 (defn- await-port-ready
   "Poll localhost:port until it accepts a TCP connection. Returns true if ready,
@@ -121,13 +119,16 @@
         (swap! tunnels assoc lease-id tunnel-info)
         ;; Wait for tunnel port to actually accept connections (up to 10s)
         (if (await-port-ready tunnel-port 10000)
-          (log/info "SSH tunnel ready: port" tunnel-port "→" target-str "pid" (.pid proc))
-          (if (.isAlive proc)
-            (log/warn "SSH tunnel process alive but port" tunnel-port
-                      "not accepting connections after 10s")
-            (log/error "SSH tunnel exited on port" tunnel-port
-                       "— check SSH access to" hop)))
-        tunnel-info)
+          (do (log/info "SSH tunnel ready: port" tunnel-port "→" target-str "pid" (.pid proc))
+              tunnel-info)
+          (do (if (.isAlive proc)
+                (log/error "SSH tunnel process alive but port" tunnel-port
+                           "not accepting connections after 10s")
+                (log/error "SSH tunnel exited on port" tunnel-port
+                           "— check SSH access to" hop))
+              ;; Clean up failed tunnel
+              (stop-tunnel! lease-id)
+              nil)))
       (catch Exception e
         (log/error "Failed to start SSH tunnel on port" tunnel-port ":" (.getMessage e))
         (let [tunnel-info {:port        tunnel-port
@@ -363,13 +364,13 @@
                           (ensure-user! resource workspace)
                           (create-user! resource lease-id))]
           (if user-info
-            (let [tunnel (start-tunnel! lease-id resource)
-                  {:keys [ssh-host ssh-port]} (:connection resource)
-                  connection {:tunnel-port (:port tunnel)
-                              :ssh-user    (:macos-user user-info)
-                              :ssh-host    ssh-host
-                              :ssh-port    (or ssh-port 10022)
-                              :home-dir    (:home-dir user-info)}]
+            (if-let [tunnel (start-tunnel! lease-id resource)]
+              (let [{:keys [ssh-host ssh-port]} (:connection resource)
+                    connection {:tunnel-port (:port tunnel)
+                                :ssh-user    (:macos-user user-info)
+                                :ssh-host    ssh-host
+                                :ssh-port    (or ssh-port 10022)
+                                :home-dir    (:home-dir user-info)}]
               ;; Update lease and workspace state
               (swap! state/state
                      (fn [s]
@@ -401,14 +402,19 @@
               (assoc lease
                      :connection connection
                      :macos-user (:macos-user user-info)))
+              ;; Tunnel failed — rollback
+              (do
+                (log/error "Failed to start tunnel for lease" lease-id "- rolling back")
+                (unlease! lease-id)
+                nil))
             ;; User creation failed — rollback
             (do
               (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
               (unlease! lease-id)
               nil)))
         ;; Phone lease: start tunnel + cascading parent hold
-        (let [tunnel (start-tunnel! lease-id resource)
-              ;; Cascading lease: if resource has a parent, hold it
+        (if-let [tunnel (start-tunnel! lease-id resource)]
+          (let [;; Cascading lease: if resource has a parent, hold it
               parent-lease-id (when-let [parent-container (:parent resource)]
                                 (let [parent-res (first (filter #(= (:container %) parent-container)
                                                                 (state/resources)))]
@@ -454,7 +460,12 @@
                  :lease-type "phone"
                  :ttl       ttl-seconds})
               (cond-> (assoc lease :connection final-connection)
-                parent-lease-id (assoc :parent-lease-id parent-lease-id)))))))))
+                parent-lease-id (assoc :parent-lease-id parent-lease-id))))))
+          ;; Tunnel failed — rollback phone lease
+          (do
+            (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
+            (unlease! lease-id)
+            nil))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
