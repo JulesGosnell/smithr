@@ -42,6 +42,19 @@
   [resource-id]
   (filter #(= (:resource_id %) resource-id) @state/leases))
 
+(defn- platform-icon
+  "Return an icon string for a resource based on type + platform."
+  [resource]
+  (let [type (:type resource)
+        platform (:platform resource)]
+    (case [type platform]
+      ["phone" "android"]         "\uD83E\uDD16"   ;; 🤖 Android robot
+      ["phone" "ios"]             "\uD83D\uDCF1"   ;; 📱 Phone
+      ["vm" "macos"]              "\uD83C\uDF4E"   ;; 🍎 Apple
+      ["vm" "android"]            "\uD83D\uDD28"   ;; 🔨 Build hammer
+      ["vm" "android-build"]      "\uD83D\uDD28"   ;; 🔨 Build hammer
+      "\uD83D\uDCE6")))                             ;; 📦 Generic
+
 (defn- children-of
   "Find child resources whose :parent matches container name."
   [container-name all-resources]
@@ -126,6 +139,7 @@
                                    :data-status status
                                    :data-platform (:platform resource)}
      [:div.box-header
+      [:span.resource-icon (platform-icon resource)]
       [:span.box-title (:container resource)]
       [:span.box-meta
        (:type resource) " · " (:platform resource)
@@ -195,6 +209,7 @@
     [:div.nested-box.host-box {:class (if connected? "connected" "disconnected")
                                :data-host host-label}
      [:div.box-header
+      [:span.resource-icon "\uD83D\uDDA5"]  ;; 🖥 Server
       [:span.box-title host-label]
       [:span.box-meta (str (count host-resources) " resource"
                            (when (not= 1 (count host-resources)) "s"))]

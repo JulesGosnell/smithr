@@ -131,6 +131,18 @@ body {
   font-size: 0.95rem;
 }
 
+.resource-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+  width: 1.4em;
+  height: 1.4em;
+  line-height: 1.4em;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .nested-box .box-meta {
   font-size: 0.8rem;
   color: var(--text-dim);
