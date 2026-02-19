@@ -7,30 +7,8 @@
          :leases     {}   ;; lease-id -> Lease
          :hosts      {}   ;; host-label -> Host
          :workspaces {}   ;; workspace-name -> Workspace
-         :events     []   ;; vec of event maps, newest last
-         :own-host   nil  ;; this instance's host label
-         :peer-urls  {}}  ;; host-label -> "http://host:port" for remote Hammars
+         :events     []}  ;; vec of event maps, newest last
          ))
-
-(defn set-own-host!
-  "Set the host label for this Hammar instance."
-  [label]
-  (swap! state assoc :own-host label))
-
-(defn own-host
-  "Get this instance's host label."
-  []
-  (:own-host @state))
-
-(defn set-peer-urls!
-  "Set the map of remote Hammar API URLs."
-  [urls]
-  (swap! state assoc :peer-urls urls))
-
-(defn peer-urls
-  "Get {host-label url} for remote Hammars."
-  []
-  (:peer-urls @state))
 
 ;; ---------------------------------------------------------------------------
 ;; Host operations

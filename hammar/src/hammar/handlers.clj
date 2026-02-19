@@ -134,10 +134,7 @@
                     (seq server-ports) (assoc :server-ports (vec server-ports)))]
     (log/info "Lease request:" params)
     (try
-      (if-let [result (or (lease/acquire! params)
-                          ;; No local resource — try proxying to a peer Hammar
-                          (when (= (:lease-type params) :phone)
-                            (lease/acquire-proxied! params)))]
+      (if-let [result (lease/acquire! params)]
         (json-response 201 (serialize-lease result))
         (conflict (str "No available " (:type params) ":" (:platform params) " resource")))
       (catch clojure.lang.ExceptionInfo e
