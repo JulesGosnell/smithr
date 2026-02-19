@@ -293,6 +293,73 @@
      :create-user!  macos/create-user!
      :delete-user!  macos/delete-user!}))
 
+;; ---------------------------------------------------------------------------
+;; Shared filesystem lease locks
+;; ---------------------------------------------------------------------------
+;; Phone leases use atomic mkdir on /srv/shared/smithr/leases/<resource-id>/
+;; as a cross-host lock. Both Hammars see the same NFS mount, so mkdir is
+;; the coordination primitive — no proxying or shared database needed.
+
+(def ^:private shared-lease-dir "/srv/shared/smithr/leases")
+
+(defn- resource-id->lock-path
+  "Convert resource ID to a filesystem-safe lock directory path.
+   e.g. 'megalodon:android:smithr-android-fe' -> '/srv/shared/smithr/leases/megalodon--android--smithr-android-fe'"
+  [resource-id]
+  (str shared-lease-dir "/"
+       (clojure.string/replace (str resource-id) ":" "--")))
+
+(defn- try-acquire-shared-lock!
+  "Atomically acquire a shared filesystem lock for a phone resource.
+   Returns true if lock was acquired, false if already held.
+   Writes lessee info into the lock directory for debugging."
+  [resource-id lessee lease-id]
+  (let [lock-path (resource-id->lock-path resource-id)
+        lock-dir  (java.io.File. lock-path)]
+    (if (.mkdir lock-dir)
+      (do
+        ;; Lock acquired — write lessee info for debugging
+        (try
+          (spit (str lock-path "/lessee") (str lessee "\n" lease-id "\n" (Instant/now)))
+          (catch Exception e
+            (log/warn "Failed to write lessee info:" (.getMessage e))))
+        (log/info "Shared lock acquired:" resource-id "by" lessee)
+        true)
+      (do
+        (log/debug "Shared lock busy:" resource-id)
+        false))))
+
+(defn- release-shared-lock!
+  "Release a shared filesystem lock for a phone resource."
+  [resource-id]
+  (let [lock-path (resource-id->lock-path resource-id)
+        lock-dir  (java.io.File. lock-path)]
+    (when (.exists lock-dir)
+      ;; Remove contents first, then directory
+      (doseq [f (.listFiles lock-dir)]
+        (.delete f))
+      (.delete lock-dir)
+      (log/info "Shared lock released:" resource-id))))
+
+(defn- shared-lock-held?
+  "Check if a shared filesystem lock is held for a phone resource."
+  [resource-id]
+  (.isDirectory (java.io.File. (resource-id->lock-path resource-id))))
+
+(defn cleanup-stale-shared-locks!
+  "Remove any shared locks that don't correspond to active leases.
+   Called on startup to clean up after crashes."
+  []
+  (let [lease-dir (java.io.File. shared-lease-dir)]
+    (when (.exists lease-dir)
+      (doseq [lock-dir (.listFiles lease-dir)]
+        (when (.isDirectory lock-dir)
+          (let [resource-id (clojure.string/replace (.getName lock-dir) "--" ":")]
+            (when-not (some (fn [[_ l]] (= (:resource-id l) resource-id))
+                           (:leases @state/state))
+              (log/info "Cleaning stale shared lock:" resource-id)
+              (release-shared-lock! resource-id))))))))
+
 (defn- valid-workspace-name?
   "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."
   [name]
@@ -356,11 +423,12 @@
                                                               (< (count (:active-leases % #{}))
                                                                  (:max-slots % 10))))))
                                        (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
-                                ;; Phone: warm only (exclusive)
+                                ;; Phone: warm + no shared lock held (cross-host safe)
                                 (->> (vals (:resources s))
                                      (filter #(and (= (:status %) :warm)
                                                    (= (:type %) (keyword type))
-                                                   (= (:platform %) (keyword platform))))
+                                                   (= (:platform %) (keyword platform))
+                                                   (not (shared-lock-held? (:id %)))))
                                      (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
@@ -448,7 +516,13 @@
               (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
               (unlease! lease-id)
               nil)))
-        ;; Phone lease: start tunnel + ADB/connectivity check + cascading parent hold
+        ;; Phone lease: acquire shared lock, start tunnel, ADB check, cascading parent
+        (if-not (try-acquire-shared-lock! (:id resource) lessee lease-id)
+          ;; Shared lock failed — another Hammar grabbed it between check and swap
+          (do
+            (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
+            (unlease! lease-id)
+            nil)
         (if-let [tunnel (start-tunnel! lease-id resource)]
           (if (and (= (:platform resource) :android)
                    (not (await-adb-ready! (:port tunnel) 15000)))
@@ -509,7 +583,7 @@
           (do
             (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
             (unlease! lease-id)
-            nil))))))
+            nil)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
@@ -574,6 +648,9 @@
           (when (and resource tunnel)
             (teardown-server-ports! resource (:port tunnel) server-ports))))
       (stop-tunnel! lease-id)
+      ;; Release shared filesystem lock for phone leases
+      (when (not= (:lease-type lease) :build)
+        (release-shared-lock! (:resource-id lease)))
       ;; Cascading: release parent hold lease if present
       (when-let [parent-lid (:parent-lease-id lease)]
         (log/info "Cascading: releasing parent hold" parent-lid "for lease" lease-id)

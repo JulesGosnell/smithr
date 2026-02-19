@@ -16,8 +16,10 @@
   [config]
   (log/info "Starting Smithr resource pool manager")
 
-  ;; Clean up stale socat tunnels from previous sessions
+  ;; Clean up stale tunnels and shared locks from previous sessions
   (lease/cleanup-stale-tunnels!)
+  (.mkdirs (java.io.File. "/srv/shared/smithr/leases"))
+  (lease/cleanup-stale-shared-locks!)
 
   ;; Connect to Docker hosts
   (let [network-name (get-in config [:compose :network] "smithr-network")
