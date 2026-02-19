@@ -27,13 +27,17 @@ RUN dnf install -y \
     unzip \
     which \
     procps-ng \
+    openssl \
+    socat \
     && dnf clean all
 
 # Generate host keys and configure sshd
 RUN ssh-keygen -A \
     && sed -i 's/^#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config \
     && sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
-    && sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    && sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
 
 # Create a service user for SSH access (like 'smithr' on macOS)
 RUN useradd -m -s /bin/bash smithr \
