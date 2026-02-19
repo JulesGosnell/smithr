@@ -356,12 +356,17 @@
                                                               (< (count (:active-leases % #{}))
                                                                  (:max-slots % 10))))))
                                        (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
-                                ;; Phone: warm only (exclusive)
-                                (->> (vals (:resources s))
-                                     (filter #(and (= (:status %) :warm)
-                                                   (= (:type %) (keyword type))
-                                                   (= (:platform %) (keyword platform))))
-                                     (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
+                                ;; Phone: warm only (exclusive), local host only
+                                ;; Each Hammar instance only grants exclusive leases for
+                                ;; its own host's resources — prevents double-leasing
+                                ;; since instances don't share state.
+                                (let [own (state/own-host)]
+                                  (->> (vals (:resources s))
+                                       (filter #(and (= (:status %) :warm)
+                                                     (= (:type %) (keyword type))
+                                                     (= (:platform %) (keyword platform))
+                                                     (or (nil? own) (= (:host %) own))))
+                                       (sort-by :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)

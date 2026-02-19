@@ -7,8 +7,19 @@
          :leases     {}   ;; lease-id -> Lease
          :hosts      {}   ;; host-label -> Host
          :workspaces {}   ;; workspace-name -> Workspace
-         :events     []}  ;; vec of event maps, newest last
+         :events     []   ;; vec of event maps, newest last
+         :own-host   nil} ;; this instance's host label (set at startup)
          ))
+
+(defn set-own-host!
+  "Set the host label for this Hammar instance."
+  [label]
+  (swap! state assoc :own-host label))
+
+(defn own-host
+  "Get this instance's host label."
+  []
+  (:own-host @state))
 
 ;; ---------------------------------------------------------------------------
 ;; Host operations
