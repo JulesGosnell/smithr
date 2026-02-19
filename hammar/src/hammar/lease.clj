@@ -139,7 +139,7 @@
              "-o" "ExitOnForwardFailure=yes"
              "-o" "ServerAliveInterval=30"
              "-o" "ServerAliveCountMax=3"
-             "-L" (str tunnel-port ":" fwd-host ":" fwd-port)
+             "-L" (str "0.0.0.0:" tunnel-port ":" fwd-host ":" fwd-port)
              hop]]
     (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
               "→" target-str)
