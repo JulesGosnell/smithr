@@ -251,6 +251,39 @@
        [:div.empty "No resources on this host"])]))
 
 ;; ---------------------------------------------------------------------------
+;; Adopt box (adopted external containers)
+;; ---------------------------------------------------------------------------
+
+(defn adopt-box [adopt]
+  (let [_ @tick
+        remaining (time-remaining (:expires_at adopt))
+        urgency (countdown-urgency (:expires_at adopt) (:ttl_seconds adopt))
+        ports (:ports adopt)]
+    [:div.nested-box.adopt-box {:class urgency}
+     [:div.box-header
+      [:span.resource-icon "\uD83D\uDD17"]  ;; 🔗 Link
+      [:span.box-title (:container_name adopt)]
+      [:span.box-meta
+       (:lessee adopt) " · " (:host adopt)]
+      (when remaining
+        [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
+     [:div.adopt-ports
+      (for [[orig tunnel] (sort-by first ports)]
+        ^{:key orig}
+        [:span.port-mapping (str orig " \u2192 " tunnel)])]
+     [:div.box-controls
+      [:button.btn.release {:on-click #(api/unadopt! (:id adopt))} "Unadopt"]]]))
+
+(defn adopts-section []
+  (let [adopts @state/adopts]
+    (when (seq adopts)
+      [:div.adopts-section
+       [:div.section-header "Adopted Containers"]
+       [:div.adopts-grid
+        (for [a (sort-by :container_name adopts)]
+          ^{:key (:id a)} [adopt-box a])]])))
+
+;; ---------------------------------------------------------------------------
 ;; Top-level components
 ;; ---------------------------------------------------------------------------
 
@@ -265,7 +298,9 @@
         (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "
              (:resources h) " resources \u2502 " (:leases h) " leases"
              (when (pos? (:workspaces h 0))
-               (str " \u2502 " (:workspaces h) " workspaces")))
+               (str " \u2502 " (:workspaces h) " workspaces"))
+             (when (pos? (:adopts h 0))
+               (str " \u2502 " (:adopts h) " adopts")))
         "connecting...")]]))
 
 (defn summary-bar []
@@ -360,4 +395,5 @@
         (for [h all-hosts]
           ^{:key h} [host-box h all-resources])
         [:div.empty "No hosts connected. Waiting for Docker events..."])]
+     [adopts-section]
      [audit-pane]]))

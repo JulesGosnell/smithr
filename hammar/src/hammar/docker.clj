@@ -9,8 +9,16 @@
            [com.github.dockerjava.core.command EventsResultCallback]
            [com.github.dockerjava.httpclient5 ApacheDockerHttpClient$Builder]
            [com.github.dockerjava.api.model Event EventType]
+           [com.github.dockerjava.api.exception NotFoundException]
            [java.net URI]
            [java.time Instant]))
+
+;; ---------------------------------------------------------------------------
+;; Docker client registry (for container lookup across hosts)
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private docker-clients
+  (atom {}))  ;; host-label -> {:client :host-address :network-name}
 
 ;; ---------------------------------------------------------------------------
 ;; Docker client creation
@@ -125,6 +133,39 @@
              :active-leases #{}))))
 
 ;; ---------------------------------------------------------------------------
+;; Container lookup (for adopt protocol)
+;; ---------------------------------------------------------------------------
+
+(defn find-container
+  "Find a container by name across all connected Docker hosts.
+   Returns {:container inspected, :host-label label, :host-address addr, :network-name net}
+   or nil if not found."
+  [container-name]
+  (some (fn [[host-label {:keys [client host-address network-name]}]]
+          (try
+            (let [inspected (-> client (.inspectContainerCmd container-name) (.exec))]
+              {:container    inspected
+               :host-label   host-label
+               :host-address host-address
+               :network-name network-name})
+            (catch com.github.dockerjava.api.exception.NotFoundException _
+              nil)
+            (catch Exception e
+              (log/debug "Error inspecting" container-name "on" host-label ":" (.getMessage e))
+              nil)))
+        @docker-clients))
+
+(defn container-ip-any-network
+  "Get the IP address from the first available Docker network on a container.
+   Adopted containers may not be on smithr-network, so we check all networks."
+  [container]
+  (some-> (.getNetworkSettings container)
+          (.getNetworks)
+          vals
+          first
+          (.getIpAddress)))
+
+;; ---------------------------------------------------------------------------
 ;; Initial container scan
 ;; ---------------------------------------------------------------------------
 
@@ -155,12 +196,23 @@
   (let [action (.getAction event)
         actor (.getActor event)
         attrs (when actor (.getAttributes actor))
-        managed? (= "true" (get attrs "smithr.managed"))]
+        managed? (= "true" (get attrs "smithr.managed"))
+        container-id (when actor (.getId actor))]
+    ;; Check adopted containers on die/destroy (even if not smithr.managed)
+    (when (and (not managed?) container-id
+               (contains? #{"die" "destroy"} action))
+      (when-let [adopt (state/adopt-by-container-id container-id)]
+        (log/info "Adopted container" (:container-name adopt) "event:" action "- cleaning up")
+        (try
+          ((requiring-resolve 'hammar.lease/unadopt!) (:id adopt))
+          (catch Exception e
+            (log/error e "Error cleaning up adopted container" (:id adopt))))))
     (when (and managed?
                ;; Skip exec events (healthchecks etc) — too noisy
-               (not (.startsWith (or action "") "exec_")))
-      (let [container-id (.getId actor)]
-        (log/debug "Docker event:" action "container:" container-id "on" host-label)
+               (not (.startsWith (or action "") "exec_"))
+               container-id)
+      (log/debug "Docker event:" action "container:" container-id "on" host-label)
+      (let [container-id container-id]
         (case action
           ;; Container started — inspect and register
           "start"
@@ -316,6 +368,9 @@
             (-> client (.pingCmd) (.exec))
             (log/info "Connected to" label)
             (state/register-host! label docker-uri)
+            ;; Register client for cross-host container lookup
+            (swap! docker-clients assoc label
+                   {:client client :host-address host-address :network-name network-name})
             (scan-containers! client label network-name host-address)
             (let [sub (subscribe-events! client label network-name host-address)]
               {:client client :subscription sub :label label}))

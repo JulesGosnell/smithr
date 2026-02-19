@@ -6,6 +6,7 @@
             [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
             [hammar.state :as state]
+            [hammar.docker :as docker]
             [hammar.macos :as macos]
             [hammar.linux :as linux])
   (:import [java.time Instant Duration]
@@ -700,11 +701,119 @@
         true))))
 
 ;; ---------------------------------------------------------------------------
+;; Adopt protocol — register external containers with SSH tunnels
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private adopt-tunnels
+  (atom {}))  ;; adopt-id -> [{:port int, :process Process, :target-port int} ...]
+
+(defn adopt!
+  "Adopt an external container: locate it, create SSH tunnels for specified ports.
+   Returns the adopt record on success, or throws on failure.
+   Tunnels are cleaned up automatically when the container dies (Docker event)."
+  [{:keys [container-name ports lessee ttl-seconds]
+    :or   {ttl-seconds 3600
+           lessee      "anonymous"}}]
+  (let [found (docker/find-container container-name)]
+    (when-not found
+      (throw (ex-info "Container not found" {:container-name container-name :not-found true})))
+    (let [{:keys [container host-label host-address]} found
+          container-id (.getId container)
+          ip (docker/container-ip-any-network container)
+          adopt-id (str (UUID/randomUUID))
+          now (Instant/now)
+          expires-at (.plus now (Duration/ofSeconds ttl-seconds))
+          ;; For each port, create a tunnel
+          tunnel-infos
+          (doall
+            (for [port ports]
+              (let [tunnel-port (allocate-tunnel-port!)
+                    ;; Determine tunnel route based on local vs remote host
+                    ;; Local: SSH to localhost, forward to container IP
+                    ;; Remote: SSH to remote host, forward to container IP there
+                    {:keys [fwd-host fwd-port hop]}
+                    (if host-address
+                      ;; Remote host: hop via hostname, forward to container IP
+                      {:fwd-host (or ip "localhost") :fwd-port port :hop host-address}
+                      ;; Local host: hop via localhost, forward to container IP
+                      {:fwd-host (or ip "localhost") :fwd-port port :hop "localhost"})
+                    cmd ["ssh" "-N"
+                         "-o" "StrictHostKeyChecking=no"
+                         "-o" "BatchMode=yes"
+                         "-o" "ExitOnForwardFailure=yes"
+                         "-o" "ServerAliveInterval=30"
+                         "-o" "ServerAliveCountMax=3"
+                         "-L" (str "0.0.0.0:" tunnel-port ":" fwd-host ":" fwd-port)
+                         hop]]
+                (log/info "Adopt tunnel:" tunnel-port "→" fwd-host ":" fwd-port "via" hop
+                          "for" container-name "port" port)
+                (let [proc (-> (ProcessBuilder. ^java.util.List cmd)
+                               (.redirectErrorStream true)
+                               (.start))]
+                  (if (await-port-ready tunnel-port 10000)
+                    (do (log/info "Adopt tunnel ready: port" tunnel-port "→" fwd-host ":" fwd-port
+                                  "pid" (.pid proc))
+                        {:port tunnel-port :process proc :target-port port})
+                    (do (log/error "Adopt tunnel failed on port" tunnel-port
+                                   "for" container-name "port" port)
+                        (.destroyForcibly proc)
+                        (throw (ex-info "Tunnel failed"
+                                        {:container-name container-name :port port}))))))))
+          port-map (into {} (map (fn [{:keys [target-port port]}]
+                                   [target-port port])
+                                 tunnel-infos))
+          adopt {:id             adopt-id
+                 :container-name container-name
+                 :container-id   container-id
+                 :host           host-label
+                 :lessee         lessee
+                 :ports          port-map
+                 :tunnel-host    (.getHostName (java.net.InetAddress/getLocalHost))
+                 :ttl-seconds    ttl-seconds
+                 :adopted-at     now
+                 :expires-at     expires-at}]
+      ;; Store tunnels and state
+      (swap! adopt-tunnels assoc adopt-id tunnel-infos)
+      (state/add-adopt! adopt)
+      (state/record-event! "adopt"
+        {:lessee         lessee
+         :container-name container-name
+         :adopt-id       adopt-id
+         :ports          port-map})
+      (log/info "Container adopted:" adopt-id "name:" container-name
+                "ports:" port-map "lessee:" lessee)
+      adopt)))
+
+(defn unadopt!
+  "Clean up an adopted container: kill tunnels, remove state.
+   Returns true if found and cleaned up."
+  [adopt-id]
+  (when-let [adopt (state/adopt adopt-id)]
+    ;; Kill all tunnel processes
+    (when-let [infos (get @adopt-tunnels adopt-id)]
+      (doseq [{:keys [port process]} infos]
+        (when process
+          (try
+            (when (.isAlive process)
+              (.destroyForcibly process)
+              (log/info "Adopt tunnel killed: port" port "pid" (.pid process)))
+            (catch Exception e
+              (log/warn "Error stopping adopt tunnel on port" port ":" (.getMessage e)))))))
+    (swap! adopt-tunnels dissoc adopt-id)
+    (state/remove-adopt! adopt-id)
+    (state/record-event! "unadopt"
+      {:lessee         (:lessee adopt)
+       :container-name (:container-name adopt)
+       :adopt-id       adopt-id})
+    (log/info "Container unadopted:" adopt-id "name:" (:container-name adopt))
+    true))
+
+;; ---------------------------------------------------------------------------
 ;; Garbage collection
 ;; ---------------------------------------------------------------------------
 
 (defn gc-expired-leases!
-  "Reap expired leases. Only GCs resources on own-host if specified."
+  "Reap expired leases and adopts. Only GCs resources on own-host if specified."
   ([]
    (gc-expired-leases! nil))
   ([own-host]
@@ -723,7 +832,21 @@
           :resource  (:resource-id lease)
           :lease-id  (:id lease)})
        (unlease! (:id lease)))
-     (count expired))))
+     ;; Also GC expired adopts
+     (let [expired-adopts (->> (state/adopts)
+                               (filter #(.isAfter now (:expires-at %)))
+                               (filter #(or (nil? own-host)
+                                            (= own-host (:host %)))))]
+       (doseq [adopt expired-adopts]
+         (log/info "GC: expiring adopt" (:id adopt)
+                   "container:" (:container-name adopt)
+                   "lessee:" (:lessee adopt))
+         (state/record-event! "gc"
+           {:lessee         (:lessee adopt)
+            :container-name (:container-name adopt)
+            :adopt-id       (:id adopt)})
+         (unadopt! (:id adopt)))
+       (+ (count expired) (count expired-adopts))))))
 
 (defn start-gc-loop!
   "Start the GC background thread. Returns a future for cancellation."

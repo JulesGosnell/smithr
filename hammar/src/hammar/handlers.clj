@@ -175,12 +175,14 @@
         resources  (state/resources)
         leases     (state/leases)
         workspaces (state/workspaces)
+        adopts     (state/adopts)
         all-connected? (every? :connected? hosts)]
     (json-response {:status     (if all-connected? "ok" "degraded")
                     :hosts      (count hosts)
                     :resources  (count resources)
                     :leases     (count leases)
                     :workspaces (count workspaces)
+                    :adopts     (count adopts)
                     :git-hash   git-hash})))
 
 ;; ---------------------------------------------------------------------------
@@ -227,6 +229,52 @@
                  (state/events limit)
                  (state/events))]
     (json-response (vec events))))
+
+;; ---------------------------------------------------------------------------
+;; Adopt handlers
+;; ---------------------------------------------------------------------------
+
+(defn- serialize-adopt [a]
+  (-> a
+      (update :adopted-at serialize-instant)
+      (update :expires-at serialize-instant)
+      kw->underscore))
+
+(defn adopt-container
+  "POST /api/adopt"
+  [request]
+  (let [body   (:body-params request)
+        params {:container-name (or (:container_name body) (get body "container_name"))
+                :ports          (vec (or (:ports body) (get body "ports")))
+                :lessee         (or (:lessee body) (get body "lessee") "anonymous")
+                :ttl-seconds    (or (:ttl_seconds body) (get body "ttl_seconds") 3600)}]
+    (log/info "Adopt request:" params)
+    (try
+      (let [result (lease/adopt! params)]
+        (json-response 201 (serialize-adopt result)))
+      (catch clojure.lang.ExceptionInfo e
+        (let [data (ex-data e)]
+          (cond
+            (:not-found data)
+            (not-found (str "Container not found: " (:container-name params)))
+
+            :else
+            {:status 500
+             :body   {:error "adopt_failed"
+                      :message (.getMessage e)}}))))))
+
+(defn unadopt
+  "DELETE /api/adopts/:id"
+  [request]
+  (let [id (get-in request [:path-params :id])]
+    (if (lease/unadopt! id)
+      {:status 204 :body nil}
+      (not-found (str "Adopt not found: " id)))))
+
+(defn list-adopts
+  "GET /api/adopts"
+  [_request]
+  (json-response (mapv serialize-adopt (state/adopts))))
 
 (defn serve-openapi
   "GET /openapi.yaml"

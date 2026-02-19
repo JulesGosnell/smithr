@@ -7,6 +7,7 @@
          :leases     {}   ;; lease-id -> Lease
          :hosts      {}   ;; host-label -> Host
          :workspaces {}   ;; workspace-name -> Workspace
+         :adopts     {}   ;; adopt-id -> Adopt
          :events     []}  ;; vec of event maps, newest last
          ))
 
@@ -117,6 +118,32 @@
                         (and (= (:status r) :shared)
                              (< (count (:active-leases r #{}))
                                 (:max-slots r 10))))))))
+
+;; ---------------------------------------------------------------------------
+;; Adopt operations
+;; ---------------------------------------------------------------------------
+
+(defn add-adopt!
+  "Add an adopt record to the state."
+  [adopt]
+  (swap! state assoc-in [:adopts (:id adopt)] adopt))
+
+(defn remove-adopt!
+  "Remove an adopt record from the state."
+  [adopt-id]
+  (swap! state update :adopts dissoc adopt-id))
+
+(defn adopts
+  "Get all adopts."
+  ([] (vals (:adopts @state)))
+  ([pred] (filter pred (adopts))))
+
+(defn adopt [id] (get-in @state [:adopts id]))
+
+(defn adopt-by-container-id
+  "Find an adopt record by Docker container ID."
+  [container-id]
+  (first (filter #(= (:container-id %) container-id) (adopts))))
 
 ;; ---------------------------------------------------------------------------
 ;; Event log

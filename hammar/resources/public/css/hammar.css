@@ -18,6 +18,8 @@
   --grey-bg: #1f2028;
   --blue: #3b82f6;
   --blue-bg: #0a1a2a;
+  --purple: #a855f7;
+  --purple-bg: #1a0a2a;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -465,4 +467,67 @@ body {
   text-align: center;
   color: var(--text-dim);
   font-size: 0.8rem;
+}
+
+/* ===================================================================
+   Adopted Containers Section
+   =================================================================== */
+
+.adopts-section {
+  padding: 0 1.5rem;
+}
+
+.section-header {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 0.75rem;
+}
+
+.adopts-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.adopt-box {
+  background: var(--surface);
+  border-color: var(--purple);
+  flex: 1 1 300px;
+  min-width: 280px;
+}
+
+.adopt-box.urgent {
+  border-color: var(--red);
+}
+
+.adopt-box .box-header .box-title {
+  font-size: 0.95rem;
+}
+
+.adopt-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 1rem;
+}
+
+.port-mapping {
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: var(--purple);
+  background: var(--purple-bg);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.btn.unadopt {
+  border-color: var(--purple);
+  color: var(--purple);
+}
+
+.btn.unadopt:hover {
+  background: var(--purple-bg);
 }

@@ -6,6 +6,7 @@
 (defonce leases (r/atom []))
 (defonce hosts (r/atom []))
 (defonce workspaces (r/atom []))
+(defonce adopts (r/atom []))
 (defonce health (r/atom nil))
 (defonce events (r/atom []))
 (defonce error (r/atom nil))

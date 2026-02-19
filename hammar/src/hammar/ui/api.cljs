@@ -45,6 +45,13 @@
      :response-format :json
      :keywords?       true}))
 
+(defn fetch-adopts! []
+  (GET (str base-url "/api/adopts")
+    {:handler         #(reset! state/adopts %)
+     :error-handler   (partial handle-error "Adopts")
+     :response-format :json
+     :keywords?       true}))
+
 (defn fetch-events! []
   (GET (str base-url "/api/events?limit=50")
     {:handler         #(reset! state/events %)
@@ -57,6 +64,7 @@
   (fetch-leases!)
   (fetch-hosts!)
   (fetch-workspaces!)
+  (fetch-adopts!)
   (fetch-events!)
   (fetch-health!))
 
@@ -95,6 +103,11 @@
   (DELETE (str base-url "/api/leases/" lease-id)
     {:handler       (fn [_] (fetch-all!))
      :error-handler (partial handle-error "Unlease")}))
+
+(defn unadopt! [adopt-id]
+  (DELETE (str base-url "/api/adopts/" adopt-id)
+    {:handler       (fn [_] (fetch-all!))
+     :error-handler (partial handle-error "Unadopt")}))
 
 (defn purge-workspace! [workspace-name]
   (DELETE (str base-url "/api/workspaces/" workspace-name)

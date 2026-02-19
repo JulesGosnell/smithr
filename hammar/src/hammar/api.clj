@@ -24,6 +24,9 @@
     ["/workspaces" {:get {:handler h/list-workspaces}}]
     ["/workspaces/:name" {:get    {:handler h/get-workspace}
                           :delete {:handler h/purge-workspace}}]
+    ["/adopt" {:post {:handler h/adopt-container}}]
+    ["/adopts" {:get {:handler h/list-adopts}}]
+    ["/adopts/:id" {:delete {:handler h/unadopt}}]
     ["/health" {:get {:handler h/health-check}}]
     ["/events" {:get {:handler h/list-events}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])

@@ -211,6 +211,75 @@ paths:
         "409":
           description: Workspace is currently leased
 
+  /api/adopt:
+    post:
+      operationId: adoptContainer
+      summary: Adopt an external container
+      description: |
+        Register an externally-managed container with Smithr.
+        Creates SSH tunnels for the specified ports. The adopt record is
+        automatically cleaned up when the container stops (Docker event-driven).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdoptRequest"
+      responses:
+        "201":
+          description: Container adopted, tunnels created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Adopt"
+        "404":
+          description: Container not found on any connected Docker host
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Tunnel creation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/adopts:
+    get:
+      operationId: listAdopts
+      summary: List all active adopted containers
+      responses:
+        "200":
+          description: List of active adopts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Adopt"
+
+  /api/adopts/{id}:
+    delete:
+      operationId: unadopt
+      summary: Unadopt a container (manual cleanup)
+      description: |
+        Manually remove an adopt record and its tunnels.
+        Usually unnecessary — Docker events handle cleanup automatically
+        when the container stops.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Adopt removed and tunnels destroyed
+        "404":
+          description: Adopt not found
+
   /api/hosts:
     get:
       operationId: listHosts
@@ -454,6 +523,73 @@ components:
           type: integer
         workspaces:
           type: integer
+
+    AdoptRequest:
+      type: object
+      required: [container_name, ports]
+      properties:
+        container_name:
+          type: string
+          description: Docker container name (must be running on a connected host)
+          example: artha-postgres
+        ports:
+          type: array
+          items:
+            type: integer
+          description: Container ports to tunnel
+          example: [5432]
+        lessee:
+          type: string
+          default: anonymous
+          description: Identifier for who is adopting
+          example: artha
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 3600
+          description: Adopt duration in seconds (auto-cleaned by GC after expiry)
+
+    Adopt:
+      type: object
+      required: [id, container_name, container_id, host, lessee, ports, tunnel_host, ttl_seconds, adopted_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        container_name:
+          type: string
+          description: Docker container name
+          example: artha-postgres
+        container_id:
+          type: string
+          description: Docker container ID
+          example: abc123def456
+        host:
+          type: string
+          description: Docker host where the container is running
+          example: megalodon
+        lessee:
+          type: string
+          example: artha
+        ports:
+          type: object
+          additionalProperties:
+            type: integer
+          description: "Map of original_port → tunnel_port"
+          example: {"5432": 17005}
+        tunnel_host:
+          type: string
+          description: Hostname where tunnels are bound (for SSH -R from other hosts)
+          example: megalodon
+        ttl_seconds:
+          type: integer
+        adopted_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
 
     Error:
       type: object
