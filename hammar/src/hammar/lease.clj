@@ -48,10 +48,12 @@
 
 (defn- resolve-tunnel-route
   "Given a target host:port, determine SSH -L forward and hop host.
-   Always hops via localhost — avoids needing inter-host SSH keys.
-   Localhost can reach both Docker network IPs and remote hostnames."
+   Docker network IPs → hop via localhost (same host can reach Docker network).
+   Remote hostnames → hop via that host, forward to localhost on the remote."
   [target-host target-port]
-  {:fwd-host (or target-host "localhost") :fwd-port target-port :hop "localhost"})
+  (if (docker-network-ip? target-host)
+    {:fwd-host target-host :fwd-port target-port :hop "localhost"}
+    {:fwd-host "localhost" :fwd-port target-port :hop (or target-host "localhost")}))
 
 (defn- await-port-ready
   "Poll localhost:port until it accepts a TCP connection. Returns true if ready,
@@ -73,25 +75,34 @@
 
 (defn- await-adb-ready!
   "Verify ADB is responsive through a tunnel port. Retries several times.
+   Disconnects first to clear stale ADB server state from previous leases.
    Returns true if ADB responds, false on timeout."
   [tunnel-port timeout-ms]
   (let [adb-target (str "localhost:" tunnel-port)
         deadline   (+ (System/currentTimeMillis) timeout-ms)]
+    ;; Clear any stale ADB connection cached from a previous lease on this port
+    (shell/sh "adb" "disconnect" adb-target)
     (loop [attempt 1]
       (if (> (System/currentTimeMillis) deadline)
         (do (log/warn "ADB readiness check timed out on port" tunnel-port
                       "after" attempt "attempts")
             false)
-        (let [{:keys [exit out]} (shell/sh "adb" "connect" adb-target)]
-          (if (and (zero? exit) (re-find #"connected" (str out)))
-            ;; Connected — verify device responds
+        (let [{:keys [exit out]} (shell/sh "adb" "connect" adb-target)
+              out-str (clojure.string/trim (str out))]
+          (if (and (zero? exit) (re-find #"connected" out-str))
+            ;; Connected — verify device actually responds
             (let [{:keys [exit out]} (shell/sh "adb" "-s" adb-target "shell"
-                                               "getprop" "sys.boot_completed")]
-              (if (and (zero? exit) (clojure.string/includes? (str out) "1"))
+                                               "getprop" "sys.boot_completed")
+                  prop-str (clojure.string/trim (str out))]
+              (if (and (zero? exit) (= prop-str "1"))
                 (do (log/info "ADB ready on port" tunnel-port "after" attempt "attempts")
                     true)
-                (do (Thread/sleep 1000) (recur (inc attempt)))))
-            (do (Thread/sleep 1000) (recur (inc attempt)))))))))
+                (do (log/debug "ADB connect ok but device not ready on port" tunnel-port
+                               "attempt" attempt "- getprop:" prop-str)
+                    (Thread/sleep 1000) (recur (inc attempt)))))
+            (do (log/debug "ADB connect failed on port" tunnel-port
+                           "attempt" attempt ":" out-str)
+                (Thread/sleep 1000) (recur (inc attempt)))))))))
 
 (defn- start-tunnel!
   "Start an SSH tunnel for a lease. Returns tunnel info map.
