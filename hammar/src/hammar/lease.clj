@@ -5,6 +5,8 @@
   (:require [clojure.string]
             [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
+            [clojure.data.json :as json]
+            [clj-http.client :as http]
             [hammar.state :as state]
             [hammar.macos :as macos]
             [hammar.linux :as linux])
@@ -356,12 +358,17 @@
                                                               (< (count (:active-leases % #{}))
                                                                  (:max-slots % 10))))))
                                        (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
-                                ;; Phone: warm only (exclusive)
-                                (->> (vals (:resources s))
-                                     (filter #(and (= (:status %) :warm)
-                                                   (= (:type %) (keyword type))
-                                                   (= (:platform %) (keyword platform))))
-                                     (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
+                                ;; Phone: warm only (exclusive), own host only.
+                                ;; Cross-host phone leases are proxied through the
+                                ;; remote Hammar so each instance is sole authority
+                                ;; for its own resources (no double-leasing).
+                                (let [own (state/own-host)]
+                                  (->> (vals (:resources s))
+                                       (filter #(and (= (:status %) :warm)
+                                                     (= (:type %) (keyword type))
+                                                     (= (:platform %) (keyword platform))
+                                                     (or (nil? own) (= (:host %) own))))
+                                       (sort-by :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)
@@ -519,34 +526,52 @@
   "Unlease a resource: update resource state, remove lease, stop tunnel.
    For build leases: removes from active-leases, deletes macOS user.
    For phone leases: marks resource warm (legacy behavior).
+   For proxied leases: stops bridge tunnel and DELETEs on the remote Hammar.
    Returns true if lease was found and unleased."
   [lease-id]
   (let [unleased-lease (atom nil)]
     (swap! state/state
            (fn [s]
              (if-let [lease (get-in s [:leases lease-id])]
-               (let [resource-id (:resource-id lease)
-                     build? (= (:lease-type lease) :build)]
+               (do
                  (reset! unleased-lease lease)
-                 (if build?
-                   ;; Build lease: remove from active-leases
-                   (let [new-active (disj (get-in s [:resources resource-id :active-leases] #{})
-                                          lease-id)
-                         new-status (if (empty? new-active) :warm :shared)]
-                     (-> s
-                         (assoc-in [:resources resource-id :active-leases] new-active)
-                         (assoc-in [:resources resource-id :status] new-status)
-                         (assoc-in [:resources resource-id :updated-at] (Instant/now))
-                         (update :leases dissoc lease-id)))
-                   ;; Phone lease: mark warm (legacy)
-                   (-> s
-                       (assoc-in [:resources resource-id :status] :warm)
-                       (update-in [:resources resource-id] dissoc :lease-id)
-                       (assoc-in [:resources resource-id :updated-at] (Instant/now))
-                       (update :leases dissoc lease-id))))
+                 (if (:proxy-host lease)
+                   ;; Proxied lease: just remove from local state
+                   (update s :leases dissoc lease-id)
+                   ;; Local lease: update resource status too
+                   (let [resource-id (:resource-id lease)
+                         build? (= (:lease-type lease) :build)]
+                     (if build?
+                       ;; Build lease: remove from active-leases
+                       (let [new-active (disj (get-in s [:resources resource-id :active-leases] #{})
+                                              lease-id)
+                             new-status (if (empty? new-active) :warm :shared)]
+                         (-> s
+                             (assoc-in [:resources resource-id :active-leases] new-active)
+                             (assoc-in [:resources resource-id :status] new-status)
+                             (assoc-in [:resources resource-id :updated-at] (Instant/now))
+                             (update :leases dissoc lease-id)))
+                       ;; Phone lease: mark warm
+                       (-> s
+                           (assoc-in [:resources resource-id :status] :warm)
+                           (update-in [:resources resource-id] dissoc :lease-id)
+                           (assoc-in [:resources resource-id :updated-at] (Instant/now))
+                           (update :leases dissoc lease-id))))))
                s)))
     (when-let [lease @unleased-lease]
-      ;; Clean up outside the atom swap
+      ;; Proxied lease: stop bridge tunnel, DELETE on remote Hammar
+      (when-let [proxy-url (:proxy-url lease)]
+        (stop-tunnel! lease-id)
+        (let [remote-id (:remote-id lease)]
+          (log/info "Proxied unlease: DELETE" remote-id "on" (:proxy-host lease))
+          (future
+            (try
+              (http/delete (str proxy-url "/api/leases/" remote-id)
+                {:throw-exceptions false :socket-timeout 10000})
+              (catch Exception e
+                (log/warn "Failed to proxy unlease to" (:proxy-host lease) ":" (.getMessage e)))))))
+      ;; Local lease cleanup
+      (when-not (:proxy-host lease)
       (when (= (:lease-type lease) :build)
         (if (:workspace lease)
           ;; Workspace lease: mark workspace idle, keep user
@@ -591,7 +616,8 @@
          :lease-type   (some-> (:lease-type lease) name)
          :workspace    (:workspace lease)
          :held-seconds (when-let [acq (:acquired-at lease)]
-                         (.getSeconds (Duration/between acq (Instant/now))))}))
+                         (.getSeconds (Duration/between acq (Instant/now))))})
+      )) ;; close when-not, when-let[lease]
     (boolean @unleased-lease)))
 
 ;; ---------------------------------------------------------------------------
@@ -621,6 +647,133 @@
         (swap! state/state update :workspaces dissoc workspace-name)
         (log/info "Purged workspace:" workspace-name)
         true))))
+
+;; ---------------------------------------------------------------------------
+;; Proxied cross-host leases
+;; ---------------------------------------------------------------------------
+
+(defn- underscoreize-keys
+  "Convert keyword map keys to underscore strings for JSON."
+  [m]
+  (into {} (map (fn [[k v]] [(clojure.string/replace (name k) "-" "_") v])) m))
+
+(defn acquire-proxied!
+  "Try to acquire a phone lease from a remote Hammar peer.
+   Each Hammar is the sole authority for its own resources, so we proxy
+   the lease request through the peer that owns the resource.
+   Creates a local bridge tunnel to the peer's tunnel port.
+   Returns a lease map (with local tunnel port) or nil."
+  [{:keys [type platform ttl-seconds lessee server-ports] :as params}]
+  (let [peer-urls (state/peer-urls)]
+    (when (seq peer-urls)
+      ;; Try each peer until one succeeds
+      (some
+        (fn [[peer-host peer-url]]
+          (try
+            (log/info "Proxying phone lease to peer" peer-host "at" peer-url)
+            (let [body (cond-> {"type"        type
+                                "platform"    platform
+                                "ttl_seconds" (or ttl-seconds 1800)
+                                "lessee"      (or lessee "anonymous")
+                                "lease_type"  "phone"}
+                         (seq server-ports)
+                         (assoc "server_ports" (vec server-ports)))
+                  resp (http/post (str peer-url "/api/leases")
+                         {:content-type :json
+                          :body         (json/write-str body)
+                          :as           :json
+                          :throw-exceptions false
+                          :socket-timeout   15000
+                          :connection-timeout 5000})]
+              (if (= 201 (:status resp))
+                ;; Peer granted the lease — bridge to its tunnel
+                (let [remote-lease  (:body resp)
+                      remote-port   (get-in remote-lease [:connection :tunnel_port])
+                      remote-id     (get remote-lease :id)
+                      bridge-port   (allocate-tunnel-port!)
+                      ;; Bridge: local port → peer's localhost:remote-tunnel-port
+                      bridge-cmd ["ssh" "-N"
+                                  "-o" "StrictHostKeyChecking=no"
+                                  "-o" "BatchMode=yes"
+                                  "-o" "ExitOnForwardFailure=yes"
+                                  "-o" "ServerAliveInterval=30"
+                                  "-o" "ServerAliveCountMax=3"
+                                  "-L" (str bridge-port ":localhost:" remote-port)
+                                  peer-host]]
+                  (log/info "Bridging to peer tunnel:" bridge-port "→" peer-host
+                            ":localhost:" remote-port "for remote lease" remote-id)
+                  (let [proc (-> (ProcessBuilder. ^java.util.List bridge-cmd)
+                                 (.redirectErrorStream true)
+                                 (.start))]
+                    (if (await-port-ready bridge-port 10000)
+                      (let [bridge-info {:port        bridge-port
+                                         :process     proc
+                                         :resource-id (get remote-lease :resource_id)
+                                         :target      (str peer-host ":localhost:" remote-port)
+                                         :started-at  (Instant/now)}
+                            ;; Track as a local tunnel so unlease! can clean it up
+                            local-lease-id (str "proxy-" remote-id)
+                            now            (Instant/now)]
+                        (swap! tunnels assoc local-lease-id bridge-info)
+                        ;; Do local ADB check through the bridge
+                        (if (and (= platform "android")
+                                 (not (await-adb-ready! bridge-port 15000)))
+                          ;; ADB failed through bridge — clean up both sides
+                          (do
+                            (log/error "ADB not responsive through bridge port" bridge-port
+                                       "for proxied lease" remote-id "- rolling back")
+                            (.destroyForcibly proc)
+                            (swap! tunnels dissoc local-lease-id)
+                            ;; Unlease on the remote side
+                            (try
+                              (http/delete (str peer-url "/api/leases/" remote-id)
+                                {:throw-exceptions false :socket-timeout 5000})
+                              (catch Exception _))
+                            nil)
+                          ;; Success — register locally as a proxied lease
+                          (let [lease {:id            local-lease-id
+                                       :remote-id     remote-id
+                                       :proxy-host    peer-host
+                                       :proxy-url     peer-url
+                                       :resource-id   (get remote-lease :resource_id)
+                                       :host          peer-host
+                                       :lessee        (or lessee "anonymous")
+                                       :lease-type    :phone
+                                       :ttl-seconds   (or ttl-seconds 1800)
+                                       :acquired-at   now
+                                       :expires-at    (.plus now (Duration/ofSeconds (or ttl-seconds 1800)))
+                                       :connection    {:tunnel-port bridge-port}
+                                       :server-ports  server-ports}]
+                            (swap! state/state assoc-in [:leases local-lease-id] lease)
+                            (log/info "Proxied phone lease acquired:" local-lease-id
+                                      "via" peer-host "remote:" remote-id
+                                      "bridge-port:" bridge-port)
+                            (state/record-event! "lease"
+                              {:lessee   lessee
+                               :resource (get remote-lease :resource_id)
+                               :lease-id local-lease-id
+                               :lease-type "phone"
+                               :proxy-host peer-host
+                               :ttl      (or ttl-seconds 1800)})
+                            lease)))
+                      ;; Bridge tunnel failed to come up
+                      (do
+                        (log/error "Bridge tunnel to" peer-host "failed on port" bridge-port)
+                        (.destroyForcibly proc)
+                        ;; Unlease on the remote side
+                        (try
+                          (http/delete (str peer-url "/api/leases/" remote-id)
+                            {:throw-exceptions false :socket-timeout 5000})
+                          (catch Exception _))
+                        nil))))
+                ;; Peer returned non-201 — no resources or error
+                (do
+                  (log/info "Peer" peer-host "returned" (:status resp) "- no resource available")
+                  nil)))
+            (catch Exception e
+              (log/warn "Failed to proxy lease to" peer-host ":" (.getMessage e))
+              nil)))
+        peer-urls))))
 
 ;; ---------------------------------------------------------------------------
 ;; Garbage collection

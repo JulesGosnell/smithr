@@ -6,7 +6,8 @@
             [hammar.config :as config]
             [hammar.docker :as docker]
             [hammar.lease :as lease]
-            [hammar.api :as api])
+            [hammar.api :as api]
+            [hammar.state :as state])
   (:gen-class))
 
 (defonce ^:private system (atom nil))
@@ -15,6 +16,19 @@
   "Start the Hammar system: connect to Docker hosts, start GC, start HTTP server."
   [config]
   (log/info "Starting Smithr resource pool manager")
+
+  ;; Record which host this instance owns and how to reach peers
+  (let [own-host (get-in config [:gc :own-host]
+                         (:label (first (:hosts config))))
+        api-port (get-in config [:server :port] 7070)
+        peer-urls (->> (:hosts config)
+                       (filter :host-address)  ;; remote hosts only
+                       (map (fn [h] [(:label h)
+                                     (str "http://" (:host-address h) ":" api-port)]))
+                       (into {}))]
+    (state/set-own-host! own-host)
+    (state/set-peer-urls! peer-urls)
+    (log/info "Own host:" own-host "peers:" peer-urls))
 
   ;; Clean up stale socat tunnels from previous sessions
   (lease/cleanup-stale-tunnels!)
