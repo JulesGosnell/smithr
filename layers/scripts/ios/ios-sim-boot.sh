@@ -27,6 +27,26 @@ ssh_cmd() {
     ssh $SSH_OPTS -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "$@"
 }
 
+# Auto-match Xcode SDK to the installed simulator runtime.
+# If Xcode 16.2 ships iOS 18.2 SDK but we have 18.3 runtime, Xcode won't
+# find a matching runtime without this mapping. Idempotent — safe to run every boot.
+log "Checking SDK-to-runtime mapping..."
+SDK_VERSION=$(ssh_cmd "xcodebuild -version -sdk iphoneos SDKVersion 2>/dev/null" 2>/dev/null || echo "")
+if [ -n "$SDK_VERSION" ]; then
+    SDK_NAME="iphoneos${SDK_VERSION}"
+    # Parse build number from: "iOS 18.3 (18.3 - 22D8075) - com.apple..."
+    # Build numbers are like 22D8075: digits, uppercase letter, digits
+    RUNTIME_BUILD=$(ssh_cmd "xcrun simctl list runtimes 2>/dev/null | grep 'iOS' | head -1 | grep -oE '[0-9]+[A-Z][0-9]+'" 2>/dev/null || echo "")
+    if [ -n "$RUNTIME_BUILD" ]; then
+        log "Mapping SDK $SDK_NAME → runtime build $RUNTIME_BUILD"
+        ssh_cmd "xcrun simctl runtime match set $SDK_NAME $RUNTIME_BUILD" 2>/dev/null || true
+    else
+        log "WARNING: Could not detect iOS runtime build number"
+    fi
+else
+    log "WARNING: Could not detect Xcode SDK version"
+fi
+
 # Shutdown all devices BEFORE opening Simulator.app
 # If we open Simulator first, it auto-boots the default device AND opens windows
 # for previously used devices. Shutting down first ensures a clean slate.
