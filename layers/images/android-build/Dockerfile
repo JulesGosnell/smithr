@@ -105,8 +105,9 @@ RUN npx playwright install chromium \
 
 # Maestro mobile testing framework — install to shared location
 ENV MAESTRO_HOME=/opt/maestro
-RUN curl -fsSL "https://get.maestro.mobile.dev" | bash \
-    && mv /root/.maestro/* /opt/maestro/ \
+RUN mkdir -p /opt/maestro \
+    && curl -fsSL "https://get.maestro.mobile.dev" | bash \
+    && cp -a /root/.maestro/* /opt/maestro/ \
     && chmod -R a+rX /opt/maestro \
     && ln -sf /opt/maestro/bin/maestro /usr/local/bin/maestro
 
