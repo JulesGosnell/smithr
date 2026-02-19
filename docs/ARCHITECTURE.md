@@ -207,6 +207,7 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | Android Phone | `layers/android.yml` | Parameterised Android emulator |
 | Xcode VM | `layers/xcode.yml` | macOS+Xcode VM via Docker-OSX (QEMU/KVM) |
 | iOS Simulator | `layers/ios.yml` | iOS Simulator sidecar (boots inside Xcode VM) |
+| Physical Phone | `layers/physical-phone.yml` | ADB proxy for USB-connected Android phones |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
 | Smithr Service | `layers/hammar.yml` | Clojure control plane (port 7070) |
 
@@ -281,12 +282,25 @@ smithr phone status
 
 ### Android Pool
 
-- Each phone is a separate `budtmo/docker-android` container on smithr-network
-- Default device profile: Nexus 5 (works on API 28 and API 34; `pixel_7` does NOT exist as a profile name)
-- ~4 cores + 4GB RAM per emulator → 4 phones per 16-core/64GB host
-- KVM + GPU passthrough for performance
-- Unique IP (10.21.0.30, .31, .32...), ADB port (5555, 5556...), VNC port (5900, 5901...)
-- CA certificate pre-baked — no per-phone cert installation needed
+- **Emulated**: `budtmo/docker-android` containers on smithr-network
+  - Default device profile: Nexus 5 (works on API 28 and API 34; `pixel_7` does NOT exist as a profile name)
+  - ~4 cores + 4GB RAM per emulator → 4 phones per 16-core/64GB host
+  - KVM + GPU passthrough for performance
+  - Unique IP (10.21.0.30, .31, .32...), ADB port (5555, 5556...), VNC port (5900, 5901...)
+  - CA certificate pre-baked — no per-phone cert installation needed
+- **Physical**: USB-connected phones via ADB TCP proxy containers
+  - Uses `smithr-adb-proxy` image (Alpine + socat + android-tools)
+  - ADB healthcheck verifies actual device responsiveness, not just TCP open
+  - Phone must have ADB over TCP enabled: `adb -s <serial> tcpip <port>`
+  - Compose: `layers/physical-phone.yml`
+  - Labels include `smithr.resource.substrate: "physical"` and `smithr.resource.model`
+
+### Substrate Labels
+
+Resources carry a `substrate` label indicating their backing technology:
+- `emulated` — Android emulator (QEMU/KVM)
+- `simulated` — iOS Simulator (inside macOS VM)
+- `physical` — USB-connected real device
 
 ### iOS Pool
 
@@ -353,8 +367,7 @@ One lease per workspace at a time. Workspace names must match `^[a-zA-Z][a-zA-Z0
 - REST API on port 7070 with real-time Reagent dashboard
 - OpenAPI 3.1 spec at `hammar/resources/openapi.yaml`
 
-Legacy NFS JSON + flock system (`/srv/shared/smithr/phone-pool/state.json`)
-is being replaced by the Clojure service.
+The Clojure service has replaced the legacy NFS JSON + flock phone pool.
 
 ### Sandbox Phone Visibility
 
@@ -609,7 +622,7 @@ smithr/
 ├── hammar/                     # Clojure control plane (see CLOJURE-SERVICE.md)
 │   ├── deps.edn                # Clojure deps (tools.deps)
 │   ├── shadow-cljs.edn         # ClojureScript build
-│   ├── src/hammar/             # Backend: core, state, docker, lease, api, handlers
+│   ├── src/hammar/             # Backend: core, state, docker, lease, macos, linux, api, handlers
 │   ├── src/hammar/ui/          # Frontend: Reagent dashboard
 │   └── resources/              # Config, OpenAPI spec, static assets
 ├── bin/
@@ -632,6 +645,8 @@ smithr/
 │   ├── android.yml             # Parameterised Android emulator
 │   ├── xcode.yml               # macOS+Xcode VM via Docker-OSX (QEMU/KVM)
 │   ├── ios.yml                 # iOS Simulator sidecar (boots inside Xcode VM)
+│   ├── physical-phone.yml      # Physical phone ADB proxy (socat + healthcheck)
+│   ├── images/adb-proxy/       # Dockerfile for ADB proxy image (Alpine + socat + android-tools)
 │   ├── metro.yml               # React Native Metro bundler
 │   ├── dind.yml                # Docker-in-Docker daemon (for sandboxes)
 │   └── scripts/
@@ -640,6 +655,7 @@ smithr/
 │           ├── ios-sim-boot.sh         # Simulator boot by UUID
 │           ├── ios-healthcheck.sh      # iOS VM health probe
 │           ├── macos-healthcheck.sh    # macOS VM health probe
+│           ├── build-user/             # macOS build user scripts (bootstrapped via scp)
 │           └── ssh/                    # SSH keys for macOS VM access
 ├── docker/
 │   └── shared/
@@ -655,6 +671,9 @@ smithr/
 │   └── smithr.yml              # Demo project config
 ├── docs/
 │   ├── ARCHITECTURE.md         # This file
+│   ├── CLOJURE-SERVICE.md      # Clojure control plane deep-dive
+│   ├── SUCCESSOR-PROMPT.md     # Handover prompt for new Skalds
+│   ├── HOST-SETUP.md           # Adding new Smithr hosts
 │   ├── IOS-SETUP.md            # iOS PaaS setup guide
 │   ├── RESEARCH.md             # Research notes
 │   └── artha-lessons.md        # Lessons learned from Artha integration
