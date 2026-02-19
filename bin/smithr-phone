@@ -236,7 +236,7 @@ cmd_warm() {
             local vnc_port=$((5999 + i))
             local ip_offset=$((40 + i))
             local ip="10.21.0.${ip_offset}"
-            local macos_image="${SMITHR_MACOS_IMAGE:-/srv/shared/images/artha-sonoma.img}"
+            local macos_image="${SMITHR_MACOS_IMAGE:-/srv/shared/images/smithr-sonoma.img}"
 
             [[ -f "$macos_image" ]] || die "macOS image not found: $macos_image"
 

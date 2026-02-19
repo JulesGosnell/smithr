@@ -31,14 +31,14 @@ The macOS base image is a pre-installed QCOW2/raw disk image containing:
 - Maestro 2.0.10 (for E2E test automation)
 - SSH configured with key-based auth
 
-**Current image location**: `/srv/shared/images/artha-sonoma.img` (125GB)
+**Current image location**: `/srv/shared/images/smithr-sonoma.img` (125GB)
 
 This image is NOT in git. To set up a new machine, either:
 
 #### Option A: Copy from existing machine
 ```bash
 # From source machine
-scp /srv/shared/images/artha-sonoma.img newmachine:/srv/shared/images/
+scp /srv/shared/images/smithr-sonoma.img newmachine:/srv/shared/images/
 scp -r /srv/shared/images/ssh/ newmachine:/srv/shared/images/
 ```
 
@@ -76,11 +76,11 @@ On Fedora (and other SELinux-enabled systems), Docker volume mounts need the `:z
 
 ```bash
 # 1. Ensure the macOS image exists
-ls -la /srv/shared/images/artha-sonoma.img
+ls -la /srv/shared/images/smithr-sonoma.img
 
 # 2. Start the macOS VM + iOS Simulator
 cd /home/jules/src/smithr
-SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+SMITHR_MACOS_IMAGE=/srv/shared/images/smithr-sonoma.img \
   docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml up -d
 
 # 3. Wait for healthy status
@@ -263,7 +263,7 @@ layers/
 ### Outside Repository (per-machine setup)
 ```
 /srv/shared/images/
-  artha-sonoma.img     # macOS base image (125GB, not in git)
+  smithr-sonoma.img     # macOS base image (125GB, not in git)
   ssh/
     macos-ssh-key      # SSH key (also copied into repo)
 ```

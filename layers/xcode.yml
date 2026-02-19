@@ -24,7 +24,7 @@
 #   For duplicate models, use separate macOS VMs (separate compose instances).
 #
 # Usage:
-#   SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+#   SMITHR_MACOS_IMAGE=/srv/shared/images/smithr-sonoma.img \
 #     docker compose -f layers/network.yml -f layers/xcode.yml up -d
 #
 # Environment Variables:

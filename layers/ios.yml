@@ -13,7 +13,7 @@
 #       +-- macOS VM + Simulator (booted by ios sidecar)
 #
 # Usage:
-#   SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+#   SMITHR_MACOS_IMAGE=/srv/shared/images/smithr-sonoma.img \
 #     docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml up -d
 #
 # The sidecar:

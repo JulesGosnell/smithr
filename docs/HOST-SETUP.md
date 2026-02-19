@@ -42,7 +42,7 @@ docker compose -f layers/android.yml up -d
 ### macOS VM (requires macOS image)
 
 ```bash
-SMITHR_MACOS_IMAGE=/srv/shared/images/artha-sonoma.img \
+SMITHR_MACOS_IMAGE=/srv/shared/images/smithr-sonoma.img \
   docker compose -f layers/xcode.yml up -d
 ```
 
@@ -147,5 +147,5 @@ volumes:
 
 - Connected via SSH tunnel: `ssh -fNL 2375:/var/run/docker.sock prognathodon`
 - Docker URI in hammar.edn: `tcp://localhost:2375`
-- macOS image available via NFS at `/srv/shared/images/artha-sonoma.img`
+- macOS image available via NFS at `/srv/shared/images/smithr-sonoma.img`
 - Docker images pre-pulled: `budtmo/docker-android:emulator_9.0`, `sickcodes/docker-osx:latest`
