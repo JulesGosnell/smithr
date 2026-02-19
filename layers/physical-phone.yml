@@ -3,6 +3,9 @@
 # The phone must have ADB over TCP enabled:
 #   adb -s <serial> tcpip <port>
 #
+# Uses smithr-adb-proxy image (alpine + socat + android-tools) so the
+# healthcheck can verify actual ADB connectivity, not just TCP open.
+#
 # Environment Variables:
 #   SMITHR_PHYSICAL_RUNE    - Younger Futhark rune suffix (default: thurs)
 #   SMITHR_PHYSICAL_IP      - Container IP on smithr-network (default: 10.21.0.50)
@@ -13,7 +16,10 @@
 services:
   smithr-physical-android:
     container_name: "smithr-android-${SMITHR_PHYSICAL_RUNE:-thurs}"
-    image: alpine/socat:latest
+    build:
+      context: ./images/adb-proxy
+    image: smithr-adb-proxy:latest
+    entrypoint: ["socat"]
     command: >-
       TCP-LISTEN:5555,fork,reuseaddr
       TCP:${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}:${SMITHR_PHYSICAL_ADB_PORT:-5557}
@@ -29,7 +35,7 @@ services:
       smithr.resource.substrate: "physical"
       smithr.resource.model: "${SMITHR_PHYSICAL_MODEL:-OPPO A15}"
     healthcheck:
-      test: ["CMD", "nc", "-z", "${SMITHR_PHYSICAL_ADB_HOST:?}", "${SMITHR_PHYSICAL_ADB_PORT:-5557}"]
+      test: ["CMD-SHELL", "adb connect localhost:5555 && adb -s localhost:5555 shell getprop ro.build.display.id"]
       interval: 10s
       timeout: 5s
       retries: 3

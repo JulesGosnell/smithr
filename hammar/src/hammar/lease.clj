@@ -2,7 +2,8 @@
   "Lease acquire/unlease/GC logic.
    Uses swap! on state atom for atomic compare-and-set semantics.
    Manages SSH tunnels: created on acquire, destroyed on unlease/GC."
-  (:require [clojure.tools.logging :as log]
+  (:require [clojure.string]
+            [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
             [hammar.state :as state]
             [hammar.macos :as macos]
@@ -69,6 +70,28 @@
               (catch Exception _ false))
           true
           (do (Thread/sleep 200) (recur)))))))
+
+(defn- await-adb-ready!
+  "Verify ADB is responsive through a tunnel port. Retries several times.
+   Returns true if ADB responds, false on timeout."
+  [tunnel-port timeout-ms]
+  (let [adb-target (str "localhost:" tunnel-port)
+        deadline   (+ (System/currentTimeMillis) timeout-ms)]
+    (loop [attempt 1]
+      (if (> (System/currentTimeMillis) deadline)
+        (do (log/warn "ADB readiness check timed out on port" tunnel-port
+                      "after" attempt "attempts")
+            false)
+        (let [{:keys [exit out]} (shell/sh "adb" "connect" adb-target)]
+          (if (and (zero? exit) (re-find #"connected" (str out)))
+            ;; Connected — verify device responds
+            (let [{:keys [exit out]} (shell/sh "adb" "-s" adb-target "shell"
+                                               "getprop" "sys.boot_completed")]
+              (if (and (zero? exit) (clojure.string/includes? (str out) "1"))
+                (do (log/info "ADB ready on port" tunnel-port "after" attempt "attempts")
+                    true)
+                (do (Thread/sleep 1000) (recur (inc attempt)))))
+            (do (Thread/sleep 1000) (recur (inc attempt)))))))))
 
 (defn- start-tunnel!
   "Start an SSH tunnel for a lease. Returns tunnel info map.
@@ -414,8 +437,16 @@
               (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
               (unlease! lease-id)
               nil)))
-        ;; Phone lease: start tunnel + cascading parent hold
+        ;; Phone lease: start tunnel + ADB/connectivity check + cascading parent hold
         (if-let [tunnel (start-tunnel! lease-id resource)]
+          (if (and (= (:platform resource) :android)
+                   (not (await-adb-ready! (:port tunnel) 15000)))
+            ;; ADB not ready through tunnel — rollback
+            (do
+              (log/error "ADB not responsive through tunnel port" (:port tunnel)
+                         "for lease" lease-id "- rolling back")
+              (unlease! lease-id)
+              nil)
           (let [;; Cascading lease: if resource has a parent, hold it
               parent-lease-id (when-let [parent-container (:parent resource)]
                                 (let [parent-res (first (filter #(= (:container %) parent-container)
@@ -462,7 +493,7 @@
                  :lease-type "phone"
                  :ttl       ttl-seconds})
               (cond-> (assoc lease :connection final-connection)
-                parent-lease-id (assoc :parent-lease-id parent-lease-id)))))
+                parent-lease-id (assoc :parent-lease-id parent-lease-id))))))
           ;; Tunnel failed — rollback phone lease
           (do
             (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
