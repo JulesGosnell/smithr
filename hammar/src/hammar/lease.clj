@@ -14,6 +14,8 @@
 ;; SSH tunnel management
 ;; ---------------------------------------------------------------------------
 
+(declare stop-tunnel!)
+
 (defonce ^:private tunnels
   (atom {}))  ;; lease-id -> {:process Process, :port int}
 
@@ -460,7 +462,7 @@
                  :lease-type "phone"
                  :ttl       ttl-seconds})
               (cond-> (assoc lease :connection final-connection)
-                parent-lease-id (assoc :parent-lease-id parent-lease-id))))))
+                parent-lease-id (assoc :parent-lease-id parent-lease-id)))))
           ;; Tunnel failed — rollback phone lease
           (do
             (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
