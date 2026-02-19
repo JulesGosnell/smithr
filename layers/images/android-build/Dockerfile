@@ -55,8 +55,8 @@ FROM base
 RUN dnf install -y java-21-openjdk-devel && dnf clean all
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 
-# Node.js 22 + pnpm + Docker CLI
-RUN dnf install -y nodejs npm docker-cli && dnf clean all \
+# Node.js 22 + pnpm + Docker CLI + Docker Compose
+RUN dnf install -y nodejs npm docker-cli docker-compose && dnf clean all \
     && npm install -g pnpm
 
 # Android SDK command-line tools
@@ -87,10 +87,29 @@ RUN yes | sdkmanager --sdk_root=${ANDROID_HOME} --licenses > /dev/null 2>&1 \
 # Make SDK readable by all users (workspace users need access)
 RUN chmod -R a+rX ${ANDROID_HOME}
 
-# Export Android SDK env vars in global profile (SSH sessions don't inherit Docker ENV)
-RUN echo 'export ANDROID_HOME=/opt/android-sdk' >> /etc/profile.d/android-sdk.sh \
-    && echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> /etc/profile.d/android-sdk.sh \
-    && echo 'export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools"' >> /etc/profile.d/android-sdk.sh
+# ---------------------------------------------------------------------------
+# Layer 3: E2E test tooling (Playwright, Maestro)
+# ---------------------------------------------------------------------------
+
+# Playwright Chromium system deps (Fedora equivalents of Ubuntu's --with-deps)
+RUN dnf install -y \
+    nss nspr atk at-spi2-atk cups-libs libdrm mesa-libgbm pango \
+    alsa-lib libXcomposite libXdamage libXrandr libXi libxkbcommon \
+    libXfixes dbus-libs mesa-libEGL libxshmfence \
+    && dnf clean all
+
+# Playwright with Chromium browser
+RUN npx playwright install chromium
+
+# Maestro mobile testing framework
+RUN curl -fsSL "https://get.maestro.mobile.dev" | bash \
+    && ln -sf /root/.maestro/bin/maestro /usr/local/bin/maestro
+
+# Export env vars in global profile (SSH sessions don't inherit Docker ENV)
+RUN echo 'export ANDROID_HOME=/opt/android-sdk' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools"' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export PATH="$PATH:/root/.maestro/bin"' >> /etc/profile.d/smithr-env.sh
 
 # Healthcheck: sshd port open
 HEALTHCHECK --interval=5s --timeout=3s --retries=3 \
