@@ -3,23 +3,47 @@
 #
 # Creates:
 #   ca.pem, ca-key.pem           — Certificate Authority
-#   server-megalodon.pem/key     — Docker daemon cert for megalodon
-#   server-prognathodon.pem/key  — Docker daemon cert for prognathodon
+#   server-<host>.pem/key        — Docker daemon cert per host
 #   client.pem, client-key.pem   — Client cert for Smithr
 #
 # Usage:
-#   cd smithr/tls && bash generate-certs.sh
+#   cd smithr/tls && bash generate-certs.sh host1 host2 [host3 ...]
+#
+# Example:
+#   bash generate-certs.sh megalodon prognathodon
+#
+# Each host argument creates a server-<host>.pem and server-<host>-key.pem.
+# Optionally set SMITHR_HOST_IPS to a comma-separated map of host=IP pairs:
+#   SMITHR_HOST_IPS="megalodon=192.168.0.73,prognathodon=192.168.0.75" bash generate-certs.sh megalodon prognathodon
 #
 # Then deploy with:
 #   bash deploy-certs.sh
 
 set -euo pipefail
 
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <host1> <host2> [host3 ...]"
+  echo "Example: $0 megalodon prognathodon"
+  exit 1
+fi
+
 CERT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DAYS=3650  # 10 years
+HOSTS=("$@")
+
+# Parse optional host→IP map from SMITHR_HOST_IPS env var
+declare -A HOST_IPS=()
+if [[ -n "${SMITHR_HOST_IPS:-}" ]]; then
+  IFS=',' read -ra PAIRS <<< "$SMITHR_HOST_IPS"
+  for pair in "${PAIRS[@]}"; do
+    IFS='=' read -r host ip <<< "$pair"
+    HOST_IPS["$host"]="$ip"
+  done
+fi
 
 echo "=== Generating Smithr Docker TLS certificates ==="
 echo "Output: $CERT_DIR"
+echo "Hosts: ${HOSTS[*]}"
 
 # --- CA ---
 echo "--- CA ---"
@@ -28,41 +52,31 @@ openssl req -new -x509 -days $DAYS -key "$CERT_DIR/ca-key.pem" \
   -sha256 -out "$CERT_DIR/ca.pem" \
   -subj "/CN=Smithr Docker CA"
 
-# --- Server cert for megalodon ---
-echo "--- Server: megalodon ---"
-openssl genrsa -out "$CERT_DIR/server-megalodon-key.pem" 4096
-openssl req -new -key "$CERT_DIR/server-megalodon-key.pem" \
-  -subj "/CN=megalodon" \
-  -out "$CERT_DIR/server-megalodon.csr"
+# --- Server certs (one per host) ---
+for host in "${HOSTS[@]}"; do
+  echo "--- Server: $host ---"
+  openssl genrsa -out "$CERT_DIR/server-${host}-key.pem" 4096
+  openssl req -new -key "$CERT_DIR/server-${host}-key.pem" \
+    -subj "/CN=${host}" \
+    -out "$CERT_DIR/server-${host}.csr"
 
-cat > "$CERT_DIR/server-megalodon-ext.cnf" <<EXTEOF
-subjectAltName = DNS:megalodon,DNS:localhost,IP:127.0.0.1,IP:192.168.0.73
+  # Build SAN list: always include hostname + localhost + 127.0.0.1
+  san="DNS:${host},DNS:localhost,IP:127.0.0.1"
+  if [[ -n "${HOST_IPS[$host]:-}" ]]; then
+    san="${san},IP:${HOST_IPS[$host]}"
+  fi
+
+  cat > "$CERT_DIR/server-${host}-ext.cnf" <<EXTEOF
+subjectAltName = ${san}
 extendedKeyUsage = serverAuth
 EXTEOF
 
-openssl x509 -req -days $DAYS -sha256 \
-  -in "$CERT_DIR/server-megalodon.csr" \
-  -CA "$CERT_DIR/ca.pem" -CAkey "$CERT_DIR/ca-key.pem" -CAcreateserial \
-  -extfile "$CERT_DIR/server-megalodon-ext.cnf" \
-  -out "$CERT_DIR/server-megalodon.pem"
-
-# --- Server cert for prognathodon ---
-echo "--- Server: prognathodon ---"
-openssl genrsa -out "$CERT_DIR/server-prognathodon-key.pem" 4096
-openssl req -new -key "$CERT_DIR/server-prognathodon-key.pem" \
-  -subj "/CN=prognathodon" \
-  -out "$CERT_DIR/server-prognathodon.csr"
-
-cat > "$CERT_DIR/server-prognathodon-ext.cnf" <<EXTEOF
-subjectAltName = DNS:prognathodon,DNS:localhost,IP:127.0.0.1,IP:192.168.0.75
-extendedKeyUsage = serverAuth
-EXTEOF
-
-openssl x509 -req -days $DAYS -sha256 \
-  -in "$CERT_DIR/server-prognathodon.csr" \
-  -CA "$CERT_DIR/ca.pem" -CAkey "$CERT_DIR/ca-key.pem" -CAcreateserial \
-  -extfile "$CERT_DIR/server-prognathodon-ext.cnf" \
-  -out "$CERT_DIR/server-prognathodon.pem"
+  openssl x509 -req -days $DAYS -sha256 \
+    -in "$CERT_DIR/server-${host}.csr" \
+    -CA "$CERT_DIR/ca.pem" -CAkey "$CERT_DIR/ca-key.pem" -CAcreateserial \
+    -extfile "$CERT_DIR/server-${host}-ext.cnf" \
+    -out "$CERT_DIR/server-${host}.pem"
+done
 
 # --- Client cert (for Smithr) ---
 echo "--- Client: smithr ---"

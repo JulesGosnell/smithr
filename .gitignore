@@ -18,3 +18,8 @@ package-lock.json
 
 # Host-specific symlink (points to config/<hostname>.edn)
 resources/smithr.edn
+
+# Secrets and generated certs — NEVER commit keys, certs, or env files
+.env
+tls/*.pem
+layers/scripts/ios/ssh/macos-ssh-key
