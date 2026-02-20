@@ -324,7 +324,7 @@
   (let [h @state/health]
     [:div.header
      [:h1 "SMITHR"
-      (when-let [hash (:git_hash h)]
+      (when-let [hash (or (:git-hash h) (:git_hash h))]
         [:span.git-hash (str " (" hash ")")])]
      [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
       (if h
