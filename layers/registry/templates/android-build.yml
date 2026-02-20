@@ -20,13 +20,13 @@ services:
       SMITHR_MODE: lease
       SMITHR_URL: ${SMITHR_URL:-http://10.21.0.1:7070}
       SMITHR_RESOURCE_TYPE: vm
-      SMITHR_PLATFORM: android
+      SMITHR_PLATFORM: android-build
       SMITHR_LEASE_TYPE: build
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
     volumes:
-      - ${SMITHR_SSH_KEY:-/srv/shared/images/ssh/android-build-key}:/run/secrets/ssh-key:ro
+      - ${SMITHR_SSH_KEY:-/srv/shared/images/ssh/macos-ssh-key}:/run/secrets/ssh-key:ro
     networks:
       - smithr-network
 
