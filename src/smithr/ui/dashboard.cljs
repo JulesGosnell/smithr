@@ -6,6 +6,39 @@
             [smithr.ui.api :as api]))
 
 ;; ---------------------------------------------------------------------------
+;; Younger Futhark rune mapping (romanized → Unicode)
+;; ---------------------------------------------------------------------------
+
+(def rune-map
+  {"fe"      "ᚠ"
+   "ur"      "ᚢ"
+   "thurs"   "ᚦ"
+   "oss"     "ᚨ"
+   "reid"    "ᚱ"
+   "kaun"    "ᚲ"
+   "hagall"  "ᚺ"
+   "naud"    "ᚾ"
+   "iss"     "ᛁ"
+   "ar"      "ᛂ"
+   "sol"     "ᛊ"
+   "tyr"     "ᛏ"
+   "bjarkan" "ᛒ"
+   "madhr"   "ᛗ"
+   "logr"    "ᛚ"
+   "yr"      "ᛦ"})
+
+(defn- runic-name
+  "Replace the romanized rune suffix of a container name with its Unicode rune.
+   e.g. 'smithr-android-fe' → 'smithr-android-ᚠ'"
+  [container-name]
+  (if-let [idx (some-> container-name (.lastIndexOf "-"))]
+    (let [suffix (subs container-name (inc idx))]
+      (if-let [rune (get rune-map suffix)]
+        (str (subs container-name 0 (inc idx)) rune)
+        container-name))
+    container-name))
+
+;; ---------------------------------------------------------------------------
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
@@ -162,7 +195,7 @@
                                    :data-platform (:platform resource)}
      [:div.box-header
       [:span.resource-icon (platform-icon resource)]
-      [:span.box-title (:container resource)]
+      [:span.box-title (runic-name (:container resource))]
       [:span.box-meta
        (:type resource) " · " (:platform resource)
        (when-let [sub (:substrate resource)]
@@ -345,7 +378,7 @@
 (defn- event-description [event]
   (let [t (:type event)
         lessee (or (:lessee event) "?")
-        container (or (:container event) (:resource event) "?")
+        container (runic-name (or (:container event) (:resource event) "?"))
         lease-type (or (:lease-type event) "")
         ttl (:ttl event)
         held (:held-seconds event)
