@@ -1,4 +1,4 @@
-(ns hammar.ui.state
+(ns smithr.ui.state
   "Client-side state management using Reagent atoms."
   (:require [reagent.core :as r]))
 

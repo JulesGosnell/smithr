@@ -1,10 +1,10 @@
-(ns hammar.docker
+(ns smithr.docker
   "Docker event subscription and container inspection.
    Uses docker-java to listen for container lifecycle events
    filtered by smithr.managed=true label."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
-            [hammar.state :as state])
+            [smithr.state :as state])
   (:import [com.github.dockerjava.core DockerClientImpl DefaultDockerClientConfig]
            [com.github.dockerjava.core.command EventsResultCallback]
            [com.github.dockerjava.httpclient5 ApacheDockerHttpClient$Builder]
@@ -204,7 +204,7 @@
       (when-let [adopt (state/adopt-by-container-id container-id)]
         (log/info "Adopted container" (:container-name adopt) "event:" action "- cleaning up")
         (try
-          ((requiring-resolve 'hammar.lease/unadopt!) (:id adopt))
+          ((requiring-resolve 'smithr.lease/unadopt!) (:id adopt))
           (catch Exception e
             (log/error e "Error cleaning up adopted container" (:id adopt))))))
     (when (and managed?

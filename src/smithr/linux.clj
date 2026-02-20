@@ -1,12 +1,12 @@
-(ns hammar.linux
+(ns smithr.linux
   "Linux user lifecycle management via SSH.
    Creates and deletes per-build user accounts on Linux containers
    for isolated concurrent build access.
-   Same interface as hammar.macos but uses useradd/userdel."
+   Same interface as smithr.macos but uses useradd/userdel."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
-            [hammar.config :as config]))
+            [smithr.config :as config]))
 
 (defn build-username
   "Generate a Linux username for a build lease.

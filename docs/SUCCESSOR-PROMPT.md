@@ -7,7 +7,7 @@ you everything you need to know to pick up where your predecessor left off.
 - `CLAUDE.md` — project overview, directory structure, conventions
 - `docs/ARCHITECTURE.md` — full system architecture and methodology
 - `docs/CLOJURE-SERVICE.md` — Clojure control plane deep-dive
-- `hammar/resources/openapi.yaml` — API contract (source of truth)
+- `resources/openapi.yaml` — API contract (source of truth)
 
 **You have MCP tools available** (`.mcp.json`):
 - **clojure-tools**: nREPL for interactive REPL evaluation
@@ -17,7 +17,7 @@ you everything you need to know to pick up where your predecessor left off.
 
 Smithr is a **project-agnostic CI/testing/sandbox framework** with Phone-as-a-Service.
 It manages pools of Android emulators, physical phones, iOS simulators, and macOS VMs
-across multiple physical hosts. A Clojure control plane ("Hammar") discovers containers
+across multiple physical hosts. A Clojure control plane discovers containers
 via Docker events, manages leases with SSH tunnels, and exposes a REST API + dashboard.
 
 The name comes from Norse mythology — the smith who forges infrastructure. Roles:
@@ -34,7 +34,7 @@ The name comes from Norse mythology — the smith who forges infrastructure. Rol
 
 | Host | Role | Docker URI | Resources |
 |------|------|-----------|-----------|
-| megalodon | Primary, runs Hammar | `unix:///var/run/docker.sock` | 7 containers |
+| megalodon | Primary, runs Smithr | `unix:///var/run/docker.sock` | 7 containers |
 | prognathodon | Secondary | Auto SSH tunnel or TLS | 3 containers |
 
 **Resources across both hosts (10 total):**
@@ -79,14 +79,14 @@ The VM user is `smithr` (NOT `claude` — that was the old Artha image). Contain
 - **GC loop**: Reaps expired leases every 30s
 - **Dashboard**: Reagent SPA, polls every 4s, resource cards with status badges
 - **Physical phone support**: ADB proxy containers with real ADB healthchecks
-- **Bash CLI**: `bin/smithr-phone` calls Hammar REST API via curl/jq
+- **Bash CLI**: `bin/smithr-phone` calls Smithr REST API via curl/jq
 - **Container labels**: All resources have `smithr.managed`, type, platform, pool, substrate
 
 ## Architecture Quick Reference
 
 ### State Model
 
-Single Clojure atom (`hammar.state/state`):
+Single Clojure atom (`smithr.state/state`):
 
 ```clojure
 {:resources  {resource-id -> Resource}
@@ -147,12 +147,12 @@ Events filtered by label `smithr.managed=true`.
 
 ## Key File Map
 
-### Clojure Service (`hammar/`)
+### Clojure Service (`src/smithr/`)
 
 | File | Purpose |
 |------|---------|
 | `core.clj` | Entry point: connect hosts → start GC → start Jetty on :7070 |
-| `config.clj` | Loads `hammar.edn` via Aero |
+| `config.clj` | Loads `smithr.edn` via Aero |
 | `state.clj` | Atom-based state, queries, mutations |
 | `docker.clj` | Docker client, container→resource, event subscription, host tunnels |
 | `lease.clj` | acquire!/unlease!/GC, SSH tunnel lifecycle, ADB checks, server ports |
@@ -171,35 +171,35 @@ Events filtered by label `smithr.managed=true`.
 | `xcode.yml` | macOS VM via Docker-OSX (QEMU/KVM) |
 | `ios.yml` | iOS Simulator sidecar (boots sim via SSH into macOS) |
 | `physical-phone.yml` | Physical phone ADB proxy (socat + healthcheck) |
-| `hammar.yml` | Clojure service container |
+| `server.yml` | Clojure service container |
 | `database.yml`, `dns.yml`, `tls-proxy.yml`, `dind.yml`, `metro.yml` | Supporting infrastructure |
 
 ### Key Config Files
 
 | File | Purpose |
 |------|---------|
-| `hammar/resources/hammar.edn` | Service config: hosts, ports, GC, tunnel settings |
-| `hammar/resources/openapi.yaml` | API contract (source of truth) |
+| `resources/smithr.edn` | Service config: hosts, ports, GC, tunnel settings |
+| `resources/openapi.yaml` | API contract (source of truth) |
 | `smithr.yml` (in consuming projects) | Project-specific config (DB, server, mobile, tests) |
 
 ## Remaining Work Items
 
 ### 1. ClojureScript Dashboard Build
 ```bash
-cd hammar && npm install && npx shadow-cljs release app
+npm install && npx shadow-cljs release app
 ```
 Compiles Reagent dashboard to `resources/public/js/main.js`. The components are written
 but the release build needs testing against the live API.
 
-### 2. Docker Compose Live Test (Hammar container)
+### 2. Docker Compose Live Test (Smithr server container)
 ```bash
-docker compose -f layers/network.yml -f layers/hammar.yml up -d
+docker compose -f layers/network.yml -f layers/server.yml up -d
 ```
-Verify the containerized Hammar starts, connects to Docker socket, discovers containers.
+Verify the containerized Smithr starts, connects to Docker socket, discovers containers.
 
 ### 3. Integration Test — Full Flow
 1. Start containers: `docker compose -f layers/network.yml -f layers/android.yml up -d`
-2. Start Hammar: `cd hammar && clojure -M:run`
+2. Start Smithr: `clojure -M:run`
 3. Verify: `curl localhost:7070/api/resources` shows the emulator
 4. Acquire: `curl -X POST localhost:7070/api/leases -H 'Content-Type: application/json' -d '{"type":"phone","platform":"android","lessee":"test"}'`
 5. Unlease: `curl -X DELETE localhost:7070/api/leases/{id}`
@@ -207,11 +207,11 @@ Verify the containerized Hammar starts, connects to Docker socket, discovers con
 
 ### 4. Remote Host Connection Modes
 Three modes exist in code but need production testing:
-- **SSH tunnel (auto)**: Set `host-address` in hammar.edn, tunnel created automatically
+- **SSH tunnel (auto)**: Set `host-address` in smithr.edn, tunnel created automatically
 - **TLS**: Set `:tls {:cert-path "/etc/smithr/tls"}` — needs cert setup
 - **Explicit URI**: Set `:docker-uri "tcp://host:2375"` — no auth
 
-Currently prognathodon is configured for TLS in hammar.edn but may fall back to SSH tunnel.
+Currently prognathodon is configured for TLS in smithr.edn but may fall back to SSH tunnel.
 
 ### 5. Artha Integration
 Artha is the primary consumer. It has its own `smithr.yml` config. Key remaining work:
@@ -243,29 +243,28 @@ Artha is the primary consumer. It has its own `smithr.yml` config. Key remaining
 All Docker volume mounts need `:z` suffix. Already handled in compose files.
 
 ### Logging
-- Clojure: `clojure.tools.logging` backed by Logback (`hammar/resources/logback.xml`)
+- Clojure: `clojure.tools.logging` backed by Logback (`resources/logback.xml`)
 - Bash: ALL output to stderr (`>&2`), stdout reserved for machine-readable output
 
 ### Branding
 - User-facing = "Smithr"
-- Directory = `hammar/`
-- Namespaces = `hammar.*`
+- Namespaces = `smithr.*`
 - GitHub = JulesGosnell/smithr
 
 ## Running the Service
 
 ```bash
 # Direct (development)
-cd hammar && clojure -M:run
+clojure -M:run
 
 # Docker Compose
-docker compose -f layers/network.yml -f layers/hammar.yml up -d
+docker compose -f layers/network.yml -f layers/server.yml up -d
 
 # Dev REPL with nREPL
-cd hammar && clojure -M:dev
+clojure -M:dev
 
 # ClojureScript dev (hot reload)
-cd hammar && npm install && npm run dev
+npm install && npm run dev
 ```
 
 Dashboard at http://localhost:7070 — shows hosts, resources, leases, events in real time.

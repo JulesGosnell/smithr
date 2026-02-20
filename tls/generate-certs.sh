@@ -5,7 +5,7 @@
 #   ca.pem, ca-key.pem           — Certificate Authority
 #   server-megalodon.pem/key     — Docker daemon cert for megalodon
 #   server-prognathodon.pem/key  — Docker daemon cert for prognathodon
-#   client.pem, client-key.pem   — Client cert for Hammar
+#   client.pem, client-key.pem   — Client cert for Smithr
 #
 # Usage:
 #   cd smithr/tls && bash generate-certs.sh
@@ -64,11 +64,11 @@ openssl x509 -req -days $DAYS -sha256 \
   -extfile "$CERT_DIR/server-prognathodon-ext.cnf" \
   -out "$CERT_DIR/server-prognathodon.pem"
 
-# --- Client cert (for Hammar) ---
-echo "--- Client: hammar ---"
+# --- Client cert (for Smithr) ---
+echo "--- Client: smithr ---"
 openssl genrsa -out "$CERT_DIR/client-key.pem" 4096
 openssl req -new -key "$CERT_DIR/client-key.pem" \
-  -subj "/CN=hammar-client" \
+  -subj "/CN=smithr-client" \
   -out "$CERT_DIR/client.csr"
 
 cat > "$CERT_DIR/client-ext.cnf" <<EXTEOF

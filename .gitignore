@@ -1,4 +1,20 @@
 .playwright-mcp/
 mocks/*/node_modules/
+
+# Clojure
+.cpcache/
+.nrepl-port
+target/
+
+# clj-kondo / LSP caches
+.clj-kondo/.cache/
+.lsp/.cache/
+
+# Shadow CLJS
+.shadow-cljs/
+node_modules/
+resources/public/js/
+package-lock.json
+
 # Host-specific symlink (points to config/<hostname>.edn)
-hammar/resources/hammar.edn
+resources/smithr.edn

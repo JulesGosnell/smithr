@@ -3,7 +3,7 @@
 # delete-build-user.sh — Delete a macOS build user and home directory
 #
 # Installed at /Users/smithr/bin/delete-build-user.sh on macOS VMs.
-# Called by Hammar (hammar.macos) via SSH as smithr.
+# Called by Smithr (smithr.macos) via SSH as smithr.
 #
 # Usage:
 #   delete-build-user.sh <username>

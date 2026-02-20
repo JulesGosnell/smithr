@@ -1,8 +1,8 @@
-(ns hammar.ui.core
+(ns smithr.ui.core
   "Reagent app entry point."
   (:require [reagent.dom.client :as rdc]
-            [hammar.ui.dashboard :as dashboard]
-            [hammar.ui.api :as api]))
+            [smithr.ui.dashboard :as dashboard]
+            [smithr.ui.api :as api]))
 
 (defonce root (rdc/create-root (.getElementById js/document "app")))
 

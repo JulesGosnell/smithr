@@ -1,7 +1,7 @@
-(ns hammar.handlers
-  "Ring handler implementations for the Hammar API."
-  (:require [hammar.state :as state]
-            [hammar.lease :as lease]
+(ns smithr.handlers
+  "Ring handler implementations for the Smithr API."
+  (:require [smithr.state :as state]
+            [smithr.lease :as lease]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]

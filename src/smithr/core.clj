@@ -1,18 +1,18 @@
-(ns hammar.core
-  "Entry point for Hammar resource pool manager.
+(ns smithr.core
+  "Entry point for Smithr resource pool manager.
    Starts Docker event subscriptions, GC loop, and HTTP server."
   (:require [clojure.tools.logging :as log]
             [ring.adapter.jetty :as jetty]
-            [hammar.config :as config]
-            [hammar.docker :as docker]
-            [hammar.lease :as lease]
-            [hammar.api :as api])
+            [smithr.config :as config]
+            [smithr.docker :as docker]
+            [smithr.lease :as lease]
+            [smithr.api :as api])
   (:gen-class))
 
 (defonce ^:private system (atom nil))
 
 (defn start!
-  "Start the Hammar system: connect to Docker hosts, start GC, start HTTP server."
+  "Start the Smithr system: connect to Docker hosts, start GC, start HTTP server."
   [config]
   (log/info "Starting Smithr resource pool manager")
 
@@ -48,7 +48,7 @@
         server))))
 
 (defn stop!
-  "Stop the Hammar system gracefully."
+  "Stop the Smithr system gracefully."
   []
   (when-let [sys @system]
     (log/info "Shutting down Smithr")

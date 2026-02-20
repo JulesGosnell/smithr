@@ -383,7 +383,7 @@ components:
           description: SSH port (iOS/macOS)
         tunnel_port:
           type: integer
-          description: Hammar-managed SSH tunnel port (allocated on lease)
+          description: Smithr-managed SSH tunnel port (allocated on lease)
         ssh_user:
           type: string
           description: SSH username for the tunnel

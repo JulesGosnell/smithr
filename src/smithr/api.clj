@@ -1,5 +1,5 @@
-(ns hammar.api
-  "Reitit routes and Ring middleware for Hammar API.
+(ns smithr.api
+  "Reitit routes and Ring middleware for Smithr API.
    Routes are defined manually (matching the OpenAPI spec)
    with reitit coercion and Muuntaja content negotiation."
   (:require [reitit.ring :as ring]
@@ -8,7 +8,7 @@
             [muuntaja.core :as m]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
-            [hammar.handlers :as h]))
+            [smithr.handlers :as h]))
 
 (def routes
   [["/api"

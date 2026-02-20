@@ -23,4 +23,4 @@
  {:dev {:extra-paths ["dev"]
         :extra-deps {nrepl/nrepl       {:mvn/version "1.3.0"}
                      cider/cider-nrepl {:mvn/version "0.50.2"}}}
-  :run {:main-opts ["-m" "hammar.core"]}}}
+  :run {:main-opts ["-m" "smithr.core"]}}}

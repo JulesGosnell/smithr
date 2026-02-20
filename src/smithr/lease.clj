@@ -1,14 +1,14 @@
-(ns hammar.lease
+(ns smithr.lease
   "Lease acquire/unlease/GC logic.
    Uses swap! on state atom for atomic compare-and-set semantics.
    Manages SSH tunnels: created on acquire, destroyed on unlease/GC."
   (:require [clojure.string]
             [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
-            [hammar.state :as state]
-            [hammar.docker :as docker]
-            [hammar.macos :as macos]
-            [hammar.linux :as linux])
+            [smithr.state :as state]
+            [smithr.docker :as docker]
+            [smithr.macos :as macos]
+            [smithr.linux :as linux])
   (:import [java.time Instant Duration]
            [java.util UUID]))
 
@@ -25,7 +25,7 @@
   (atom 17000))
 
 (defn cleanup-stale-tunnels!
-  "Kill orphaned SSH tunnel processes from previous Hammar sessions.
+  "Kill orphaned SSH tunnel processes from previous Smithr sessions.
    Called on startup before accepting new leases."
   []
   (try
@@ -298,7 +298,7 @@
 ;; Shared filesystem lease locks
 ;; ---------------------------------------------------------------------------
 ;; Phone leases use atomic mkdir on /srv/shared/smithr/leases/<resource-id>/
-;; as a cross-host lock. Both Hammars see the same NFS mount, so mkdir is
+;; as a cross-host lock. Both Smithr instances see the same NFS mount, so mkdir is
 ;; the coordination primitive — no proxying or shared database needed.
 
 (def ^:private shared-lease-dir "/srv/shared/smithr/leases")
@@ -519,7 +519,7 @@
               nil)))
         ;; Phone lease: acquire shared lock, start tunnel, ADB check, cascading parent
         (if-not (try-acquire-shared-lock! (:id resource) lessee lease-id)
-          ;; Shared lock failed — another Hammar grabbed it between check and swap
+          ;; Shared lock failed — another Smithr instance grabbed it between check and swap
           (do
             (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
             (unlease! lease-id)

@@ -3,7 +3,7 @@
 # list-build-users.sh — List active build user accounts on the macOS VM
 #
 # Installed at /Users/smithr/bin/list-build-users.sh on macOS VMs.
-# Called by Hammar (hammar.macos) via SSH as smithr.
+# Called by Smithr (smithr.macos) via SSH as smithr.
 #
 # Output: One username per line, sorted alphabetically.
 #

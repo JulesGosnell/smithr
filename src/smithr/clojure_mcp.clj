@@ -1,4 +1,4 @@
-(ns hammar.clojure-mcp
+(ns smithr.clojure-mcp
   (:require [nrepl.server :refer [start-server] :rename {start-server start-nrepl-server}]))
 
 (defn -main []

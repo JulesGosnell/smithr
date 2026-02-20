@@ -209,7 +209,7 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | iOS Simulator | `layers/ios.yml` | iOS Simulator sidecar (boots inside Xcode VM) |
 | Physical Phone | `layers/physical-phone.yml` | ADB proxy for USB-connected Android phones |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
-| Smithr Service | `layers/hammar.yml` | Clojure control plane (port 7070) |
+| Smithr Service | `layers/server.yml` | Clojure control plane (port 7070) |
 
 ### Project Layers
 
@@ -365,7 +365,7 @@ One lease per workspace at a time. Workspace names must match `^[a-zA-Z][a-zA-Z0
 - Atom-based concurrency (`swap!`) — no filesystem locking
 - SSH tunnels created on lease acquire, destroyed on unlease/GC
 - REST API on port 7070 with real-time Reagent dashboard
-- OpenAPI 3.1 spec at `hammar/resources/openapi.yaml`
+- OpenAPI 3.1 spec at `resources/openapi.yaml`
 
 The Clojure service has replaced the legacy NFS JSON + flock phone pool.
 
@@ -619,12 +619,11 @@ smithr/
 ├── CLAUDE.md                   # Developer guide (start here)
 ├── smithr.yml.example          # Example configuration for consuming projects
 ├── README.md
-├── hammar/                     # Clojure control plane (see CLOJURE-SERVICE.md)
-│   ├── deps.edn                # Clojure deps (tools.deps)
-│   ├── shadow-cljs.edn         # ClojureScript build
-│   ├── src/hammar/             # Backend: core, state, docker, lease, macos, linux, api, handlers
-│   ├── src/hammar/ui/          # Frontend: Reagent dashboard
-│   └── resources/              # Config, OpenAPI spec, static assets
+├── deps.edn                    # Clojure deps (tools.deps)
+├── shadow-cljs.edn             # ClojureScript build
+├── src/smithr/                 # Backend: core, state, docker, lease, macos, linux, api, handlers
+├── src/smithr/ui/              # Frontend: Reagent dashboard
+├── resources/                  # Config, OpenAPI spec, static assets
 ├── bin/
 │   ├── smithr                  # Main CLI entrypoint (dispatches subcommands)
 │   ├── lib/

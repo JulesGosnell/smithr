@@ -1,4 +1,4 @@
-(ns hammar.config
+(ns smithr.config
   "EDN config loader using Aero."
   (:require [aero.core :as aero]
             [clojure.java.io :as io]
@@ -6,10 +6,10 @@
 
 (defn load-config
   "Load configuration from EDN file.
-   Checks HAMMAR_CONFIG env var first, then classpath default."
+   Checks SMITHR_CONFIG env var first, then classpath default."
   ([]
-   (load-config (or (System/getenv "HAMMAR_CONFIG")
-                    (io/resource "hammar.edn"))))
+   (load-config (or (System/getenv "SMITHR_CONFIG")
+                    (io/resource "smithr.edn"))))
   ([source]
    (log/info "Loading config from" (str source))
    (let [config (aero/read-config source)]

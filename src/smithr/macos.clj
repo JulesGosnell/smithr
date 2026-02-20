@@ -1,4 +1,4 @@
-(ns hammar.macos
+(ns smithr.macos
   "macOS user lifecycle management via SSH.
    Creates and deletes per-build user accounts on macOS VMs
    for isolated concurrent build access.
@@ -6,7 +6,7 @@
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
-            [hammar.config :as config]))
+            [smithr.config :as config]))
 
 (defn build-username
   "Generate a macOS username for a build lease.

@@ -1,9 +1,9 @@
-(ns hammar.ui.dashboard
-  "Dashboard components for the Hammar UI — nested box visualization.
+(ns smithr.ui.dashboard
+  "Dashboard components for the Smithr UI — nested box visualization.
    Hosts contain resources, resources contain child resources and leases."
   (:require [reagent.core :as r]
-            [hammar.ui.state :as state]
-            [hammar.ui.api :as api]))
+            [smithr.ui.state :as state]
+            [smithr.ui.api :as api]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers

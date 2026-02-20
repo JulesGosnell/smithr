@@ -5,7 +5,7 @@
     </encoder>
   </appender>
 
-  <logger name="hammar" level="DEBUG"/>
+  <logger name="smithr" level="DEBUG"/>
   <logger name="org.eclipse.jetty" level="WARN"/>
   <logger name="org.apache.hc" level="WARN"/>
 

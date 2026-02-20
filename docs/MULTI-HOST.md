@@ -1,7 +1,7 @@
 # Multi-Host Setup
 
 Smithr runs across multiple Docker hosts for redundancy and capacity.
-Each host runs its own Hammar instance that manages local containers
+Each host runs its own Smithr instance that manages local containers
 and watches remote hosts via Docker's native TLS.
 
 ## Architecture
@@ -10,7 +10,7 @@ and watches remote hosts via Docker's native TLS.
 ┌─────────────────────┐         TLS (2376)        ┌─────────────────────┐
 │     megalodon        │◄────────────────────────►│    prognathodon      │
 │                      │                           │                      │
-│  Hammar (7070)       │                           │  Hammar (7070)       │
+│  Smithr (7070)       │                           │  Smithr (7070)       │
 │  ├── local Docker    │                           │  ├── local Docker    │
 │  │   (unix socket)   │                           │  │   (unix socket)   │
 │  └── watches prog    │                           │  └── watches meg     │
@@ -24,7 +24,7 @@ and watches remote hosts via Docker's native TLS.
 └─────────────────────┘                           └─────────────────────┘
 ```
 
-Each Hammar instance:
+Each Smithr instance:
 - **Manages** containers on its own host (leases, GC, tunnels)
 - **Watches** containers on remote hosts (read-only visibility via Docker events)
 - **Never GCs** remote containers — each host cleans up its own
@@ -35,7 +35,7 @@ Docker daemons on each host listen on both:
 - `unix:///var/run/docker.sock` — local access (default)
 - `tcp://0.0.0.0:2376` — remote access with mutual TLS
 
-Hammar connects to local Docker via the unix socket (fast, no auth needed),
+Smithr connects to local Docker via the unix socket (fast, no auth needed),
 and to remote Docker via TCP+TLS (authenticated, no SSH tunnel required).
 
 ## Setup
@@ -49,7 +49,7 @@ bash generate-certs.sh
 
 This creates a private CA and generates:
 - Server certs for each host (with SANs for hostname + IP)
-- Client cert for Hammar
+- Client cert for Smithr
 - Valid for 10 years
 
 ### 2. Deploy Certs and Configure Docker
@@ -88,25 +88,25 @@ Each host needs a symlink pointing to its config:
 
 ```bash
 # On megalodon:
-ln -sf config/megalodon.edn hammar/resources/hammar.edn
+ln -sf config/megalodon.edn resources/smithr.edn
 
 # On prognathodon:
-ln -sf config/prognathodon.edn hammar/resources/hammar.edn
+ln -sf config/prognathodon.edn resources/smithr.edn
 ```
 
-### 5. Start Hammar
+### 5. Start Smithr
 
 ```bash
-cd hammar && clojure -M:run
+clojure -M:run
 ```
 
-Hammar reads the host-specific config, connects to local Docker via unix socket,
+Smithr reads the host-specific config, connects to local Docker via unix socket,
 and connects to remote hosts via TLS. No manual tunnel setup.
 
 ## Configuration
 
-Host configs live in `hammar/resources/config/<hostname>.edn`.
-Each host symlinks `hammar/resources/hammar.edn` to its own config.
+Host configs live in `resources/config/<hostname>.edn`.
+Each host symlinks `resources/smithr.edn` to its own config.
 
 ```edn
 {:server {:port 7070 :host "0.0.0.0"}
@@ -139,16 +139,16 @@ The `:hosts` config supports three ways to connect to remote Docker:
 
 1. Generate a server cert (add to `generate-certs.sh` or create manually)
 2. Deploy certs and configure Docker daemon on the new host
-3. Create `hammar/resources/config/<hostname>.edn`
+3. Create `resources/config/<hostname>.edn`
 4. Add the new host to existing hosts' config files
-5. Symlink `hammar.edn` on the new host
+5. Symlink `smithr.edn` on the new host
 6. Create `smithr-network`: `docker network create --subnet 10.21.0.0/16 smithr-network`
-7. Start Hammar
+7. Start Smithr
 
 ## Firewall
 
 Ensure port **2376** (Docker TLS) is open between hosts.
-Port **7070** (Hammar API) should also be accessible if you want
+Port **7070** (Smithr API) should also be accessible if you want
 cross-host API access or a unified dashboard.
 
 ## Cert Directory Layout
@@ -160,8 +160,8 @@ After deployment, `/etc/smithr/tls/` on each host contains:
 ├── ca.pem           # CA certificate (same on all hosts)
 ├── server-cert.pem  # This host's server certificate
 ├── server-key.pem   # This host's server private key
-├── cert.pem         # Hammar client certificate
-└── key.pem          # Hammar client private key
+├── cert.pem         # Smithr client certificate
+└── key.pem          # Smithr client private key
 ```
 
 docker-java expects `ca.pem`, `cert.pem`, and `key.pem` in the cert-path directory.

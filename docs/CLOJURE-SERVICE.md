@@ -5,7 +5,7 @@
 
 ## Overview
 
-The service (codebase in `hammar/`, namespaces `hammar.*`) replaces the previous
+The service (namespaces `smithr.*`) replaces the previous
 NFS JSON + flock phone pool with a proper server:
 
 - **Docker event subscription** via docker-java — push-based, not polling
@@ -20,25 +20,25 @@ NFS JSON + flock phone pool with a proper server:
 
 | Namespace | Responsibility |
 |-----------|---------------|
-| `hammar.core` | Entry point. Connects Docker hosts, starts GC loop, starts Jetty on port 7070 |
-| `hammar.config` | Loads `hammar.edn` via Aero. Checks `HAMMAR_CONFIG` env var first |
-| `hammar.state` | Single atom holding `{:resources {} :leases {} :hosts {} :workspaces {} :events []}`. All queries and mutations |
-| `hammar.docker` | Docker client creation, container inspection, event subscription. Auto SSH tunnels for remote hosts |
-| `hammar.lease` | `acquire!` / `unlease!` / `gc-expired-leases!`. Manages SSH tunnel lifecycle, ADB readiness, server port forwarding |
-| `hammar.macos` | macOS user lifecycle via SSH: create/delete build users, script bootstrap via scp |
-| `hammar.linux` | Linux user lifecycle via SSH: create/delete build users via useradd/userdel |
-| `hammar.api` | Reitit router with Muuntaja. Serves API + static files |
-| `hammar.handlers` | Ring handlers for each endpoint. Serializes Clojure maps to JSON with underscore keys |
-| `hammar.compose` | Shells out to `docker compose` CLI for up/down/ps |
+| `smithr.core` | Entry point. Connects Docker hosts, starts GC loop, starts Jetty on port 7070 |
+| `smithr.config` | Loads `smithr.edn` via Aero. Checks `SMITHR_CONFIG` env var first |
+| `smithr.state` | Single atom holding `{:resources {} :leases {} :hosts {} :workspaces {} :events []}`. All queries and mutations |
+| `smithr.docker` | Docker client creation, container inspection, event subscription. Auto SSH tunnels for remote hosts |
+| `smithr.lease` | `acquire!` / `unlease!` / `gc-expired-leases!`. Manages SSH tunnel lifecycle, ADB readiness, server port forwarding |
+| `smithr.macos` | macOS user lifecycle via SSH: create/delete build users, script bootstrap via scp |
+| `smithr.linux` | Linux user lifecycle via SSH: create/delete build users via useradd/userdel |
+| `smithr.api` | Reitit router with Muuntaja. Serves API + static files |
+| `smithr.handlers` | Ring handlers for each endpoint. Serializes Clojure maps to JSON with underscore keys |
+| `smithr.compose` | Shells out to `docker compose` CLI for up/down/ps |
 
 ### Frontend (ClojureScript)
 
 | Namespace | Responsibility |
 |-----------|---------------|
-| `hammar.ui.core` | Reagent mount + polling init |
-| `hammar.ui.dashboard` | Components: header, summary bar, host panels, resource cards |
-| `hammar.ui.api` | HTTP client using cljs-ajax. Polls all endpoints every 4s |
-| `hammar.ui.state` | Reagent atoms: resources, leases, hosts, health, error |
+| `smithr.ui.core` | Reagent mount + polling init |
+| `smithr.ui.dashboard` | Components: header, summary bar, host panels, resource cards |
+| `smithr.ui.api` | HTTP client using cljs-ajax. Polls all endpoints every 4s |
+| `smithr.ui.state` | Reagent atoms: resources, leases, hosts, health, error |
 
 ## State Shape
 
@@ -190,14 +190,14 @@ Platform-specific targets:
 
 ### Remote Host Tunnels
 
-For remote Docker daemon access, `hammar.docker` auto-creates SSH tunnels:
+For remote Docker daemon access, `smithr.docker` auto-creates SSH tunnels:
 - Remote host without explicit `docker-uri`: `ssh -fNL port:/var/run/docker.sock hostname`
 - Remote host with TLS: direct `tcp://host:2376` with mutual TLS
 - Remote host with explicit URI: used as-is
 
 ### Reverse Port Forwarding (server_ports)
 
-When `server_ports` is included in the lease request, Hammar sets up reverse
+When `server_ports` is included in the lease request, Smithr sets up reverse
 forwarding so the phone app can reach server ports on the host:
 
 - **Android**: `adb -s localhost:tunnel_port reverse tcp:PORT tcp:PORT`
@@ -229,7 +229,7 @@ Optional labels:
 
 Build users on macOS VMs are managed via shell scripts bootstrapped to the VM:
 
-**Bootstrap flow** (`hammar.macos`):
+**Bootstrap flow** (`smithr.macos`):
 1. On first SSH to a VM, scp `layers/scripts/ios/build-user/*.sh` to `/Users/smithr/bin/`
 2. Track bootstrapped VMs in memory (idempotent)
 
@@ -238,12 +238,12 @@ Build users on macOS VMs are managed via shell scripts bootstrapped to the VM:
 - `delete-build-user.sh <username>` — process kill, user deletion, home dir cleanup
 - `list-build-users.sh` — lists existing `build-*` users
 
-**Linux variant** (`hammar.linux`):
+**Linux variant** (`smithr.linux`):
 - Uses `useradd -m` / `userdel -r` via SSH
 - Same interface (`:macos-user` key name for compatibility)
 - Adds to `docker` group for container access
 
-## Configuration (`hammar.edn`)
+## Configuration (`smithr.edn`)
 
 ```clojure
 {:server {:port 7070 :host "0.0.0.0"}
@@ -273,19 +273,19 @@ Host connection modes:
 
 ```bash
 # Direct
-cd hammar && clojure -M:run
+clojure -M:run
 
 # Docker Compose
-docker compose -f layers/network.yml -f layers/hammar.yml up -d
+docker compose -f layers/network.yml -f layers/server.yml up -d
 
 # Dev REPL with nREPL
-cd hammar && clojure -M:dev -m nrepl.cmdline
+clojure -M:dev -m nrepl.cmdline
 
 # ClojureScript dev
-cd hammar && npm install && npm run dev
+npm install && npm run dev
 
 # ClojureScript release build
-cd hammar && npm install && npx shadow-cljs release app
+npm install && npx shadow-cljs release app
 ```
 
 ## What's Working
@@ -310,6 +310,6 @@ cd hammar && npm install && npx shadow-cljs release app
 ## What Needs Work
 
 1. **ClojureScript release build** — `npx shadow-cljs release app` needs testing with live API
-2. **Docker Compose test** — `layers/hammar.yml` not yet tested with live Docker
+2. **Docker Compose test** — `layers/server.yml` not yet tested with live Docker
 3. **Integration test** — full flow: start containers → discover → lease → unlease → GC
 4. **Artha migration** — build APK with local API URL, replace GitHub Actions CI

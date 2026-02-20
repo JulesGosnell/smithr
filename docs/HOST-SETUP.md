@@ -5,7 +5,7 @@ Guide for setting up a new machine as a Smithr-managed Docker host.
 ## Prerequisites
 
 - Docker installed and running
-- SSH access from the Hammar host (megalodon)
+- SSH access from the Smithr host (megalodon)
 - KVM available (`/dev/kvm`) for emulators/VMs
 - GPU available (`/dev/dri`) for Android emulators (optional)
 
@@ -60,9 +60,9 @@ SMITHR_ANDROID_IP=10.21.0.31 \
   docker compose -f layers/android.yml -p smithr-android-ur up -d
 ```
 
-## Step 5: Connect to Hammar
+## Step 5: Connect to Smithr
 
-Hammar (on megalodon) connects to remote Docker daemons to subscribe to
+Smithr (on megalodon) connects to remote Docker daemons to subscribe to
 events and discover managed containers. Two options:
 
 ### Option A: SSH tunnel (recommended, no Docker config changes)
@@ -79,7 +79,7 @@ Example for prognathodon:
 ssh -fNL 2375:/var/run/docker.sock prognathodon
 ```
 
-Then add to `hammar/resources/hammar.edn`:
+Then add to `resources/smithr.edn`:
 
 ```edn
 {:label "prognathodon"
@@ -103,16 +103,16 @@ sudo systemctl restart docker
 
 **Warning:** This exposes Docker without TLS. Only use on trusted networks.
 
-Then add to `hammar/resources/hammar.edn`:
+Then add to `resources/smithr.edn`:
 
 ```edn
 {:label "prognathodon"
  :docker-uri "tcp://prognathodon:2375"}
 ```
 
-### Restart Hammar
+### Restart Smithr
 
-After updating `hammar.edn`, restart Hammar to connect to the new host.
+After updating `smithr.edn`, restart Smithr to connect to the new host.
 
 ## Step 6: Verify
 
@@ -139,13 +139,13 @@ volumes:
 
 ### megalodon (primary)
 
-- Hammar runs here
+- Smithr runs here
 - Docker socket: `unix:///var/run/docker.sock`
 - IPs: Android 10.21.0.30, macOS 10.21.0.40
 
 ### prognathodon (secondary)
 
 - Connected via SSH tunnel: `ssh -fNL 2375:/var/run/docker.sock prognathodon`
-- Docker URI in hammar.edn: `tcp://localhost:2375`
+- Docker URI in smithr.edn: `tcp://localhost:2375`
 - macOS image available via NFS at `/srv/shared/images/smithr-sonoma.img`
 - Docker images pre-pulled: `budtmo/docker-android:emulator_9.0`, `sickcodes/docker-osx:latest`

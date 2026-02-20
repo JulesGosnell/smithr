@@ -3,7 +3,7 @@
 # create-build-user.sh — Create a macOS user for an isolated build environment
 #
 # Installed at /Users/smithr/bin/create-build-user.sh on macOS VMs.
-# Called by Hammar (hammar.macos) via SSH as smithr.
+# Called by Smithr (smithr.macos) via SSH as smithr.
 #
 # Creates:
 #   - macOS user with dscl

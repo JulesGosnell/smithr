@@ -4,6 +4,6 @@
  :builds {:app {:target :browser
                 :output-dir "resources/public/js"
                 :asset-path "/js"
-                :modules {:main {:init-fn hammar.ui.core/init}}
+                :modules {:main {:init-fn smithr.ui.core/init}}
                 :devtools {:http-root "resources/public"
                            :http-port 8090}}}}

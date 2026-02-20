@@ -1,4 +1,4 @@
-(ns hammar.compose
+(ns smithr.compose
   "Shell out to docker compose CLI for container lifecycle operations."
   (:require [clojure.tools.logging :as log]
             [clojure.java.io :as io])

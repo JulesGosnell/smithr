@@ -1,4 +1,4 @@
-(ns hammar.state
+(ns smithr.state
   "Atom-based state management for resources, leases, and hosts.
    All state mutations happen via swap! for atomicity.")
 

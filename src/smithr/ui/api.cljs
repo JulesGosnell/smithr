@@ -1,7 +1,7 @@
-(ns hammar.ui.api
-  "HTTP client for polling the Hammar API."
+(ns smithr.ui.api
+  "HTTP client for polling the Smithr API."
   (:require [ajax.core :refer [GET POST DELETE]]
-            [hammar.ui.state :as state]))
+            [smithr.ui.state :as state]))
 
 (def base-url "")  ;; same origin
 
