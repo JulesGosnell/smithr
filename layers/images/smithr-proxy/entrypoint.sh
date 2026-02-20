@@ -152,12 +152,22 @@ start_reverse_tunnels() {
   fi
 
   # Build -R flags
+  # Supports two formats:
+  #   Simple:   "5555,3000"       → -R 5555:GATEWAY:5555 -R 3000:GATEWAY:3000
+  #   Extended: "5555:host:1234"  → -R 5555:host:1234  (pass through as-is)
   local ssh_args=()
   IFS=',' read -ra RPORTS <<< "$SMITHR_REVERSE_PORTS"
   for rport in "${RPORTS[@]}"; do
     rport=$(echo "$rport" | tr -d ' ')
-    ssh_args+=(-R "${rport}:${SMITHR_GATEWAY}:${rport}")
-    log "reverse tunnel: VM:${rport} → ${SMITHR_GATEWAY}:${rport}"
+    if [[ "$rport" == *:* ]]; then
+      # Extended format: local_port:target_host:target_port — use as-is
+      ssh_args+=(-R "$rport")
+      log "reverse tunnel: VM:${rport%%:*} → ${rport#*:}"
+    else
+      # Simple format: just a port number — route via gateway
+      ssh_args+=(-R "${rport}:${SMITHR_GATEWAY}:${rport}")
+      log "reverse tunnel: VM:${rport} → ${SMITHR_GATEWAY}:${rport}"
+    fi
   done
 
   # Wait for socat to be ready (SSH port must be forwarding)
