@@ -1,0 +1,35 @@
+# smithr-proxy template: macos-build
+#
+# Acquires a shared build lease on a macOS VM and forwards SSH port 22.
+#
+# Usage:
+#   docker compose -f layers/registry/templates/macos-build.yml up -d
+#   # or via API:
+#   curl -s http://localhost:7070/api/compose/macos-build | docker compose -f - up -d
+#
+# Environment Variables:
+#   SMITHR_REGISTRY  - Registry host (default: localhost:5000)
+#   SMITHR_URL       - Smithr API URL (default: http://10.21.0.1:7070)
+#   SMITHR_LESSEE    - Lease owner name (default: anonymous)
+#   SMITHR_TTL       - Lease TTL in seconds (default: 3600)
+#   SMITHR_WORKSPACE - Named workspace for persistent build env (optional)
+
+services:
+  macos-build:
+    image: ${SMITHR_REGISTRY:-localhost:5000}/smithr/proxy:latest
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: ${SMITHR_URL:-http://10.21.0.1:7070}
+      SMITHR_RESOURCE_TYPE: vm
+      SMITHR_PLATFORM: macos
+      SMITHR_LEASE_TYPE: build
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "22"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_WORKSPACE: ${SMITHR_WORKSPACE:-}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

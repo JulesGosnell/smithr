@@ -283,3 +283,33 @@
     {:status  200
      :headers {"Content-Type" "text/yaml; charset=utf-8"}
      :body    spec}))
+
+;; ---------------------------------------------------------------------------
+;; Compose template handler
+;; ---------------------------------------------------------------------------
+
+(def ^:private valid-templates
+  #{"android-phone" "ios-phone" "macos-build" "android-build"})
+
+(defn serve-compose-template
+  "GET /api/compose/:template — serve a ready-to-use compose YAML for a resource type.
+   Substitutes {{REGISTRY}} and {{SMITHR_URL}} with the current host's values."
+  [request]
+  (let [template (get-in request [:path-params :template])]
+    (if-not (valid-templates template)
+      (not-found (str "Unknown template: " template
+                      ". Available: " (str/join ", " (sort valid-templates))))
+      (let [resource (io/resource (str "compose-templates/" template ".yml"))]
+        (if-not resource
+          (not-found (str "Template file missing: " template))
+          (let [yaml     (slurp resource)
+                ;; Resolve placeholders with runtime values
+                registry (or (System/getenv "SMITHR_REGISTRY") "localhost:5000")
+                api-url  (or (System/getenv "SMITHR_URL") "http://10.21.0.1:7070")
+                resolved (-> yaml
+                              (str/replace "{{REGISTRY}}" registry)
+                              (str/replace "{{SMITHR_URL}}" api-url))]
+            {:status  200
+             :headers {"Content-Type"        "application/x-yaml; charset=utf-8"
+                       "Content-Disposition" (str "inline; filename=\"" template ".yml\"")}
+             :body    resolved}))))))

@@ -1,0 +1,45 @@
+# layers/registry.yml
+#
+# Registry Layer - Local OCI registry for Smithr images and compose artifacts
+#
+# Provides a Docker registry on port 5000 for distributing the smithr-proxy
+# image and OCI compose artifacts across hosts. No authentication — internal
+# network only.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/registry.yml up -d
+#
+# Verify:
+#   curl -s http://localhost:5000/v2/_catalog | jq .
+#
+# Environment Variables:
+#   SMITHR_NETWORK_NAME - Network name (default: smithr-network)
+
+services:
+  registry:
+    image: registry:2
+    container_name: smithr-registry
+    ports:
+      - "5000:5000"
+    volumes:
+      - smithr-registry-data:/var/lib/registry:z
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5000/v2/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      default:
+        ipv4_address: 10.21.0.5
+    restart: unless-stopped
+
+volumes:
+  smithr-registry-data:
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

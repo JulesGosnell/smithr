@@ -1,0 +1,19 @@
+services:
+  macos-build:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_RESOURCE_TYPE: vm
+      SMITHR_PLATFORM: macos
+      SMITHR_LEASE_TYPE: build
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "22"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_WORKSPACE: ${SMITHR_WORKSPACE:-}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

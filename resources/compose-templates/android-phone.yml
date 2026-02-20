@@ -1,0 +1,17 @@
+services:
+  android-phone:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_RESOURCE_TYPE: phone
+      SMITHR_PLATFORM: android
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "5555"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# smithr-registry — Manage the local OCI registry for Smithr images
+#
+# Usage:
+#   smithr-registry start     Start the registry container
+#   smithr-registry stop      Stop the registry container
+#   smithr-registry publish   Push proxy image + OCI compose artifacts
+#   smithr-registry status    Show what's published in the registry
+#   smithr-registry help      Show this help
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SMITHR_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+LAYERS_DIR="$SMITHR_DIR/layers"
+TEMPLATES_DIR="$LAYERS_DIR/registry/templates"
+
+REGISTRY="${SMITHR_REGISTRY:-localhost:5000}"
+
+log_info() { echo "[smithr-registry] $*" >&2; }
+log_ok()   { echo "[smithr-registry] OK: $*" >&2; }
+log_err()  { echo "[smithr-registry] ERROR: $*" >&2; }
+
+# --- Commands ---
+
+cmd_start() {
+  log_info "Starting registry..."
+  docker compose \
+    -f "$LAYERS_DIR/network.yml" \
+    -f "$LAYERS_DIR/registry.yml" \
+    up -d
+  log_info "Waiting for registry to be healthy..."
+  local attempts=0
+  while (( attempts < 30 )); do
+    if curl -sf http://localhost:5000/v2/ >/dev/null 2>&1; then
+      log_ok "Registry running at localhost:5000"
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  log_err "Registry failed to start"
+  return 1
+}
+
+cmd_stop() {
+  log_info "Stopping registry..."
+  docker compose \
+    -f "$LAYERS_DIR/network.yml" \
+    -f "$LAYERS_DIR/registry.yml" \
+    down
+  log_ok "Registry stopped"
+}
+
+cmd_publish() {
+  # 1. Check registry is running
+  if ! curl -sf http://${REGISTRY}/v2/ >/dev/null 2>&1; then
+    log_err "Registry not reachable at $REGISTRY — run 'smithr-registry start' first"
+    return 1
+  fi
+
+  # 2. Check proxy image exists
+  if ! docker image inspect smithr-proxy:latest >/dev/null 2>&1; then
+    log_info "Building smithr-proxy image..."
+    docker build -t smithr-proxy:latest "$LAYERS_DIR/images/smithr-proxy/"
+  fi
+
+  # 3. Tag and push proxy image
+  log_info "Pushing smithr-proxy image to $REGISTRY..."
+  docker tag smithr-proxy:latest "${REGISTRY}/smithr/proxy:latest"
+  docker push "${REGISTRY}/smithr/proxy:latest"
+  log_ok "Image pushed: ${REGISTRY}/smithr/proxy:latest"
+
+  # 4. Publish OCI compose artifacts for each template
+  if [[ ! -d "$TEMPLATES_DIR" ]]; then
+    log_err "Templates directory not found: $TEMPLATES_DIR"
+    return 1
+  fi
+
+  for template in "$TEMPLATES_DIR"/*.yml; do
+    local name
+    name="$(basename "$template" .yml)"
+    log_info "Publishing OCI artifact: smithr/${name}:latest"
+
+    # Resolve the template (expand env vars) then publish
+    local tmpfile
+    tmpfile=$(mktemp /tmp/smithr-compose-XXXXXX.yml)
+
+    # Use SMITHR_REGISTRY env to resolve template image references
+    SMITHR_REGISTRY="$REGISTRY" docker compose -f "$template" config > "$tmpfile" 2>/dev/null || {
+      # If config fails (no docker compose v2), just copy raw
+      cp "$template" "$tmpfile"
+    }
+
+    # Publish as OCI artifact
+    if docker compose -f "$tmpfile" publish --oci-version=1.1 -y "${REGISTRY}/smithr/${name}:latest" 2>/dev/null; then
+      log_ok "Published: ${REGISTRY}/smithr/${name}:latest"
+    else
+      log_info "OCI publish not available for $name (docker compose v2.32+ required), skipping"
+    fi
+
+    rm -f "$tmpfile"
+  done
+
+  log_ok "All artifacts published"
+}
+
+cmd_status() {
+  if ! curl -sf http://${REGISTRY}/v2/ >/dev/null 2>&1; then
+    log_err "Registry not reachable at $REGISTRY"
+    return 1
+  fi
+
+  echo "Registry: $REGISTRY"
+  echo ""
+
+  # List repositories
+  local catalog
+  catalog=$(curl -sf "http://${REGISTRY}/v2/_catalog" 2>/dev/null || echo '{"repositories":[]}')
+  local repos
+  repos=$(echo "$catalog" | jq -r '.repositories[]' 2>/dev/null || true)
+
+  if [[ -z "$repos" ]]; then
+    echo "No repositories found."
+    return 0
+  fi
+
+  echo "Repositories:"
+  while IFS= read -r repo; do
+    local tags
+    tags=$(curl -sf "http://${REGISTRY}/v2/${repo}/tags/list" 2>/dev/null | jq -r '.tags // [] | join(", ")' 2>/dev/null || echo "?")
+    echo "  ${repo}: [${tags}]"
+  done <<< "$repos"
+}
+
+cmd_help() {
+  cat <<'EOF'
+smithr-registry — Manage the local OCI registry for Smithr images
+
+Usage:
+  smithr-registry start     Start the registry container
+  smithr-registry stop      Stop the registry container
+  smithr-registry publish   Push proxy image + OCI compose artifacts
+  smithr-registry status    Show what's published in the registry
+  smithr-registry help      Show this help
+
+Environment Variables:
+  SMITHR_REGISTRY   Registry address (default: localhost:5000)
+
+The registry stores:
+  - smithr/proxy:latest        Proxy sidecar image
+  - smithr/android-phone:latest   OCI compose artifact
+  - smithr/ios-phone:latest        OCI compose artifact
+  - smithr/macos-build:latest      OCI compose artifact
+  - smithr/android-build:latest    OCI compose artifact
+EOF
+}
+
+# --- Main ---
+
+case "${1:-help}" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  publish) cmd_publish ;;
+  status)  cmd_status ;;
+  help)    cmd_help ;;
+  *)
+    log_err "Unknown command: $1"
+    cmd_help
+    exit 1
+    ;;
+esac

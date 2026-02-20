@@ -28,7 +28,8 @@
     ["/adopts" {:get {:handler h/list-adopts}}]
     ["/adopts/:id" {:delete {:handler h/unadopt}}]
     ["/health" {:get {:handler h/health-check}}]
-    ["/events" {:get {:handler h/list-events}}]]
+    ["/events" {:get {:handler h/list-events}}]
+    ["/compose/:template" {:get {:handler h/serve-compose-template}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])
 
 (defn app

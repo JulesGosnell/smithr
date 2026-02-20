@@ -1,0 +1,32 @@
+# smithr-proxy template: ios-phone
+#
+# Acquires a lease on an iOS phone (simulator) and forwards Maestro port 7001.
+#
+# Usage:
+#   docker compose -f layers/registry/templates/ios-phone.yml up -d
+#   # or via API:
+#   curl -s http://localhost:7070/api/compose/ios-phone | docker compose -f - up -d
+#
+# Environment Variables:
+#   SMITHR_REGISTRY  - Registry host (default: localhost:5000)
+#   SMITHR_URL       - Smithr API URL (default: http://10.21.0.1:7070)
+#   SMITHR_LESSEE    - Lease owner name (default: anonymous)
+#   SMITHR_TTL       - Lease TTL in seconds (default: 3600)
+
+services:
+  ios-phone:
+    image: ${SMITHR_REGISTRY:-localhost:5000}/smithr/proxy:latest
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: ${SMITHR_URL:-http://10.21.0.1:7070}
+      SMITHR_RESOURCE_TYPE: phone
+      SMITHR_PLATFORM: ios
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "7001"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true
