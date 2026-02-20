@@ -18,6 +18,9 @@ SMITHR_LEASE_TYPE="${SMITHR_LEASE_TYPE:-phone}"
 SMITHR_WORKSPACE="${SMITHR_WORKSPACE:-}"
 SMITHR_PREFER_HOST="${SMITHR_PREFER_HOST:-}"
 
+# Reverse tunnel vars (build leases only)
+SMITHR_REVERSE_PORTS="${SMITHR_REVERSE_PORTS:-}"  # e.g. "5555,3000,443"
+
 # Adopt mode vars
 SMITHR_CONTAINER_NAME="${SMITHR_CONTAINER_NAME:-}"
 
@@ -25,6 +28,7 @@ SMITHR_CONTAINER_NAME="${SMITHR_CONTAINER_NAME:-}"
 PROXY_ID=""        # lease or adopt ID for cleanup
 PROXY_TYPE=""      # "lease" or "adopt" — for DELETE path
 SOCAT_PIDS=()
+REVERSE_SSH_PID="" # PID of reverse tunnel SSH session
 EXIT_CODE=0
 PORTS_FILE="/tmp/smithr-proxy.ports"
 ID_FILE="/tmp/smithr-proxy.id"
@@ -37,6 +41,10 @@ die() { log "FATAL: $*"; EXIT_CODE=1; exit 1; }
 # --- Cleanup ---
 cleanup() {
   log "shutting down..."
+  if [[ -n "$REVERSE_SSH_PID" ]]; then
+    log "stopping reverse tunnel (pid $REVERSE_SSH_PID)"
+    kill "$REVERSE_SSH_PID" 2>/dev/null || true
+  fi
   for pid in "${SOCAT_PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
@@ -120,6 +128,66 @@ start_socats() {
   printf "%b" "$port_list" > "$PORTS_FILE"
 }
 
+# --- Reverse tunnels (build leases) ---
+# Opens an SSH connection to the workspace VM with -R forwards so the VM
+# can reach services on the CI runner host (e.g., phone ADB, server, HTTPS).
+# Chain: VM:port → SSH → proxy → 10.21.0.1:port → host:port
+start_reverse_tunnels() {
+  [[ -z "$SMITHR_REVERSE_PORTS" ]] && return 0
+
+  local key="/run/secrets/ssh-key"
+  if [[ ! -f "$key" ]]; then
+    log "WARNING: SSH key not mounted, skipping reverse tunnels"
+    return 0
+  fi
+
+  # Read SSH metadata
+  local ssh_user ssh_port
+  ssh_user=$(grep '^SSH_USER=' "$META_FILE" | cut -d= -f2-) || true
+  ssh_port=$(grep '^SSH_PORT=' "$META_FILE" | cut -d= -f2-) || true
+
+  if [[ -z "$ssh_user" || -z "$ssh_port" ]]; then
+    log "WARNING: no SSH_USER/SSH_PORT in metadata, skipping reverse tunnels"
+    return 0
+  fi
+
+  # Build -R flags
+  local ssh_args=()
+  IFS=',' read -ra RPORTS <<< "$SMITHR_REVERSE_PORTS"
+  for rport in "${RPORTS[@]}"; do
+    rport=$(echo "$rport" | tr -d ' ')
+    ssh_args+=(-R "${rport}:${SMITHR_GATEWAY}:${rport}")
+    log "reverse tunnel: VM:${rport} → ${SMITHR_GATEWAY}:${rport}"
+  done
+
+  # Wait for socat to be ready (SSH port must be forwarding)
+  local retries=0
+  while ! socat -T1 /dev/null "TCP:localhost:${ssh_port},connect-timeout=2" 2>/dev/null; do
+    retries=$((retries + 1))
+    if (( retries > 10 )); then
+      log "WARNING: SSH port not ready after 10 attempts, skipping reverse tunnels"
+      return 0
+    fi
+    sleep 1
+  done
+
+  # Open persistent SSH connection with reverse forwards
+  ssh -N \
+    -i "$key" \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o IdentitiesOnly=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o ExitOnForwardFailure=yes \
+    -o LogLevel=ERROR \
+    -p "$ssh_port" \
+    "${ssh_args[@]}" \
+    "${ssh_user}@localhost" &
+  REVERSE_SSH_PID=$!
+  log "reverse tunnels started (pid $REVERSE_SSH_PID)"
+}
+
 # --- Lease mode ---
 do_lease() {
   [[ -z "$SMITHR_RESOURCE_TYPE" ]] && die "SMITHR_RESOURCE_TYPE required for lease mode"
@@ -197,6 +265,9 @@ do_lease() {
       fi
     fi
     log "workspace metadata written to $META_FILE"
+
+    # Start reverse tunnels if requested
+    start_reverse_tunnels
   fi
 }
 
@@ -258,6 +329,11 @@ while true; do
   done
   if [[ ${#SOCAT_PIDS[@]} -eq 0 ]]; then
     die "all socat processes exited"
+  fi
+  # Monitor reverse tunnel SSH process
+  if [[ -n "$REVERSE_SSH_PID" ]] && ! kill -0 "$REVERSE_SSH_PID" 2>/dev/null; then
+    log "WARNING: reverse tunnel SSH (pid $REVERSE_SSH_PID) exited"
+    REVERSE_SSH_PID=""
   fi
   sleep 2
 done
