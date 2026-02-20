@@ -1,7 +1,7 @@
 # Artha CI Fixes — Smithr Proxy Integration
 
-> Prompt for an Artha agent. Three bugs in the CI pipeline need fixing.
-> All three are Artha-side — Smithr proxy infrastructure is working correctly.
+> Prompt for an Artha agent. Four bugs in the CI pipeline need fixing.
+> All four are Artha-side — Smithr proxy infrastructure is working correctly.
 
 ## Context
 
@@ -13,61 +13,33 @@ The proxy handles lease acquisition, SSH tunnels, and cleanup automatically.
 Reverse tunnels (`SMITHR_REVERSE_PORTS`) expose server + phone ports as
 `localhost` inside each workspace.
 
-Failed run: https://github.com/JulesGosnell/artha/actions/runs/22234241123
+Failed runs:
+- https://github.com/JulesGosnell/artha/actions/runs/22234241123
+- https://github.com/JulesGosnell/artha/actions/runs/22234892846
 
 ---
 
-## Bug 1: DNS Resolution — E2E Server Unreachable (CRITICAL)
+## Bug 1: DNS Resolution — FIXED IN SMITHR (revert Artha workaround)
 
-**Symptom**: E2E Profile and Notifications tests fail — Playwright `page.goto('/login')`
-gets `ERR_CONNECTION_REFUSED`. The server is running but unreachable from the workspace.
+**Status**: Fixed in Smithr. **Artha must revert the `10.21.0.1` workaround.**
 
-**Root cause**: `SERVER_TUNNEL_HOST` is `megalodon` (returned by Smithr adopt API).
-The workspace proxy container builds SSH `-R` reverse tunnel commands like:
+**What happened**: Smithr's adopt API returned `tunnel_host: "megalodon"` (a hostname).
+Inside Docker containers, `megalodon` resolves to `127.0.0.1` (loopback) because
+Docker DNS falls back to host `/etc/hosts`. The initial workaround (replace with
+`10.21.0.1`) only works when server and tests run on the same host — it breaks
+cross-host because `10.21.0.1` is the Docker gateway on the LOCAL host.
 
-```
--R 3000:megalodon:17040
-```
+**Smithr fix**: Adopt API now returns the host's real LAN IP (e.g. `192.168.0.73`)
+instead of a hostname. This is universally reachable from any Docker container
+on any host.
 
-Inside Docker containers on smithr-network, `megalodon` resolves to `127.0.0.1`
-(the container's own loopback) because Docker's embedded DNS falls back to host
-DNS, where `/etc/hosts` maps the hostname to localhost. So the reverse tunnel
-connects to the proxy container's own port 17040 (nothing there), not to the
-host's port 17040 (where the adopt tunnel actually listens).
+**Artha action**: Revert the `10.21.0.1` / `DOCKER_GATEWAY` hack in `bin/e2e-ci.sh`.
+Just use `$SERVER_TUNNEL_HOST` directly — Smithr now returns a usable IP.
 
-**Proof**:
 ```bash
-docker run --rm --network smithr-network alpine sh -c "nslookup megalodon"
-# megalodon → 127.0.0.1  (WRONG — should be the host)
-
-docker run --rm --network smithr-network alpine sh -c "nslookup prognathodon"
-# prognathodon → 192.168.0.75  (correct — different from localhost)
-```
-
-**Fix**: In `bin/e2e-ci.sh`, replace `SERVER_TUNNEL_HOST` with the Docker gateway
-IP `10.21.0.1` when building `REVERSE_PORTS`. The gateway is how containers on
-smithr-network reach the host machine's ports.
-
-**File**: `bin/e2e-ci.sh`, around line 130 where `REVERSE_PORTS` is constructed.
-
-**Current code**:
-```bash
+# Use SERVER_TUNNEL_HOST directly — Smithr returns a LAN IP, not a hostname
 REVERSE_PORTS="5555:${PHONE_CONTAINER}:5555,3000:$SERVER_TUNNEL_HOST:$SERVER_HTTP_PORT,4443:$SERVER_TUNNEL_HOST:$SERVER_HTTPS_PORT"
 ```
-
-**Fixed code**:
-```bash
-# Docker gateway: how containers on smithr-network reach host ports.
-# Cannot use SERVER_TUNNEL_HOST (hostname) because Docker DNS resolves
-# "megalodon" to 127.0.0.1 inside containers (falls back to host /etc/hosts).
-DOCKER_GATEWAY="10.21.0.1"
-REVERSE_PORTS="5555:${PHONE_CONTAINER}:5555,3000:${DOCKER_GATEWAY}:$SERVER_HTTP_PORT,4443:${DOCKER_GATEWAY}:$SERVER_HTTPS_PORT"
-```
-
-**Why PHONE_CONTAINER is fine**: `${PHONE_CONTAINER}` is a Docker container name
-(e.g. `phone-documents-android-phone-1`) which Docker's embedded DNS resolves
-correctly on user-defined bridge networks. Only bare hostnames like `megalodon`
-have the loopback problem.
 
 ---
 

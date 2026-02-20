@@ -10,7 +10,18 @@
             [smithr.macos :as macos]
             [smithr.linux :as linux])
   (:import [java.time Instant Duration]
-           [java.util UUID]))
+           [java.util UUID]
+           [java.net DatagramSocket InetAddress]))
+
+(defn lan-ip
+  "Return this host's LAN IP address (not loopback).
+   Uses the UDP socket trick: connect a datagram socket to an external
+   address (never sends traffic) and read the local address chosen by
+   the kernel's routing table."
+  []
+  (with-open [sock (DatagramSocket.)]
+    (.connect sock (InetAddress/getByName "8.8.8.8") 53)
+    (.getHostAddress (.getLocalAddress sock))))
 
 ;; ---------------------------------------------------------------------------
 ;; SSH tunnel management
@@ -768,7 +779,7 @@
                  :host           host-label
                  :lessee         lessee
                  :ports          port-map
-                 :tunnel-host    (.getHostName (java.net.InetAddress/getLocalHost))
+                 :tunnel-host    (lan-ip)
                  :ttl-seconds    ttl-seconds
                  :adopted-at     now
                  :expires-at     expires-at}]
