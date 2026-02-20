@@ -16,6 +16,7 @@
 services:
   android-phone:
     image: ${SMITHR_REGISTRY:-localhost:5000}/smithr/proxy:latest
+    pull_policy: always
     environment:
       SMITHR_MODE: lease
       SMITHR_URL: ${SMITHR_URL:-http://10.21.0.1:7070}
