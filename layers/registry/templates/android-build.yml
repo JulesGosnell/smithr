@@ -25,6 +25,8 @@ services:
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
+    volumes:
+      - ${SMITHR_SSH_KEY:-/srv/shared/images/ssh/android-build-key}:/run/secrets/ssh-key:ro
     networks:
       - smithr-network
 

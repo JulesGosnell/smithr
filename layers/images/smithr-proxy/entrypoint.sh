@@ -28,6 +28,7 @@ SOCAT_PIDS=()
 EXIT_CODE=0
 PORTS_FILE="/tmp/smithr-proxy.ports"
 ID_FILE="/tmp/smithr-proxy.id"
+META_FILE="/tmp/smithr-proxy.meta"
 
 log() { echo "[smithr-proxy] $*" >&2; }
 
@@ -157,6 +158,17 @@ do_lease() {
   echo "$PROXY_ID" > "$ID_FILE"
   log "acquired lease $PROXY_ID"
 
+  # Write metadata for workspace-ssh helper
+  local ssh_user ssh_host resource_id
+  ssh_user=$(echo "$response" | jq -r '.connection.ssh_user // empty')
+  resource_id=$(echo "$response" | jq -r '.resource_id // empty')
+  {
+    echo "LEASE_ID=$PROXY_ID"
+    echo "RESOURCE_ID=$resource_id"
+    [[ -n "$ssh_user" ]] && echo "SSH_USER=$ssh_user"
+    [[ -n "$SMITHR_WORKSPACE" ]] && echo "WORKSPACE=$SMITHR_WORKSPACE"
+  } > "$META_FILE"
+
   # Extract tunnel port(s) and start socat
   local pairs=()
   if (( ${#PORTS[@]} == 1 )); then
@@ -173,6 +185,19 @@ do_lease() {
   fi
 
   start_socats "${pairs[@]}"
+
+  # For build leases: write SSH port to metadata so workspace-ssh can find it
+  if [[ "$SMITHR_LEASE_TYPE" == "build" ]]; then
+    local canonical_port="${pairs[0]%%:*}"
+    echo "SSH_PORT=$canonical_port" >> "$META_FILE"
+    # Default SSH_USER to workspace name if not returned by API
+    if ! grep -q '^SSH_USER=' "$META_FILE"; then
+      if [[ -n "$SMITHR_WORKSPACE" ]]; then
+        echo "SSH_USER=$SMITHR_WORKSPACE" >> "$META_FILE"
+      fi
+    fi
+    log "workspace metadata written to $META_FILE"
+  fi
 }
 
 # --- Adopt mode ---

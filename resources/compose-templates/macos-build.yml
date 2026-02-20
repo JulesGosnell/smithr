@@ -11,6 +11,8 @@ services:
       SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
       SMITHR_WORKSPACE: ${SMITHR_WORKSPACE:-}
+    volumes:
+      - ${SMITHR_SSH_KEY:-/srv/shared/images/ssh/macos-ssh-key}:/run/secrets/ssh-key:ro
     networks:
       - smithr-network
 

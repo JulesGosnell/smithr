@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# workspace-ssh — Run a command on the workspace VM via SSH.
+#
+# Reads connection metadata written by entrypoint.sh after lease acquisition.
+# The SSH key must be mounted at /run/secrets/ssh-key (read-only).
+#
+# Usage:
+#   workspace-ssh <command> [args...]
+#   workspace-ssh          # interactive shell
+#
+# Examples:
+#   docker exec macos-build workspace-ssh "cd ~/artha && xcodebuild ..."
+#   docker exec -it macos-build workspace-ssh   # interactive
+
+set -euo pipefail
+
+META="/tmp/smithr-proxy.meta"
+KEY="/run/secrets/ssh-key"
+
+if [[ ! -f "$META" ]]; then
+  echo "ERROR: no lease metadata — proxy may not have acquired a lease yet" >&2
+  exit 1
+fi
+
+if [[ ! -f "$KEY" ]]; then
+  echo "ERROR: SSH key not mounted at $KEY" >&2
+  echo "Mount it as a volume: -v /path/to/key:/run/secrets/ssh-key:ro" >&2
+  exit 1
+fi
+
+SSH_USER=$(grep '^SSH_USER=' "$META" | cut -d= -f2-)
+SSH_PORT=$(grep '^SSH_PORT=' "$META" | cut -d= -f2-)
+
+if [[ -z "$SSH_USER" || -z "$SSH_PORT" ]]; then
+  echo "ERROR: lease metadata missing SSH_USER or SSH_PORT" >&2
+  exit 1
+fi
+
+exec ssh \
+  -i "$KEY" \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  -o IdentitiesOnly=yes \
+  -o ConnectTimeout=10 \
+  -o LogLevel=ERROR \
+  -p "$SSH_PORT" \
+  "${SSH_USER}@localhost" \
+  "$@"
