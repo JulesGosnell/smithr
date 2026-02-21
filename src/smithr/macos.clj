@@ -102,6 +102,13 @@
           " && sudo chmod 700 \"$HOME_DIR/.ssh\""
           " && sudo chmod 600 \"$HOME_DIR/.ssh/authorized_keys\"; "
         "fi; "
+        ;; Fix missing CoreSimulator RuntimeMap
+        "SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
+        "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ] && [ ! -f \"$HOME_DIR/Library/Developer/CoreSimulator/RuntimeMap.plist\" ]; then "
+          "sudo mkdir -p \"$HOME_DIR/Library/Developer/CoreSimulator\""
+          " && sudo cp \"$SMITHR_CORESIM/RuntimeMap.plist\" \"$HOME_DIR/Library/Developer/CoreSimulator/\""
+          " && sudo chown -R " username ":staff \"$HOME_DIR/Library\"; "
+        "fi; "
         "echo \"$HOME_DIR\"; "
       "else "
         ;; Create new user
@@ -121,6 +128,13 @@
         " && sudo bash -c \"printf 'eval \\$(/usr/libexec/path_helper -s)\\nexport LANG=en_US.UTF-8\\nexport LC_ALL=en_US.UTF-8\\n' > " home "/.bashrc\""
         " && sudo bash -c \"echo 'source ~/.bashrc' > " home "/.bash_profile\""
         " && sudo chown " username ":staff " home "/.bashrc " home "/.bash_profile"
+        ;; Copy CoreSimulator RuntimeMap (SDK-to-runtime overrides)
+        " && { SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
+        "if [ -f \\\"$SMITHR_CORESIM/RuntimeMap.plist\\\" ]; then "
+          "sudo mkdir -p " home "/Library/Developer/CoreSimulator"
+          " && sudo cp \\\"$SMITHR_CORESIM/RuntimeMap.plist\\\" " home "/Library/Developer/CoreSimulator/"
+          " && sudo chown -R " username ":staff " home "/Library; "
+        "fi; }"
         " && echo " home "; "
       "fi")))
 
