@@ -153,22 +153,32 @@
         ;; For Docker IPs: SSH directly to the container, -L forwards to localhost.
         ;; For remote hosts: SSH to the container via ProxyJump through the remote host.
         ;; Build containers use user "smithr" and the tunnel SSH key for auth.
-        [final-hop final-fwd-host extra-ssh-args]
+        ;;
+        ;; IMPORTANT: For remote hosts, the resource's ssh-port is the HOST-mapped port
+        ;; (e.g. 2222), used in -p to reach the container. But -L must forward to the
+        ;; container's INTERNAL port (e.g. 22), since we're inside the container's sshd.
+        [final-hop final-fwd-host final-fwd-port extra-ssh-args]
         (if (seq reverse-ports)
           (let [key-path (linux/tunnel-ssh-key)
                 ssh-user "smithr"
                 key-args (if key-path ["-i" key-path] [])
                 port-args (when ssh-port ["-p" (str ssh-port)])]
             (if (docker-network-ip? target-host)
-              ;; Local Docker container: SSH directly to it
-              [(str ssh-user "@" target-host) "localhost"
+              ;; Local Docker container: SSH directly to it, fwd-port is the real port
+              [(str ssh-user "@" target-host) "localhost" fwd-port
                (vec (concat key-args port-args))]
-              ;; Remote host: SSH to the container via ProxyJump through the remote host
-              [(str ssh-user "@" target-host) "localhost"
-               (vec (concat key-args port-args ["-J" (or hop "localhost")]))]))
+              ;; Remote host: SSH via ProxyJump, -L uses container's internal port
+              ;; (not the host-mapped port which is only meaningful on the host)
+              (let [internal-port (case platform
+                                   :android-build 22
+                                   :macos 10022
+                                   :ios 10022
+                                   fwd-port)]
+                [(str ssh-user "@" target-host) "localhost" internal-port
+                 (vec (concat key-args port-args ["-J" (or hop "localhost")]))])))
           ;; No reverse ports: use standard routing
-          [hop fwd-host []])
-        target-str (str final-fwd-host ":" fwd-port " via " final-hop)
+          [hop fwd-host fwd-port []])
+        target-str (str final-fwd-host ":" final-fwd-port " via " final-hop)
         ;; Build -R flags for reverse ports (build leases only)
         ;; Each entry has :bind (port on remote), :host (target host), :target (target port)
         ;; e.g. -R 5593:10.21.0.1:17003 routes container:5593 → 10.21.0.1:17003
@@ -192,7 +202,7 @@
                          "-o" "ServerAliveInterval=30"
                          "-o" "ServerAliveCountMax=3"]
                         extra-ssh-args
-                        ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" fwd-port)]
+                        ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" final-fwd-port)]
                         reverse-flags
                         [final-hop]))]
     (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
