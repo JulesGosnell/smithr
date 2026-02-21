@@ -170,17 +170,25 @@
           [hop fwd-host []])
         target-str (str final-fwd-host ":" fwd-port " via " final-hop)
         ;; Build -R flags for reverse ports (build leases only)
+        ;; Each entry has :bind (port on remote), :host (target host), :target (target port)
+        ;; e.g. -R 5593:10.21.0.1:17003 routes container:5593 → 10.21.0.1:17003
         reverse-flags (when (seq reverse-ports)
-                        (mapcat (fn [{:keys [bind target]}]
-                                  (do (log/info "Reverse tunnel: remote:" bind "→ localhost:" target
-                                                "for lease" lease-id)
-                                      ["-R" (str bind ":localhost:" target)]))
+                        (mapcat (fn [{:keys [bind host target]}]
+                                  (let [rhost (or host "localhost")]
+                                    (log/info "Reverse tunnel: remote:" bind "→" (str rhost ":" target)
+                                              "for lease" lease-id)
+                                    ["-R" (str bind ":" rhost ":" target)]))
                                 reverse-ports))
+        ;; ExitOnForwardFailure: only when no reverse-ports. With reverse-ports,
+        ;; shared server ports (3000, 4443) may already be bound by a sibling
+        ;; lease's SSH session on the same container — that's fine, we just need
+        ;; the -L forward to work. The duplicate -R silently fails.
+        exit-on-fail (if (seq reverse-ports) "no" "yes")
         cmd (vec (concat ["ssh" "-N"
                          "-o" "StrictHostKeyChecking=no"
                          "-o" "UserKnownHostsFile=/dev/null"
                          "-o" "BatchMode=yes"
-                         "-o" "ExitOnForwardFailure=yes"
+                         "-o" (str "ExitOnForwardFailure=" exit-on-fail)
                          "-o" "ServerAliveInterval=30"
                          "-o" "ServerAliveCountMax=3"]
                         extra-ssh-args

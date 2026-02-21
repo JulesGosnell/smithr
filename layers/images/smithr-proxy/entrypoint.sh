@@ -128,8 +128,8 @@ start_socats() {
 
 # --- Parse reverse ports into JSON for lease API ---
 # Input: SMITHR_REVERSE_PORTS="5593:10.21.0.1:17009,3000:192.168.0.75:17006"
-# Output: JSON array [{"bind":5593,"target":17009},{"bind":3000,"target":17006}]
-# The host field (middle) is ignored — Smithr routes to localhost:target.
+# Output: JSON array [{"bind":5593,"host":"10.21.0.1","target":17009},...]
+# Smithr creates -R bind:host:target in its SSH session.
 build_reverse_ports_json() {
   [[ -z "$SMITHR_REVERSE_PORTS" ]] && return 0
 
@@ -138,17 +138,21 @@ build_reverse_ports_json() {
   IFS=',' read -ra RPORTS <<< "$SMITHR_REVERSE_PORTS"
   for rport in "${RPORTS[@]}"; do
     rport=$(echo "$rport" | tr -d ' ')
-    local bind_port target_port
+    local bind_port target_host target_port
+    # Format: bind:host:port
     bind_port="${rport%%:*}"
     target_port="${rport##*:}"
+    # Extract middle field (host) — everything between first and last colon
+    local rest="${rport#*:}"
+    target_host="${rest%:*}"
 
     if [[ "$first" == "true" ]]; then
       first=false
     else
       result="${result},"
     fi
-    result="${result}{\"bind\":${bind_port},\"target\":${target_port}}"
-    log "reverse port: remote:${bind_port} → smithr:${target_port}"
+    result="${result}{\"bind\":${bind_port},\"host\":\"${target_host}\",\"target\":${target_port}}"
+    log "reverse port: remote:${bind_port} → ${target_host}:${target_port}"
   done
   result="${result}]"
   echo "$result"
