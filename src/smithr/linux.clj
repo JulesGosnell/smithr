@@ -42,6 +42,12 @@
 
 (defn- ssh-key-path [] @cached-ssh-key-path)
 
+(defn tunnel-ssh-key
+  "Return the SSH key path for tunnel connections to Linux containers.
+   Used by lease.clj when SSH-ing directly to a build container."
+  []
+  (ssh-key-path))
+
 (defn ssh-exec-raw!
   "Execute a command on a Linux container via SSH.
    Returns {:exit int :out string :err string}."

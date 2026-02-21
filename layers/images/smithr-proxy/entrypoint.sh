@@ -19,7 +19,9 @@ SMITHR_WORKSPACE="${SMITHR_WORKSPACE:-}"
 SMITHR_PREFER_HOST="${SMITHR_PREFER_HOST:-}"
 
 # Reverse tunnel vars (build leases only)
-SMITHR_REVERSE_PORTS="${SMITHR_REVERSE_PORTS:-}"  # e.g. "5555,3000,443"
+# Format: "bind:host:tunnel_port,..." — Smithr creates -R tunnels in its SSH session.
+# The host field is ignored (Smithr routes to localhost:tunnel_port).
+SMITHR_REVERSE_PORTS="${SMITHR_REVERSE_PORTS:-}"
 
 # Adopt mode vars
 SMITHR_CONTAINER_NAME="${SMITHR_CONTAINER_NAME:-}"
@@ -28,11 +30,11 @@ SMITHR_CONTAINER_NAME="${SMITHR_CONTAINER_NAME:-}"
 PROXY_ID=""        # lease or adopt ID for cleanup
 PROXY_TYPE=""      # "lease" or "adopt" — for DELETE path
 SOCAT_PIDS=()
-REVERSE_SSH_PID="" # PID of reverse tunnel SSH session
 EXIT_CODE=0
 PORTS_FILE="/tmp/smithr-proxy.ports"
 ID_FILE="/tmp/smithr-proxy.id"
 META_FILE="/tmp/smithr-proxy.meta"
+DIRECT_FILE="/tmp/smithr-proxy.direct"
 
 log() { echo "[smithr-proxy] $*" >&2; }
 
@@ -41,10 +43,6 @@ die() { log "FATAL: $*"; EXIT_CODE=1; exit 1; }
 # --- Cleanup ---
 cleanup() {
   log "shutting down..."
-  if [[ -n "$REVERSE_SSH_PID" ]]; then
-    log "stopping reverse tunnel (pid $REVERSE_SSH_PID)"
-    kill "$REVERSE_SSH_PID" 2>/dev/null || true
-  fi
   for pid in "${SOCAT_PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
@@ -128,74 +126,32 @@ start_socats() {
   printf "%b" "$port_list" > "$PORTS_FILE"
 }
 
-# --- Reverse tunnels (build leases) ---
-# Opens an SSH connection to the workspace VM with -R forwards so the VM
-# can reach services on the CI runner host (e.g., phone ADB, server, HTTPS).
-# Chain: VM:port → SSH → proxy → 10.21.0.1:port → host:port
-start_reverse_tunnels() {
+# --- Parse reverse ports into JSON for lease API ---
+# Input: SMITHR_REVERSE_PORTS="5593:10.21.0.1:17009,3000:192.168.0.75:17006"
+# Output: JSON array [{"bind":5593,"target":17009},{"bind":3000,"target":17006}]
+# The host field (middle) is ignored — Smithr routes to localhost:target.
+build_reverse_ports_json() {
   [[ -z "$SMITHR_REVERSE_PORTS" ]] && return 0
 
-  local key="/run/secrets/ssh-key"
-  if [[ ! -f "$key" ]]; then
-    log "WARNING: SSH key not mounted, skipping reverse tunnels"
-    return 0
-  fi
-
-  # Read SSH metadata
-  local ssh_user ssh_port
-  ssh_user=$(grep '^SSH_USER=' "$META_FILE" | cut -d= -f2-) || true
-  ssh_port=$(grep '^SSH_PORT=' "$META_FILE" | cut -d= -f2-) || true
-
-  if [[ -z "$ssh_user" || -z "$ssh_port" ]]; then
-    log "WARNING: no SSH_USER/SSH_PORT in metadata, skipping reverse tunnels"
-    return 0
-  fi
-
-  # Build -R flags
-  # Supports two formats:
-  #   Simple:   "5555,3000"       → -R 5555:GATEWAY:5555 -R 3000:GATEWAY:3000
-  #   Extended: "5555:host:1234"  → -R 5555:host:1234  (pass through as-is)
-  local ssh_args=()
+  local result="["
+  local first=true
   IFS=',' read -ra RPORTS <<< "$SMITHR_REVERSE_PORTS"
   for rport in "${RPORTS[@]}"; do
     rport=$(echo "$rport" | tr -d ' ')
-    if [[ "$rport" == *:* ]]; then
-      # Extended format: local_port:target_host:target_port — use as-is
-      ssh_args+=(-R "$rport")
-      log "reverse tunnel: VM:${rport%%:*} → ${rport#*:}"
+    local bind_port target_port
+    bind_port="${rport%%:*}"
+    target_port="${rport##*:}"
+
+    if [[ "$first" == "true" ]]; then
+      first=false
     else
-      # Simple format: just a port number — route via gateway
-      ssh_args+=(-R "${rport}:${SMITHR_GATEWAY}:${rport}")
-      log "reverse tunnel: VM:${rport} → ${SMITHR_GATEWAY}:${rport}"
+      result="${result},"
     fi
+    result="${result}{\"bind\":${bind_port},\"target\":${target_port}}"
+    log "reverse port: remote:${bind_port} → smithr:${target_port}"
   done
-
-  # Wait for socat to be ready (SSH port must be forwarding)
-  local retries=0
-  while ! socat -T1 /dev/null "TCP:localhost:${ssh_port},connect-timeout=2" 2>/dev/null; do
-    retries=$((retries + 1))
-    if (( retries > 10 )); then
-      log "WARNING: SSH port not ready after 10 attempts, skipping reverse tunnels"
-      return 0
-    fi
-    sleep 1
-  done
-
-  # Open persistent SSH connection with reverse forwards
-  ssh -N \
-    -i "$key" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o IdentitiesOnly=yes \
-    -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes \
-    -o LogLevel=ERROR \
-    -p "$ssh_port" \
-    "${ssh_args[@]}" \
-    "${ssh_user}@localhost" &
-  REVERSE_SSH_PID=$!
-  log "reverse tunnels started (pid $REVERSE_SSH_PID)"
+  result="${result}]"
+  echo "$result"
 }
 
 # --- Lease mode ---
@@ -226,6 +182,13 @@ do_lease() {
     local ports_json
     ports_json=$(printf '%s\n' "${PORTS[@]}" | jq -R 'tonumber' | jq -s '.')
     body=$(echo "$body" | jq --argjson sp "$ports_json" '. + {server_ports: $sp}')
+  fi
+
+  # Add reverse_ports for build leases (Smithr creates -R tunnels in its SSH session)
+  if [[ -n "$SMITHR_REVERSE_PORTS" && "$SMITHR_LEASE_TYPE" == "build" ]]; then
+    local rp_json
+    rp_json=$(build_reverse_ports_json)
+    body=$(echo "$body" | jq --argjson rp "$rp_json" '. + {reverse_ports: $rp}')
   fi
 
   local response
@@ -262,6 +225,15 @@ do_lease() {
     done
   fi
 
+  # Write direct tunnel endpoints (bypass socat — for external consumers)
+  # Format: canonical_port:gateway:tunnel_port (e.g. 5555:10.21.0.1:17005)
+  for pair in "${pairs[@]}"; do
+    local canonical="${pair%%:*}"
+    local tunnel="${pair##*:}"
+    echo "${canonical}:${SMITHR_GATEWAY}:${tunnel}"
+  done > "$DIRECT_FILE"
+  log "direct tunnel endpoints written to $DIRECT_FILE"
+
   start_socats "${pairs[@]}"
 
   # For build leases: write SSH port to metadata so workspace-ssh can find it
@@ -276,8 +248,12 @@ do_lease() {
     fi
     log "workspace metadata written to $META_FILE"
 
-    # Start reverse tunnels if requested
-    start_reverse_tunnels
+    # Reverse tunnels are now managed by Smithr (via -R flags on the SSH tunnel).
+    # No separate SSH session needed — Smithr's tunnel process handles both
+    # the forward (-L for SSH access) and reverse (-R for phone/server) paths.
+    if [[ -n "$SMITHR_REVERSE_PORTS" ]]; then
+      log "reverse tunnels managed by Smithr (passed via lease API)"
+    fi
   fi
 }
 
@@ -339,11 +315,6 @@ while true; do
   done
   if [[ ${#SOCAT_PIDS[@]} -eq 0 ]]; then
     die "all socat processes exited"
-  fi
-  # Monitor reverse tunnel SSH process
-  if [[ -n "$REVERSE_SSH_PID" ]] && ! kill -0 "$REVERSE_SSH_PID" 2>/dev/null; then
-    log "WARNING: reverse tunnel SSH (pid $REVERSE_SSH_PID) exited"
-    REVERSE_SSH_PID=""
   fi
   sleep 2
 done

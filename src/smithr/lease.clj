@@ -120,8 +120,12 @@
   "Start an SSH tunnel for a lease. Returns tunnel info map.
    Uses `ssh -N -L` for port forwarding. One SSH process per lease.
    Waits for the tunnel port to accept connections before returning.
-   Kill the process → client is disconnected."
-  [lease-id resource]
+   Kill the process → client is disconnected.
+
+   For build leases, optional reverse-ports adds -R flags to the same SSH
+   session so the remote container can reach Smithr tunnel ports directly.
+   Format: [{:bind port-on-remote, :target tunnel-port-on-localhost}]"
+  [lease-id resource & {:keys [reverse-ports]}]
   (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
         tunnel-port (allocate-tunnel-port!)
         platform    (:platform resource)
@@ -144,26 +148,59 @@
           ["localhost" 0])
         ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname
         {:keys [fwd-host fwd-port hop]} (resolve-tunnel-route target-host target-port)
-        target-str (str fwd-host ":" fwd-port " via " hop)
-        cmd ["ssh" "-N"
-             "-o" "StrictHostKeyChecking=no"
-             "-o" "BatchMode=yes"
-             "-o" "ExitOnForwardFailure=yes"
-             "-o" "ServerAliveInterval=30"
-             "-o" "ServerAliveCountMax=3"
-             "-L" (str "0.0.0.0:" tunnel-port ":" fwd-host ":" fwd-port)
-             hop]]
+        ;; When reverse-ports are present, SSH must connect directly to the build
+        ;; container so -R binds on the container's sshd (not on the hop host).
+        ;; For Docker IPs: SSH directly to the container, -L forwards to localhost.
+        ;; For remote hosts: SSH to the container via ProxyJump through the remote host.
+        ;; Build containers use user "smithr" and the tunnel SSH key for auth.
+        [final-hop final-fwd-host extra-ssh-args]
+        (if (seq reverse-ports)
+          (let [key-path (linux/tunnel-ssh-key)
+                ssh-user "smithr"
+                key-args (if key-path ["-i" key-path] [])
+                port-args (when ssh-port ["-p" (str ssh-port)])]
+            (if (docker-network-ip? target-host)
+              ;; Local Docker container: SSH directly to it
+              [(str ssh-user "@" target-host) "localhost"
+               (vec (concat key-args port-args))]
+              ;; Remote host: SSH to the container via ProxyJump through the remote host
+              [(str ssh-user "@" target-host) "localhost"
+               (vec (concat key-args port-args ["-J" (or hop "localhost")]))]))
+          ;; No reverse ports: use standard routing
+          [hop fwd-host []])
+        target-str (str final-fwd-host ":" fwd-port " via " final-hop)
+        ;; Build -R flags for reverse ports (build leases only)
+        reverse-flags (when (seq reverse-ports)
+                        (mapcat (fn [{:keys [bind target]}]
+                                  (do (log/info "Reverse tunnel: remote:" bind "→ localhost:" target
+                                                "for lease" lease-id)
+                                      ["-R" (str bind ":localhost:" target)]))
+                                reverse-ports))
+        cmd (vec (concat ["ssh" "-N"
+                         "-o" "StrictHostKeyChecking=no"
+                         "-o" "UserKnownHostsFile=/dev/null"
+                         "-o" "BatchMode=yes"
+                         "-o" "ExitOnForwardFailure=yes"
+                         "-o" "ServerAliveInterval=30"
+                         "-o" "ServerAliveCountMax=3"]
+                        extra-ssh-args
+                        ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" fwd-port)]
+                        reverse-flags
+                        [final-hop]))]
     (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
-              "→" target-str)
+              "→" target-str
+              (when (seq reverse-ports)
+                (str "with " (count reverse-ports) " reverse port(s)")))
     (try
       (let [proc (-> (ProcessBuilder. ^java.util.List cmd)
                      (.redirectErrorStream true)
                      (.start))
-            tunnel-info {:port        tunnel-port
-                         :process     proc
-                         :resource-id (:id resource)
-                         :target      target-str
-                         :started-at  (Instant/now)}]
+            tunnel-info (cond-> {:port        tunnel-port
+                                :process     proc
+                                :resource-id (:id resource)
+                                :target      target-str
+                                :started-at  (Instant/now)}
+                         (seq reverse-ports) (assoc :reverse-ports reverse-ports))]
         (swap! tunnels assoc lease-id tunnel-info)
         ;; Wait for tunnel port to actually accept connections (up to 10s)
         (if (await-port-ready tunnel-port 10000)
@@ -173,7 +210,7 @@
                 (log/error "SSH tunnel process alive but port" tunnel-port
                            "not accepting connections after 10s")
                 (log/error "SSH tunnel exited on port" tunnel-port
-                           "— check SSH access to" hop))
+                           "— check SSH access to" final-hop))
               ;; Clean up failed tunnel
               (stop-tunnel! lease-id)
               nil)))
@@ -390,7 +427,7 @@
 
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
-  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports prefer-host]
+  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports prefer-host reverse-ports]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -480,13 +517,17 @@
                           (ensure-user! resource workspace)
                           (create-user! resource lease-id))]
           (if user-info
-            (if-let [tunnel (start-tunnel! lease-id resource)]
+            (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
               (let [{:keys [ssh-host ssh-port]} (:connection resource)
-                    connection {:tunnel-port (:port tunnel)
-                                :ssh-user    (:macos-user user-info)
-                                :ssh-host    ssh-host
-                                :ssh-port    (or ssh-port 10022)
-                                :home-dir    (:home-dir user-info)}]
+                    connection (cond-> {:tunnel-port (:port tunnel)
+                                        :ssh-user    (:macos-user user-info)
+                                        :ssh-host    ssh-host
+                                        :ssh-port    (or ssh-port 10022)
+                                        :home-dir    (:home-dir user-info)}
+                                 (seq reverse-ports) (assoc :reverse-ports
+                                                            (into {} (map (fn [{:keys [bind target]}]
+                                                                           [(str bind) target])
+                                                                         reverse-ports))))]
               ;; Update lease and workspace state
               (swap! state/state
                      (fn [s]
