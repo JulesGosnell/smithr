@@ -12,6 +12,8 @@
 #   - com.apple.access_ssh group membership
 #   - Shell profile with PATH and locale
 #
+# UID is derived from the username hash — deterministic and race-free.
+#
 # Usage:
 #   create-build-user.sh <username> [uid]
 #
@@ -40,26 +42,68 @@ else
     HOME_DIR="/Users/${USERNAME}"
 fi
 
-# Find next UID if not specified
-if [[ -n "${2:-}" ]]; then
-    UID_NUM="$2"
-else
-    LAST_UID=$(dscl . -list /Users UniqueID | grep '^build-\|^[a-z].*-build' | awk '{print $2}' | sort -n | tail -1 2>/dev/null || echo "599")
-    UID_NUM=$((LAST_UID + 1))
-    # Ensure minimum UID of 600
-    [[ $UID_NUM -ge 600 ]] || UID_NUM=600
-fi
+# --- Helper: ensure SSH keys are set up ---
+ensure_ssh_keys() {
+    if [[ ! -f "${HOME_DIR}/.ssh/authorized_keys" ]]; then
+        echo "Fixing missing SSH keys for ${USERNAME}" >&2
+        sudo mkdir -p "${HOME_DIR}/.ssh"
+        sudo cp /Users/smithr/.ssh/authorized_keys "${HOME_DIR}/.ssh/"
+        sudo chown -R "${USERNAME}:staff" "${HOME_DIR}/.ssh"
+        sudo chmod 700 "${HOME_DIR}/.ssh"
+        sudo chmod 600 "${HOME_DIR}/.ssh/authorized_keys"
+    fi
+}
+
+# --- Helper: ensure home dir exists ---
+ensure_home_dir() {
+    if [[ ! -d "${HOME_DIR}" ]]; then
+        echo "Fixing missing home dir for ${USERNAME}" >&2
+        sudo mkdir -p "${HOME_DIR}"
+        sudo chown "${USERNAME}:staff" "${HOME_DIR}"
+    fi
+}
+
+# --- Helper: ensure NFSHomeDirectory is set in dscl ---
+ensure_nfs_home() {
+    local current_home
+    current_home=$(dscl . -read "/Users/${USERNAME}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)
+    if [[ -z "$current_home" ]]; then
+        echo "Fixing missing NFSHomeDirectory for ${USERNAME}" >&2
+        sudo dscl . -create "/Users/${USERNAME}" NFSHomeDirectory "${HOME_DIR}"
+    else
+        HOME_DIR="$current_home"
+    fi
+}
+
+# --- Helper: clean up a partially created user ---
+cleanup_partial_user() {
+    echo "Cleaning up partial user ${USERNAME}" >&2
+    sudo dscl . -delete "/Users/${USERNAME}" 2>/dev/null || true
+    sudo dscl . -delete /Groups/com.apple.access_ssh GroupMembership "${USERNAME}" 2>/dev/null || true
+}
 
 # Check if user already exists
 if dscl . -read "/Users/${USERNAME}" UniqueID >/dev/null 2>&1; then
     echo "User ${USERNAME} already exists" >&2
+    ensure_nfs_home
+    ensure_home_dir
+    ensure_ssh_keys
     echo "${HOME_DIR}"
     exit 0
 fi
 
+# Derive UID from username hash — deterministic, no race with concurrent calls
+if [[ -n "${2:-}" ]]; then
+    UID_NUM="$2"
+else
+    UID_NUM=$(echo -n "$USERNAME" | cksum | awk '{print 600 + ($1 % 65000)}')
+fi
+
 echo "Creating user ${USERNAME} (UID: ${UID_NUM})..." >&2
 
-# Create user account
+# Create user account — clean up on failure
+trap 'cleanup_partial_user' ERR
+
 sudo dscl . -create "/Users/${USERNAME}"
 sudo dscl . -create "/Users/${USERNAME}" UserShell /bin/bash
 sudo dscl . -create "/Users/${USERNAME}" RealName "Build ${USERNAME}"
@@ -91,5 +135,6 @@ if [[ -f "${SMITHR_CORESIM}/RuntimeMap.plist" ]]; then
     sudo chown -R "${USERNAME}:staff" "${HOME_DIR}/Library"
 fi
 
+trap - ERR
 echo "Created user ${USERNAME} at ${HOME_DIR}" >&2
 echo "${HOME_DIR}"

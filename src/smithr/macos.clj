@@ -161,21 +161,11 @@
   (create-macos-user! resource username (str "Workspace " username)))
 
 (defn ensure-user!
-  "Ensure a macOS user exists (for warm/workspace builds).
-   Creates the user if it doesn't exist, returns info either way.
-   Queries the actual home directory (may be on RAM disk)."
+  "Ensure a macOS user exists and is properly configured (for warm/workspace builds).
+   Always calls create-build-user.sh which handles both creation and repair
+   (SSH keys, home dir, NFSHomeDirectory — all idempotent under flock)."
   [resource username]
-  (if (user-exists? resource username)
-    (let [result (ssh-exec! resource
-                            (str "dscl . -read /Users/" username
-                                 " NFSHomeDirectory | awk '{print $2}'"))
-          home-dir (if (= 0 (:exit result))
-                     (str/trim (:out result))
-                     (str "/Users/" username))]
-      (log/info "Workspace user" username "already exists on" (:id resource)
-                "home:" home-dir)
-      {:macos-user username :home-dir home-dir})
-    (create-named-user! resource username)))
+  (create-macos-user! resource username (str "Workspace " username)))
 
 (defn delete-user!
   "Delete a macOS user account and home directory via delete-build-user.sh.
