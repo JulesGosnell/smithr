@@ -205,8 +205,11 @@
               ;; (not the host-mapped port which is only meaningful on the host)
               (let [internal-port (case platform
                                    :android-build 22
-                                   :macos 10022
-                                   :ios 10022
+                                   ;; macOS/iOS: we're SSHing INTO the VM via ProxyJump,
+                                   ;; so -L must target the VM's sshd (port 22), not the
+                                   ;; container's QEMU port mapping (10022)
+                                   :macos 22
+                                   :ios 22
                                    fwd-port)]
                 [(str ssh-user "@" target-host) "localhost" internal-port
                  (vec (concat key-args port-args ["-J" (or hop "localhost")]))])))
