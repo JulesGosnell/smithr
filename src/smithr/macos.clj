@@ -2,7 +2,7 @@
   "macOS user lifecycle management via SSH.
    Creates and deletes per-build user accounts on macOS VMs
    for isolated concurrent build access.
-   Scripts are bootstrapped onto VMs via scp from the local repo."
+   Same interface as smithr.linux but uses dscl/createhomedir."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
@@ -21,7 +21,8 @@
                        [configured
                         "layers/scripts/ios/ssh/macos-ssh-key"
                         "../layers/scripts/ios/ssh/macos-ssh-key"
-                        "/ssh-key/macos-ssh-key"])
+                        "/ssh-key/macos-ssh-key"
+                        "/srv/shared/images/ssh/macos-ssh-key"])
           found (first (filter #(.exists (java.io.File. %)) candidates))]
       (if found
         (let [abs (.getCanonicalPath (java.io.File. found))]
@@ -41,27 +42,8 @@
 
 (defn- ssh-key-path [] @cached-ssh-key-path)
 
-;; ---------------------------------------------------------------------------
-;; Bootstrap — sync build-user scripts to VM via scp
-;; ---------------------------------------------------------------------------
-
-(def ^:private remote-script-dir "/Users/smithr/bin")
-(def ^:private local-script-dir "layers/scripts/ios/build-user")
-
-(defonce ^:private bootstrapped-vms
-  (atom #{}))
-
-(defn- resolve-script-dir
-  "Find the local build-user scripts directory."
-  []
-  (let [candidates [local-script-dir
-                    (str "../" local-script-dir)]
-        found (first (filter #(.isDirectory (java.io.File. %)) candidates))]
-    (when found
-      (.getCanonicalPath (java.io.File. found)))))
-
 (defn ssh-exec-raw!
-  "Execute a command on a macOS VM via SSH (no bootstrap check).
+  "Execute a command on a macOS VM via SSH.
    Returns {:exit int :out string :err string}."
   [resource cmd]
   (let [{:keys [ssh-host ssh-port]} (:connection resource)
@@ -79,110 +61,136 @@
                 "err:" (str/trim (:err result))))
     result))
 
-(defn- bootstrap!
-  "Ensure build-user scripts are synced to the VM.
-   Copies scripts from the local repo to the VM via scp.
-   Idempotent — tracks bootstrapped VMs in memory."
-  [resource]
-  (let [rid (:id resource)]
-    (when-not (@bootstrapped-vms rid)
-      (let [script-dir (resolve-script-dir)]
-        (if-not script-dir
-          (do (log/error "Cannot find local script directory" local-script-dir)
-              false)
-          (let [{:keys [ssh-host ssh-port]} (:connection resource)
-                key-path (ssh-key-path)
-                _ (log/info "Bootstrapping scripts on" rid "from" script-dir)
-                ;; Create remote dir
-                mkdir-result (ssh-exec-raw! resource
-                               (str "mkdir -p " remote-script-dir))
-                ;; scp scripts
-                scp-result (when (= 0 (:exit mkdir-result))
-                             (sh "scp" "-r"
-                                 "-i" key-path
-                                 "-o" "StrictHostKeyChecking=no"
-                                 "-P" (str (or ssh-port 10022))
-                                 (str script-dir "/.")
-                                 (str "smithr@" ssh-host ":" remote-script-dir "/")))]
-            (if (and scp-result (= 0 (:exit scp-result)))
-              (do
-                (log/info "Bootstrapped scripts on" rid)
-                (swap! bootstrapped-vms conj rid)
-                true)
-              (do
-                (log/error "Failed to bootstrap scripts on" rid
-                           ":" (or (:err scp-result) (:err mkdir-result)))
-                false))))))))
+;; ---------------------------------------------------------------------------
+;; Inline user creation commands (matches linux.clj pattern)
+;; ---------------------------------------------------------------------------
 
-(defn- ssh-exec!
-  "Execute a command on a macOS VM via SSH.
-   Ensures the smithr repo is bootstrapped before execution.
-   Returns {:exit int :out string :err string}."
-  [resource cmd]
-  (bootstrap! resource)
-  (ssh-exec-raw! resource cmd))
+(defn- uid-for-username
+  "Derive a deterministic UID from a username via CRC32.
+   Range: 600-65599. Same username always gets the same UID."
+  [username]
+  (let [crc (java.util.zip.CRC32.)]
+    (.update crc (.getBytes username "UTF-8"))
+    (+ 600 (mod (.getValue crc) 65000))))
+
+(defn- create-user-cmd
+  "Build a shell command that creates a macOS user with dscl.
+   Handles: dscl record, home dir, SSH keys, access group, shell profile.
+   Idempotent — repairs existing users with missing SSH keys or home dirs."
+  [username]
+  (let [uid (uid-for-username username)
+        home (str "/Users/" username)]
+    (str
+      ;; Check if user already exists — if so, just ensure SSH keys and home dir
+      "if dscl . -read /Users/" username " UniqueID >/dev/null 2>&1; then "
+        "HOME_DIR=$(dscl . -read /Users/" username " NFSHomeDirectory 2>/dev/null | awk '{print $2}'); "
+        "HOME_DIR=${HOME_DIR:-" home "}; "
+        ;; Fix missing NFSHomeDirectory
+        "if [ -z \"$(dscl . -read /Users/" username " NFSHomeDirectory 2>/dev/null | awk '{print $2}')\" ]; then "
+          "sudo dscl . -create /Users/" username " NFSHomeDirectory " home "; "
+          "HOME_DIR=" home "; "
+        "fi; "
+        ;; Fix missing home dir
+        "if [ ! -d \"$HOME_DIR\" ]; then "
+          "sudo mkdir -p \"$HOME_DIR\" && sudo chown " username ":staff \"$HOME_DIR\"; "
+        "fi; "
+        ;; Fix missing SSH keys
+        "if [ ! -f \"$HOME_DIR/.ssh/authorized_keys\" ]; then "
+          "sudo mkdir -p \"$HOME_DIR/.ssh\""
+          " && sudo cp /Users/smithr/.ssh/authorized_keys \"$HOME_DIR/.ssh/\""
+          " && sudo chown -R " username ":staff \"$HOME_DIR/.ssh\""
+          " && sudo chmod 700 \"$HOME_DIR/.ssh\""
+          " && sudo chmod 600 \"$HOME_DIR/.ssh/authorized_keys\"; "
+        "fi; "
+        "echo \"$HOME_DIR\"; "
+      "else "
+        ;; Create new user
+        "sudo dscl . -create /Users/" username
+        " && sudo dscl . -create /Users/" username " UserShell /bin/bash"
+        " && sudo dscl . -create /Users/" username " RealName 'Build " username "'"
+        " && sudo dscl . -create /Users/" username " UniqueID " uid
+        " && sudo dscl . -create /Users/" username " PrimaryGroupID 20"
+        " && sudo dscl . -create /Users/" username " NFSHomeDirectory " home
+        " && { sudo createhomedir -c -u " username " >/dev/null 2>&1 || sudo mkdir -p " home "; }"
+        " && sudo dscl . -append /Groups/com.apple.access_ssh GroupMembership " username
+        " && sudo mkdir -p " home "/.ssh"
+        " && sudo cp /Users/smithr/.ssh/authorized_keys " home "/.ssh/"
+        " && sudo chown -R " username ":staff " home "/.ssh"
+        " && sudo chmod 700 " home "/.ssh"
+        " && sudo chmod 600 " home "/.ssh/authorized_keys"
+        " && sudo bash -c \"printf 'eval \\$(/usr/libexec/path_helper -s)\\nexport LANG=en_US.UTF-8\\nexport LC_ALL=en_US.UTF-8\\n' > " home "/.bashrc\""
+        " && sudo bash -c \"echo 'source ~/.bashrc' > " home "/.bash_profile\""
+        " && sudo chown " username ":staff " home "/.bashrc " home "/.bash_profile"
+        " && echo " home "; "
+      "fi")))
 
 (defn user-exists?
   "Check if a macOS user exists on the VM."
   [resource username]
-  (let [result (ssh-exec! resource (str "dscl . -read /Users/" username " UniqueID 2>/dev/null"))]
+  (let [result (ssh-exec-raw! resource (str "dscl . -read /Users/" username " UniqueID 2>/dev/null"))]
     (= 0 (:exit result))))
-
-(defn- create-macos-user!
-  "Create a macOS user account via the create-build-user.sh script.
-   The script handles dscl, SSH keys, access group, profile, and
-   automatically uses the RAM disk at /Volumes/BuildHomes when available.
-   Returns {:macos-user string :home-dir string} on success, nil on failure."
-  [resource username real-name]
-  (log/info "Creating macOS user" username "on" (:id resource))
-  (let [result (ssh-exec! resource
-                          (str remote-script-dir "/create-build-user.sh " username))]
-    (if (= 0 (:exit result))
-      (let [home-dir (str/trim (:out result))]
-        (log/info "Created macOS user" username "on" (:id resource)
-                  "home:" home-dir)
-        {:macos-user username :home-dir home-dir})
-      (do
-        (log/error "Failed to create macOS user" username
-                   "on" (:id resource) ":" (:err result))
-        nil))))
 
 (defn create-user!
   "Create a macOS user account for a build lease.
    Returns {:macos-user string :home-dir string} on success, nil on failure."
   [resource lease-id]
   (let [username (build-username lease-id)]
-    (create-macos-user! resource username (str "Build " (subs lease-id 0 (min 8 (count lease-id)))))))
+    (log/info "Creating macOS user" username "on" (:id resource))
+    (let [result (ssh-exec-raw! resource (create-user-cmd username))]
+      (if (= 0 (:exit result))
+        (let [home-dir (str/trim (:out result))]
+          (log/info "Created macOS user" username "on" (:id resource) "home:" home-dir)
+          {:macos-user username :home-dir home-dir})
+        (do
+          (log/error "Failed to create macOS user" username
+                     "on" (:id resource) ":" (:err result))
+          nil)))))
 
 (defn create-named-user!
   "Create a macOS user with a specific username (for workspaces).
    Returns {:macos-user string :home-dir string} on success, nil on failure."
   [resource username]
-  (create-macos-user! resource username (str "Workspace " username)))
+  (log/info "Creating macOS user" username "on" (:id resource))
+  (let [result (ssh-exec-raw! resource (create-user-cmd username))]
+    (if (= 0 (:exit result))
+      (let [home-dir (str/trim (:out result))]
+        (log/info "Created macOS user" username "on" (:id resource) "home:" home-dir)
+        {:macos-user username :home-dir home-dir})
+      (do
+        (log/error "Failed to create macOS user" username
+                   "on" (:id resource) ":" (:err result))
+        nil))))
 
 (defn ensure-user!
-  "Ensure a macOS user exists and is properly configured (for warm/workspace builds).
-   Always calls create-build-user.sh which handles both creation and repair
-   (SSH keys, home dir, NFSHomeDirectory — all idempotent under flock)."
+  "Ensure a macOS user exists and is properly set up (for workspace builds).
+   Creates the user if it doesn't exist, repairs if partially created.
+   Same contract as linux.clj ensure-user!."
   [resource username]
-  (create-macos-user! resource username (str "Workspace " username)))
+  (create-named-user! resource username))
 
 (defn delete-user!
-  "Delete a macOS user account and home directory via delete-build-user.sh.
-   The script handles process cleanup and both RAM disk and /Users paths."
+  "Delete a macOS user account and home directory.
+   Handles process cleanup and both RAM disk and /Users paths."
   [resource macos-user]
   (log/info "Deleting macOS user" macos-user "on" (:id resource))
-  (let [result (ssh-exec! resource
-                          (str remote-script-dir "/delete-build-user.sh " macos-user))]
+  (let [home (str "/Users/" macos-user)
+        ramdisk-home (str "/Volumes/BuildHomes/" macos-user)
+        result (ssh-exec-raw! resource
+                 (str "sudo pkill -u " macos-user " 2>/dev/null; sleep 1; "
+                      "sudo dscl . -delete /Users/" macos-user " 2>/dev/null; "
+                      "sudo dscl . -delete /Groups/com.apple.access_ssh GroupMembership " macos-user " 2>/dev/null; "
+                      "sudo rm -rf " home " " ramdisk-home " 2>/dev/null; "
+                      "echo done"))]
     (when (not= 0 (:exit result))
       (log/warn "Failed to fully clean up user" macos-user
                 "on" (:id resource) ":" (:err result)))
     (= 0 (:exit result))))
 
 (defn list-build-users
-  "List existing build user accounts on a macOS VM via list-build-users.sh."
+  "List existing build user accounts on a macOS VM."
   [resource]
-  (let [result (ssh-exec! resource (str remote-script-dir "/list-build-users.sh"))]
+  (let [result (ssh-exec-raw! resource
+                 "dscl . -list /Users | grep -E '^build-|^artha-'")]
     (if (and (= 0 (:exit result))
              (not (str/blank? (:out result))))
       (str/split-lines (str/trim (:out result)))
