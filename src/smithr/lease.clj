@@ -487,13 +487,18 @@
   (when (and workspace (not (valid-workspace-name? workspace)))
     (log/warn "Invalid workspace name:" workspace)
     (throw (ex-info "Invalid workspace name" {:workspace workspace})))
-  ;; Check if workspace is already leased
+  ;; Check if workspace is already leased — auto-evict stale leases
+  ;; When the same workspace is re-requested, the old proxy is almost certainly
+  ;; dead (SIGKILL'd, OOM'd, etc.) and couldn't clean up its lease.
+  ;; Safe to evict because workspace names are unique per build type and CI
+  ;; uses cancel-in-progress:false, so overlapping requests = dead proxy.
   (when workspace
     (when-let [ws (state/workspace workspace)]
       (when (= (:status ws) :leased)
-        (log/warn "Workspace" workspace "is already leased by" (:lease-id ws))
-        (throw (ex-info "Workspace is already leased"
-                        {:workspace workspace :lease-id (:lease-id ws)})))))
+        (let [old-lease-id (:lease-id ws)]
+          (log/warn "Workspace" workspace "already leased by" old-lease-id
+                    "- auto-evicting (likely dead proxy)")
+          (unlease! old-lease-id)))))
   (let [lease-id    (str (UUID/randomUUID))
         now         (Instant/now)
         expires-at  (.plus now (Duration/ofSeconds ttl-seconds))
@@ -916,8 +921,31 @@
 ;; Garbage collection
 ;; ---------------------------------------------------------------------------
 
+(defn- gc-dead-tunnels!
+  "Reap leases whose SSH tunnel process has exited.
+   A dead tunnel means the SSH connection to the resource dropped — the lease
+   is unusable regardless of TTL. This catches cases where the tunnel fails
+   after setup (resource restart, network issue, etc.).
+   Only checks leases with tunnels managed by THIS Smithr instance."
+  []
+  (let [dead-ids (->> @tunnels
+                      (filter (fn [[_ tunnel]]
+                                (when-let [^Process proc (:process tunnel)]
+                                  (not (.isAlive proc)))))
+                      (map first))]
+    (doseq [lease-id dead-ids]
+      (when (state/lease lease-id) ;; still active
+        (log/info "GC: tunnel process dead for lease" lease-id "- unleasing")
+        (state/record-event! "gc"
+          {:lease-id  lease-id
+           :resource  (:resource-id (state/lease lease-id))
+           :reason    "tunnel-dead"})
+        (unlease! lease-id)))
+    (count dead-ids)))
+
 (defn gc-expired-leases!
-  "Reap expired leases and adopts. Only GCs resources on own-host if specified."
+  "Reap expired leases and adopts. Only GCs resources on own-host if specified.
+   Also reaps leases with dead tunnel processes."
   ([]
    (gc-expired-leases! nil))
   ([own-host]
@@ -950,7 +978,9 @@
             :container-name (:container-name adopt)
             :adopt-id       (:id adopt)})
          (unadopt! (:id adopt)))
-       (+ (count expired) (count expired-adopts))))))
+       ;; Also reap leases with dead tunnel processes
+       (let [dead-count (gc-dead-tunnels!)]
+         (+ (count expired) (count expired-adopts) dead-count))))))
 
 (defn start-gc-loop!
   "Start the GC background thread. Returns a future for cancellation."
