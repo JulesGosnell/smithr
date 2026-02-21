@@ -37,21 +37,55 @@
 
 (defn cleanup-stale-tunnels!
   "Kill orphaned SSH tunnel processes from previous Smithr sessions.
-   Called on startup before accepting new leases."
+   Called on startup before accepting new leases.
+   Uses both pattern-based pkill and port-based detection for robustness."
   []
+  ;; First pass: pkill by command pattern
   (try
-    (let [{:keys [exit]} (shell/sh "pkill" "-f" "ssh -N.*-L 170")]
-      (if (zero? exit)
-        (log/info "Cleaned up stale SSH tunnel processes")
-        (log/debug "No stale SSH tunnels to clean up")))
+    (let [{:keys [exit]} (shell/sh "pkill" "-f" "ssh -N.*-L.*170")]
+      (when (zero? exit)
+        (log/info "Killed stale SSH tunnels by command pattern")
+        (Thread/sleep 500))) ;; wait for processes to actually exit
+    (catch Exception _ nil))
+  ;; Second pass: find any process bound to 170xx ports via ss
+  (try
+    (let [{:keys [out]} (shell/sh "ss" "-tlnp" "sport" ">=" "17000" "and" "sport" "<=" "17099")]
+      (when-let [pids (seq (re-seq #"pid=(\d+)" out))]
+        (doseq [[_ pid] pids]
+          (log/warn "Killing orphaned process on tunnel port range: pid" pid)
+          (shell/sh "kill" pid))
+        (Thread/sleep 500)))
     (catch Exception e
-      (log/debug "No stale tunnels (pkill:" (.getMessage e) ")"))))
+      (log/debug "Port-based cleanup skipped:" (.getMessage e))))
+  (log/info "Stale tunnel cleanup complete"))
+
+(defn- port-in-use?
+  "Check if a TCP port is already bound on this host."
+  [port]
+  (try
+    (let [sock (java.net.ServerSocket.)]
+      (try
+        (.setReuseAddress sock false)
+        (.bind sock (java.net.InetSocketAddress. (int port)))
+        false ;; bind succeeded → port is free
+        (finally (.close sock))))
+    (catch java.net.BindException _ true)
+    (catch Exception _ false)))
 
 (defn- allocate-tunnel-port!
-  "Allocate the next available tunnel port."
+  "Allocate the next available tunnel port, skipping ports already in use.
+   Orphaned SSH tunnels from previous Smithr sessions can hold ports —
+   this ensures we never collide with them."
   []
-  (let [port (swap! next-tunnel-port inc)]
-    (dec port)))
+  (loop [attempts 0]
+    (when (> attempts 100)
+      (throw (ex-info "Cannot allocate tunnel port — too many ports in use" {})))
+    (let [port (swap! next-tunnel-port inc)
+          port (dec port)]
+      (if (port-in-use? port)
+        (do (log/warn "Tunnel port" port "already in use, skipping")
+            (recur (inc attempts)))
+        port))))
 
 (defn- docker-network-ip?
   "Is this a Docker network IP (10.x.x.x) reachable only from the local host?"
