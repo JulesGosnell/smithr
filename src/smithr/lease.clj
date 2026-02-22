@@ -196,23 +196,23 @@
           (let [key-path (linux/tunnel-ssh-key)
                 ssh-user "smithr"
                 key-args (if key-path ["-i" key-path] [])
-                port-args (when ssh-port ["-p" (str ssh-port)])]
+                port-args (when ssh-port ["-p" (str ssh-port)])
+                ;; When SSHing into a VM container (macOS/iOS), the SSH lands
+                ;; inside the VM (QEMU forwards container:10022 → VM:22).
+                ;; The -L forward must target the VM's sshd (port 22), not
+                ;; the container's QEMU port mapping (10022).
+                internal-port (case platform
+                                :android-build 22
+                                :macos 22
+                                :ios 22
+                                fwd-port)]
             (if (docker-network-ip? target-host)
-              ;; Local Docker container: SSH directly to it, fwd-port is the real port
-              [(str ssh-user "@" target-host) "localhost" fwd-port
+              ;; Local Docker container: SSH directly to it
+              [(str ssh-user "@" target-host) "localhost" internal-port
                (vec (concat key-args port-args))]
-              ;; Remote host: SSH via ProxyJump, -L uses container's internal port
-              ;; (not the host-mapped port which is only meaningful on the host)
-              (let [internal-port (case platform
-                                   :android-build 22
-                                   ;; macOS/iOS: we're SSHing INTO the VM via ProxyJump,
-                                   ;; so -L must target the VM's sshd (port 22), not the
-                                   ;; container's QEMU port mapping (10022)
-                                   :macos 22
-                                   :ios 22
-                                   fwd-port)]
-                [(str ssh-user "@" target-host) "localhost" internal-port
-                 (vec (concat key-args port-args ["-J" (or hop "localhost")]))])))
+              ;; Remote host: SSH via ProxyJump
+              [(str ssh-user "@" target-host) "localhost" internal-port
+               (vec (concat key-args port-args ["-J" (or hop "localhost")]))]))
           ;; No reverse ports: use standard routing
           [hop fwd-host fwd-port []])
         target-str (str final-fwd-host ":" final-fwd-port " via " final-hop)
