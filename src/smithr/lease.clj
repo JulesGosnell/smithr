@@ -573,8 +573,23 @@
       (if (= lease-type :build)
         ;; Build lease: create/ensure user, then start tunnel
         (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
-              user-info (if workspace
+              cached-ws (when workspace (state/workspace workspace))
+              user-info (cond
+                          ;; Workspace user already verified on this resource — skip SSH
+                          (and workspace cached-ws
+                               (:macos-user cached-ws)
+                               (:home-dir cached-ws)
+                               (= (:resource-id cached-ws) (:id resource)))
+                          (do
+                            (log/info "Workspace" workspace "user cached on"
+                                      (:id resource) "- skipping ensure-user")
+                            {:macos-user (:macos-user cached-ws)
+                             :home-dir   (:home-dir cached-ws)})
+                          ;; Named workspace but not cached — create/verify via SSH
+                          workspace
                           (ensure-user! resource workspace)
+                          ;; Ephemeral build — always create new user
+                          :else
                           (create-user! resource lease-id))]
           (if user-info
             (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
@@ -599,6 +614,7 @@
                                              {:name        workspace
                                               :resource-id (:id resource)
                                               :macos-user  (:macos-user user-info)
+                                              :home-dir    (:home-dir user-info)
                                               :status      :leased
                                               :lease-id    lease-id
                                               :created-at  (or (:created-at (get-in s [:workspaces workspace]))
