@@ -43,7 +43,7 @@ services:
       SSH_PORT: "10022"
       SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
       SSH_KEY: "/ssh-key/macos-ssh-key"
-      IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
+      IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone SE (3rd generation)}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -60,6 +60,7 @@ services:
       smithr.resource.platform: "ios"
       smithr.resource.pool: "ios"
       smithr.resource.substrate: "simulated"
+      smithr.resource.model: "${SMITHR_IOS_DEVICE:-iPhone SE (3rd generation)}"
       smithr.resource.parent: "${SMITHR_PREFIX:-smithr}-xcode-${SMITHR_XCODE_RUNE:-fe}"
       # iOS sidecar doesn't run SSH — route to the macOS VM
       smithr.resource.connect-host: "${SMITHR_MACOS_IP:-10.21.0.40}"

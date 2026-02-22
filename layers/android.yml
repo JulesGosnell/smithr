@@ -69,6 +69,7 @@ services:
       smithr.resource.platform: "android"
       smithr.resource.pool: "android"
       smithr.resource.substrate: "emulated"
+      smithr.resource.model: "${SMITHR_ANDROID_DEVICE:-Nexus 5}"
     healthcheck:
       test: ["CMD-SHELL", "adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1"]
       interval: 15s

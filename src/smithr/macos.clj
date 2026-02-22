@@ -102,9 +102,9 @@
           " && sudo chmod 700 \"$HOME_DIR/.ssh\""
           " && sudo chmod 600 \"$HOME_DIR/.ssh/authorized_keys\"; "
         "fi; "
-        ;; Fix missing CoreSimulator RuntimeMap
+        ;; Always sync CoreSimulator RuntimeMap (SDK-to-runtime overrides)
         "SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
-        "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ] && [ ! -f \"$HOME_DIR/Library/Developer/CoreSimulator/RuntimeMap.plist\" ]; then "
+        "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ]; then "
           "sudo mkdir -p \"$HOME_DIR/Library/Developer/CoreSimulator\""
           " && sudo cp \"$SMITHR_CORESIM/RuntimeMap.plist\" \"$HOME_DIR/Library/Developer/CoreSimulator/\""
           " && sudo chown -R " username ":staff \"$HOME_DIR/Library\"; "

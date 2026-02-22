@@ -268,6 +268,36 @@ layers/
     macos-ssh-key      # SSH key (also copied into repo)
 ```
 
+### Simulator Device Warming
+
+The first boot of each device+runtime combination builds a cache (~30s per
+device). To avoid this penalty in CI, warm all target devices in a PERSISTENT
+session and bake the caches into the base image.
+
+**Recommended minimum set** — one device per generation and form factor,
+covering the realistic range for care workers (iPhone 12 is the oldest
+that runs iOS 18):
+
+| Device | Generation | Form Factor |
+|--------|-----------|-------------|
+| iPhone SE (3rd generation) | SE (2022) | Budget / home button |
+| iPhone 12 mini | 12 (2020) | Mini |
+| iPhone 13 | 13 (2021) | Standard |
+| iPhone 14 Plus | 14 (2022) | Plus |
+| iPhone 15 Pro | 15 (2023) | Pro |
+| iPhone 16 Pro Max | 16 (2024) | Pro Max |
+| iPhone 16e | 16e (2026) | Budget / Dynamic Island |
+
+7 devices, ~3.5 minutes to warm. Add more from the same generation if you
+need to test specific screen sizes or hardware features.
+
+**To warm**: In Simulator, create any missing devices via **File > New
+Simulator**, then boot each one (**File > Open Simulator**), wait for it to
+fully settle, and shut it down. Delete any iPads you don't need.
+
+**To refresh after a runtime reinstall**: All device caches are lost when the
+runtime is reinstalled. Re-create and re-warm all devices in PERSISTENT mode.
+
 ### Apple Constraints
 - Only ONE instance of each iPhone model per macOS VM
 - For testing multiple devices of the same model, use separate VMs

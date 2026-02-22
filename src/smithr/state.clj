@@ -107,6 +107,19 @@
 
 (defn workspace [name] (get-in @state [:workspaces name]))
 
+(defn invalidate-workspaces-for-resource!
+  "Clear cached workspace entries that reference a given resource-id.
+   Called when a resource restarts (die+start cycle) since workspace
+   users on the VM no longer exist after a fresh boot."
+  [resource-id]
+  (swap! state
+         (fn [s]
+           (let [ws (:workspaces s)
+                 stale (into [] (filter #(= (:resource-id (val %)) resource-id)) ws)]
+             (if (seq stale)
+               (do (reduce (fn [s' [k _]] (update s' :workspaces dissoc k)) s stale))
+               s)))))
+
 (defn available-for-build
   "Get macOS VMs available for a shared build lease.
    Returns VMs that are :warm (no leases) or :shared with capacity remaining."

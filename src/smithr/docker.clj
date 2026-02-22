@@ -219,6 +219,8 @@
           (try
             (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
                   resource (container->resource inspected host-label network-name host-address)]
+              ;; Invalidate cached workspace users — VM rebooted, overlay is fresh
+              (state/invalidate-workspaces-for-resource! (:id resource))
               (state/upsert-resource! resource))
             (catch Exception e
               (log/warn "Failed to inspect container on start:" (.getMessage e))))

@@ -87,7 +87,7 @@ services:
       NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
       BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"
       # iOS Simulator configuration (used by healthcheck)
-      IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone 16}"
+      IOS_DEVICE: "${SMITHR_IOS_DEVICE:-iPhone SE (3rd generation)}"
       IOS_RUNTIME: "${SMITHR_IOS_RUNTIME:-iOS 18.3}"
       SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
     labels:
