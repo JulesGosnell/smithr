@@ -64,7 +64,7 @@
     {:handler         #(reset! state/metrics %)
      :error-handler   (partial handle-error "Metrics")
      :response-format :json
-     :keywords?       true}))
+     :keywords?       false}))
 
 (defn fetch-all! []
   (fetch-resources!)

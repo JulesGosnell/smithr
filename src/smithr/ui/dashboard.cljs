@@ -179,11 +179,11 @@
 (defn metrics-bar
   "Render a metrics bar for a resource. Shows CPU/MEM/DISK sparklines."
   [resource-id]
-  (let [m (get @state/metrics (keyword resource-id))]
+  (let [m (get @state/metrics resource-id)]
     (when m
-      (let [cpu-vals (:cpu m)
-            mem-vals (:mem m)
-            disk-vals (:disk m)]
+      (let [cpu-vals (get m "cpu")
+            mem-vals (get m "mem")
+            disk-vals (get m "disk")]
         (when (or (seq cpu-vals) (seq mem-vals) (seq disk-vals))
           [:div.metrics-bar
            ;; CPU
@@ -191,28 +191,28 @@
              [:div.metric
               [:span.metric-label "CPU"]
               [sparkline cpu-vals]
-              [:span.metric-value {:class (threshold-class (:cpu_current m))}
-               (format-pct (:cpu_current m))]
-              (when (:cpu_cores m)
-                [:span.metric-total (str " / " (:cpu_cores m) " cores")])])
+              [:span.metric-value {:class (threshold-class (get m "cpu_current"))}
+               (format-pct (get m "cpu_current"))]
+              (when (get m "cpu_cores")
+                [:span.metric-total (str " / " (get m "cpu_cores") " cores")])])
            ;; MEM
            (when (seq mem-vals)
              [:div.metric
               [:span.metric-label "MEM"]
               [sparkline mem-vals]
-              [:span.metric-value {:class (threshold-class (:mem_current m))}
-               (format-pct (:mem_current m))]
-              (when (:mem_total_gb m)
-                [:span.metric-total (str " / " (:mem_total_gb m) " GB")])])
+              [:span.metric-value {:class (threshold-class (get m "mem_current"))}
+               (format-pct (get m "mem_current"))]
+              (when (get m "mem_total_gb")
+                [:span.metric-total (str " / " (get m "mem_total_gb") " GB")])])
            ;; DISK
            (when (seq disk-vals)
              [:div.metric
               [:span.metric-label "DISK"]
               [sparkline disk-vals]
-              [:span.metric-value {:class (threshold-class (:disk_current m))}
-               (format-pct (:disk_current m))]
-              (when (:disk_total_gb m)
-                [:span.metric-total (str " / " (:disk_total_gb m) " GB")])])])))))
+              [:span.metric-value {:class (threshold-class (get m "disk_current"))}
+               (format-pct (get m "disk_current"))]
+              (when (get m "disk_total_gb")
+                [:span.metric-total (str " / " (get m "disk_total_gb") " GB")])])])))))
 
 ;; ---------------------------------------------------------------------------
 ;; Lease box (innermost nesting level)
