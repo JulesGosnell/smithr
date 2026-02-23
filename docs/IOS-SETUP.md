@@ -31,7 +31,7 @@ The macOS base image is a pre-installed QCOW2/raw disk image containing:
 - Maestro 2.0.10 (for E2E test automation)
 - SSH configured with key-based auth
 
-**Current image location**: `/srv/shared/images/smithr-sonoma.img` (125GB)
+**Current image location**: `/srv/shared/images/smithr-sonoma.img` (~120GB)
 
 This image is NOT in git. To set up a new machine, either:
 
@@ -48,9 +48,12 @@ See [Docker-OSX documentation](https://github.com/sickcodes/Docker-OSX) for crea
 2. Install macOS Sonoma via VNC
 3. Install Xcode from App Store
 4. Download iOS Simulator Runtime (Xcode > Settings > Platforms)
-5. Install Maestro: `curl -Ls "https://get.maestro.mobile.dev" | bash`
-6. Configure SSH key auth
-7. Extract the disk image
+5. Set RuntimeMap if SDK ≠ runtime version (see "SDK-to-Runtime Mapping" below)
+6. Install Maestro: `curl -Ls "https://get.maestro.mobile.dev" | bash`
+7. Configure SSH key auth
+8. Warm simulator devices (see "Simulator Device Warming" below)
+9. Shut down macOS gracefully (ACPI shutdown via QEMU monitor socket)
+10. **Compact the image** — mandatory final step (see "Image Compaction" below)
 
 ### 3. SSH Key
 
@@ -212,7 +215,7 @@ Two-stage health checking:
 | `SMITHR_MACOS_VNC_PORT` | `5999` | Host VNC port |
 | `SMITHR_MACOS_SSH_PORT` | `50922` | Host SSH port |
 | `SMITHR_MACOS_IP` | `10.21.0.40` | IP on smithr-network |
-| `SMITHR_IOS_DEVICE` | `iPhone 16` | Simulator device |
+| `SMITHR_IOS_DEVICE` | `iPhone SE (3rd generation)` | Simulator device |
 | `SMITHR_IOS_RUNTIME` | `iOS 18.3` | iOS runtime version |
 | `SMITHR_MACOS_SSH_USER` | `smithr` | SSH user in macOS |
 | `SMITHR_MACOS_PERSISTENT` | `0` | 1=write to image, 0=overlay |
@@ -297,6 +300,96 @@ fully settle, and shut it down. Delete any iPads you don't need.
 
 **To refresh after a runtime reinstall**: All device caches are lost when the
 runtime is reinstalled. Re-create and re-warm all devices in PERSISTENT mode.
+
+### SDK-to-Runtime Mapping (RuntimeMap)
+
+When the Xcode SDK version doesn't match the installed Simulator runtime, Xcode
+can't resolve build destinations. For example, Xcode 16.2 (SDK 18.2) + iOS 18.3.1
+runtime requires a mapping.
+
+**RuntimeMap.plist is per-user**. Each macOS build user needs their own copy or
+`xcodebuild` fails with "iOS 18.2 is not installed".
+
+The mapping is set via:
+```bash
+xcrun simctl runtime match set iphoneos18.2 <runtime-build-number>
+```
+
+This writes to `~/Library/Developer/CoreSimulator/RuntimeMap.plist`. Smithr's
+`macos.clj` automatically syncs this file from the `smithr` user to every build
+user on each lease (see `create-user-cmd`).
+
+**To find the runtime build number**:
+```bash
+xcrun simctl list runtimes  # Shows e.g. "iOS 18.3 (18.3.1 - 22D8075)"
+# Use the build identifier: 22D8075
+```
+
+### Image Compaction
+
+The QCOW2 base image fragments over time, especially after persistent-mode
+operations (runtime installs, phone warming, user creation). Fragmentation
+degrades build I/O performance significantly.
+
+**Check fragmentation**:
+```bash
+qemu-img check /srv/shared/images/smithr-sonoma.img
+# Look for "fragmented" percentage — above 30% warrants compaction
+```
+
+**Compact the image** (can run while VMs are using it in volatile mode since
+the base image is read-only):
+```bash
+# Run on the host where the image disk is local (avoid NFS overhead)
+qemu-img convert -O qcow2 -c -p \
+  /srv/shared/images/smithr-sonoma.img \
+  /home/jules/smithr-sonoma-compact.img
+
+# Verify the compacted image
+qemu-img check /home/jules/smithr-sonoma-compact.img
+qemu-img info /home/jules/smithr-sonoma-compact.img
+
+# Stop VMs, swap images, restart
+docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml down
+cp /home/jules/smithr-sonoma-compact.img /srv/shared/images/smithr-sonoma.img
+docker compose -f layers/network.yml -f layers/xcode.yml -f layers/ios.yml up -d
+rm /home/jules/smithr-sonoma-compact.img
+```
+
+**When to compact**: After any persistent-mode session (phone warming, runtime
+install, Xcode update). The compaction itself takes 10-30 minutes depending on
+image size.
+
+### Persistent Mode Workflow
+
+Use persistent mode only for base image maintenance. The full workflow:
+
+1. **Stop the normal (volatile) container**: `docker compose ... down`
+2. **Start in persistent mode**: `SMITHR_MACOS_PERSISTENT=1 docker compose ... up -d`
+3. **Make changes** (install runtime, warm phones, update Xcode, etc.)
+4. **Set RuntimeMap** (if runtime changed):
+   ```bash
+   ssh -i layers/scripts/ios/ssh/macos-ssh-key -p 50922 smithr@localhost \
+     "xcrun simctl runtime match set iphoneos18.2 <build-number>"
+   ```
+5. **Shut down VM gracefully** (ACPI shutdown, not docker stop):
+   ```bash
+   docker exec smithr-xcode-fe bash -c \
+     'echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock'
+   ```
+   Wait for the container to exit on its own.
+6. **Compact the image** — this is **mandatory** after persistent mode, not
+   optional. Persistent writes fragment the QCOW2 image. Without compaction,
+   volatile-mode builds suffer degraded I/O (up to 60%+ fragmentation
+   measured in practice). See "Image Compaction" above.
+7. **Restart in normal (volatile) mode**: `docker compose ... up -d`
+
+**CRITICAL**: Only `PERSISTENT=1` enables persistent mode. Any other value
+(including the default `0`) uses a volatile overlay. The launch script checks
+`== "1"` exactly.
+
+**CRITICAL**: Always compact after persistent mode. Skipping this step is the
+single biggest cause of slow builds.
 
 ### Apple Constraints
 - Only ONE instance of each iPhone model per macOS VM

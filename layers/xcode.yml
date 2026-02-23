@@ -81,8 +81,10 @@ services:
       DISPLAY: ""
       # VNC display :99 = port 5999
       EXTRA: "-display none -vnc 0.0.0.0:99,password=off"
-      # Volatile by default (QCOW2 overlay protects base image)
-      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-fe}"
+      # Volatile by default: QCOW2 overlay protects base image.
+      # Only PERSISTENT=1 writes directly to base image (for updates/warming).
+      # Any other value (including empty) = volatile overlay mode.
+      PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-0}"
       # Skip OpenCore boot picker (saves ~30s)
       NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
       BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"

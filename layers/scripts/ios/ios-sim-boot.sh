@@ -34,12 +34,26 @@ log "Checking SDK-to-runtime mapping..."
 SDK_VERSION=$(ssh_cmd "xcodebuild -version -sdk iphoneos SDKVersion 2>/dev/null" 2>/dev/null || echo "")
 if [ -n "$SDK_VERSION" ]; then
     SDK_NAME="iphoneos${SDK_VERSION}"
+    SDK_BUILD=$(ssh_cmd "xcrun --sdk iphoneos --show-sdk-build-version 2>/dev/null" 2>/dev/null || echo "")
     # Parse build number from: "iOS 18.3 (18.3 - 22D8075) - com.apple..."
     # Build numbers are like 22D8075: digits, uppercase letter, digits
     RUNTIME_BUILD=$(ssh_cmd "xcrun simctl list runtimes 2>/dev/null | grep 'iOS' | head -1 | grep -oE '[0-9]+[A-Z][0-9]+'" 2>/dev/null || echo "")
     if [ -n "$RUNTIME_BUILD" ]; then
         log "Mapping SDK $SDK_NAME → runtime build $RUNTIME_BUILD"
         ssh_cmd "xcrun simctl runtime match set $SDK_NAME $RUNTIME_BUILD" 2>/dev/null || true
+
+        # actool (CompileAssetCatalog) also needs the iphonesimulator mapping,
+        # but xcrun simctl runtime match set doesn't support simulator SDKs.
+        # Add it directly to RuntimeMap.plist via PlistBuddy.
+        if [ -n "$SDK_BUILD" ]; then
+            SIM_SDK="iphonesimulator${SDK_VERSION}"
+            log "Mapping simulator SDK $SIM_SDK → runtime build $RUNTIME_BUILD"
+            ssh_cmd "
+                PLIST=~/Library/Developer/CoreSimulator/RuntimeMap.plist
+                /usr/libexec/PlistBuddy -c 'Add :userOverrides:${SIM_SDK} dict' \"\$PLIST\" 2>/dev/null || true
+                /usr/libexec/PlistBuddy -c 'Add :userOverrides:${SIM_SDK}:${SDK_BUILD} string ${RUNTIME_BUILD}' \"\$PLIST\" 2>/dev/null || true
+            " 2>/dev/null || true
+        fi
     else
         log "WARNING: Could not detect iOS runtime build number"
     fi

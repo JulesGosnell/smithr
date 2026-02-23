@@ -35,6 +35,9 @@ PORTS_FILE="/tmp/smithr-proxy.ports"
 ID_FILE="/tmp/smithr-proxy.id"
 META_FILE="/tmp/smithr-proxy.meta"
 DIRECT_FILE="/tmp/smithr-proxy.direct"
+BACKENDS_FILE="/tmp/smithr-proxy.backends"
+BACKEND_FAIL_COUNT=0
+BACKEND_FAIL_MAX=3  # Exit after 3 consecutive backend failures (~15s)
 
 log() { echo "[smithr-proxy] $*" >&2; }
 
@@ -114,6 +117,7 @@ api_call() {
 # Args: pairs of "canonical_port:tunnel_port"
 start_socats() {
   local port_list=""
+  > "$BACKENDS_FILE"  # truncate backends file
   for pair in "$@"; do
     local canonical="${pair%%:*}"
     local tunnel="${pair##*:}"
@@ -121,6 +125,7 @@ start_socats() {
     socat TCP-LISTEN:"$canonical",fork,reuseaddr TCP:"$SMITHR_GATEWAY":"$tunnel" &
     SOCAT_PIDS+=($!)
     port_list="${port_list}${canonical}\n"
+    echo "${SMITHR_GATEWAY}:${tunnel}" >> "$BACKENDS_FILE"
   done
   # Write ports file for healthcheck
   printf "%b" "$port_list" > "$PORTS_FILE"
@@ -308,6 +313,7 @@ esac
 log "proxy ready, waiting for socat processes"
 
 # Wait for any socat to exit — if one dies, log it but keep running
+# Also monitor backend tunnel health — exit if tunnel dies (prevents stale proxies)
 while true; do
   for i in "${!SOCAT_PIDS[@]}"; do
     pid="${SOCAT_PIDS[$i]}"
@@ -320,5 +326,27 @@ while true; do
   if [[ ${#SOCAT_PIDS[@]} -eq 0 ]]; then
     die "all socat processes exited"
   fi
-  sleep 2
+
+  # Check backend tunnel health (skip during startup)
+  if [[ -f "$BACKENDS_FILE" ]]; then
+    backend_ok=true
+    while IFS=: read -r host port; do
+      [[ -z "$host" || -z "$port" ]] && continue
+      if ! socat -T1 /dev/null "TCP:${host}:${port},connect-timeout=2" 2>/dev/null; then
+        backend_ok=false
+        break
+      fi
+    done < "$BACKENDS_FILE"
+    if [[ "$backend_ok" == "true" ]]; then
+      BACKEND_FAIL_COUNT=0
+    else
+      BACKEND_FAIL_COUNT=$((BACKEND_FAIL_COUNT + 1))
+      log "WARNING: backend tunnel unreachable ($BACKEND_FAIL_COUNT/$BACKEND_FAIL_MAX)"
+      if (( BACKEND_FAIL_COUNT >= BACKEND_FAIL_MAX )); then
+        die "backend tunnel dead for $((BACKEND_FAIL_MAX * 5))s — exiting to allow fresh proxy"
+      fi
+    fi
+  fi
+
+  sleep 5
 done
