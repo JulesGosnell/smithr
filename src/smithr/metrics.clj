@@ -137,8 +137,8 @@
   ;; Linux: node_memory_MemTotal_bytes, node_memory_MemAvailable_bytes
   ;; macOS (node_exporter): same names
   (let [total (or (some-> (find-metric metrics "node_memory_MemTotal_bytes") :value)
-                  ;; Fallback to node_memory_total (some exporters)
-                  (some-> (find-metric metrics "node_memory_total") :value))
+                  ;; Fallback to node_memory_total_bytes (macOS node_exporter)
+                  (some-> (find-metric metrics "node_memory_total_bytes") :value))
         avail (or (some-> (find-metric metrics "node_memory_MemAvailable_bytes") :value)
                   ;; macOS fallback: total - (active + wired)
                   (when total
