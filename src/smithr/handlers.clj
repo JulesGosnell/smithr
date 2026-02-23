@@ -315,6 +315,33 @@
     (json-response cat)
     (json-response {:templates [] :active_resources []})))
 
+(defn provision-resource
+  "POST /api/provision — spin up a new resource from a catalogue template.
+   Does NOT create a lease — just provisions the container for later use."
+  [request]
+  (let [body (:body-params request)
+        template-key (or (:template body) (get body "template"))]
+    (if-not template-key
+      {:status 400
+       :body {:error "bad_request" :message "Missing 'template' field"}}
+      (if-not (provision/provisioning-enabled?)
+        (conflict "Provisioning not configured")
+        (let [tmpl (provision/get-template template-key)]
+          (if-not tmpl
+            (not-found (str "Unknown template: " template-key))
+            (let [cat-info (:catalogue tmpl)
+                  type (:type cat-info)
+                  platform (:platform cat-info)]
+              (log/info "Provision request: template=" template-key)
+              (future
+                (try
+                  (provision/ensure-resource! {:type type :platform platform})
+                  (catch Exception e
+                    (log/error e "Provisioning failed for" template-key))))
+              (json-response 202 {:status "provisioning"
+                                  :template template-key
+                                  :message (str "Provisioning " template-key " — check dashboard for progress")}))))))))
+
 (defn scan-devices
   "GET /api/scan/devices — scan local host for connected USB devices."
   [_request]

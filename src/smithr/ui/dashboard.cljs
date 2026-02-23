@@ -409,36 +409,35 @@
 ;; Catalogue section — provisionable resource templates
 ;; ---------------------------------------------------------------------------
 
-(defn- template-status
-  "Determine the live status of a catalogue template by checking active resources."
+(defn- matching-resources
+  "Find active resources matching a catalogue template's type+platform."
   [template active-resources]
-  (let [matches (->> active-resources
-                     (filter #(and (= (:type %) (:type template))
-                                   (= (:platform %) (:platform template)))))]
-    (cond
-      (some #(#{"warm" "shared"} (:status %)) matches) :up
-      (some #(= (:status %) "booting") matches)        :booting
-      (some #(= (:status %) "leased") matches)         :busy
-      :else                                             :down)))
+  (->> active-resources
+       (filter #(and (= (:type %) (:type template))
+                     (= (:platform %) (:platform template))))))
 
-(defn- status-badge [status]
-  (case status
-    :up      [:span.catalogue-badge.up "\u2705 up"]
-    :booting [:span.catalogue-badge.booting "\u23F3 booting"]
-    :busy    [:span.catalogue-badge.busy "\uD83D\uDD12 busy"]
-    :down    [:span.catalogue-badge.down "\u26AA down"]))
+(defn- template-counts
+  "Count resources by status for a template."
+  [template active-resources]
+  (let [matches (matching-resources template active-resources)]
+    {:warm    (count (filter #(= (:status %) "warm") matches))
+     :leased  (count (filter #(= (:status %) "leased") matches))
+     :shared  (count (filter #(= (:status %) "shared") matches))
+     :booting (count (filter #(= (:status %) "booting") matches))
+     :total   (count matches)}))
 
-(defn- provision-template! [template]
-  (api/acquire-lease! (:type template) (:platform template) "phone"))
+(defonce provisioning (r/atom #{}))  ;; set of template keys currently provisioning
+
+(defn- provision-template! [template-key]
+  (swap! provisioning conj template-key)
+  (api/provision! template-key)
+  ;; Clear the spinner after 60s regardless (safety net)
+  (js/setTimeout #(swap! provisioning disj template-key) 60000))
 
 (defn catalogue-card [template active-resources]
-  (let [status (template-status template active-resources)
-        running-count (->> active-resources
-                           (filter #(and (= (:type %) (:type template))
-                                         (= (:platform %) (:platform template))
-                                         (#{"warm" "shared" "leased" "booting"} (:status %))))
-                           count)]
-    [:div.nested-box.catalogue-card {:class (name status)}
+  (let [counts (template-counts template active-resources)
+        in-progress? (contains? @provisioning (:key template))]
+    [:div.nested-box.catalogue-card
      [:div.box-header
       [:span.resource-icon
        (case [(:type template) (:platform template)]
@@ -447,29 +446,49 @@
          ["vm" "macos"]         "\uD83C\uDF4E"
          ["vm" "android-build"] "\uD83D\uDD28"
          "\uD83D\uDCE6")]
-      [:span.box-title (:key template)]
-      [status-badge status]]
+      [:span.box-title (:key template)]]
+
+     ;; Device / variant info
+     [:div.catalogue-device
+      (when (:model template)
+        [:span.catalogue-model (:model template)])
+      (when (:os template)
+        [:span.catalogue-os (:os template)])]
+
+     ;; Type metadata
      [:div.catalogue-meta
-      [:span (:type template) " \u00B7 " (:platform template)]
+      [:span (:type template)]
       (when (:substrate template)
         [:span " \u00B7 " (:substrate template)])
-      (when (:model template)
-        [:span " \u00B7 " (:model template)])
-      (when (:os template)
-        [:span " \u00B7 " (:os template)])]
-     [:div.catalogue-desc (:description template)]
-     [:div.catalogue-footer
-      [:span.catalogue-count (str running-count " running")]
-      [:span.catalogue-boot
-       (str "\u23F1 ~" (:boot_time_seconds template 60) "s boot")]
-      (when (= status :down)
-        [:button.btn.lease {:on-click #(provision-template! template)} "Provision"])]]))
+      [:span " \u00B7 ~" (:boot_time_seconds template 60) "s boot"]]
+
+     ;; Live resource counts
+     [:div.catalogue-counts
+      (when (pos? (:warm counts))
+        [:span.count-badge.warm (str (:warm counts) " warm")])
+      (when (pos? (:leased counts))
+        [:span.count-badge.leased (str (:leased counts) " leased")])
+      (when (pos? (:shared counts))
+        [:span.count-badge.shared (str (:shared counts) " shared")])
+      (when (pos? (:booting counts))
+        [:span.count-badge.booting (str (:booting counts) " booting")])
+      (when (zero? (:total counts))
+        [:span.count-badge.none "none running"])]
+
+     ;; Provision button — always visible
+     [:div.box-controls
+      [:button.btn.provision
+       {:on-click #(when-not in-progress? (provision-template! (:key template)))
+        :disabled in-progress?
+        :class (when in-progress? "provisioning")}
+       (if in-progress? "Provisioning\u2026" "Provision")]]]))
 
 (defn catalogue-section []
   (let [cat @state/catalogue]
     (when (and cat (seq (:templates cat)))
       [:div.catalogue-section {:id "catalogue"}
        [:div.section-header "Resource Catalogue"]
+       [:div.section-subtitle "Spin up new resources on demand"]
        [:div.catalogue-grid
         (for [t (:templates cat)]
           ^{:key (:key t)} [catalogue-card t (or (:active_resources cat) [])])]])))

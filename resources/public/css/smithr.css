@@ -609,6 +609,12 @@ body {
   margin-bottom: 1rem;
 }
 
+.section-subtitle {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  padding: 0.2rem 0 0.6rem;
+}
+
 .catalogue-grid {
   display: flex;
   flex-wrap: wrap;
@@ -617,55 +623,88 @@ body {
 
 .catalogue-card {
   background: var(--surface);
-  flex: 1 1 280px;
-  min-width: 260px;
-  max-width: 400px;
+  flex: 1 1 240px;
+  min-width: 220px;
+  max-width: 320px;
+  border-color: var(--border);
 }
 
-.catalogue-card.up    { border-color: var(--green); }
-.catalogue-card.down  { border-color: var(--grey); border-style: dashed; }
-.catalogue-card.booting { border-color: var(--yellow); }
-.catalogue-card.busy  { border-color: var(--orange); }
+.catalogue-device {
+  padding: 0.4rem 1rem 0.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
 
-.catalogue-badge {
-  font-size: 0.75rem;
+.catalogue-model {
+  font-size: 1rem;
   font-weight: 600;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.catalogue-badge.up      { color: var(--green);  background: var(--green-bg); }
-.catalogue-badge.down    { color: var(--grey);   background: var(--grey-bg); }
-.catalogue-badge.booting { color: var(--yellow); background: var(--yellow-bg); }
-.catalogue-badge.busy    { color: var(--orange); background: var(--orange-bg); }
-
-.catalogue-meta {
-  padding: 0.3rem 1rem;
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-
-.catalogue-desc {
-  padding: 0.2rem 1rem 0.4rem;
-  font-size: 0.8rem;
   color: var(--text);
 }
 
-.catalogue-footer {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.4rem 1rem 0.6rem;
+.catalogue-os {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.catalogue-meta {
+  padding: 0.2rem 1rem 0.3rem;
   font-size: 0.75rem;
   color: var(--text-dim);
 }
 
-.catalogue-count {
-  font-variant-numeric: tabular-nums;
+.catalogue-counts {
+  padding: 0.2rem 1rem 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
-.catalogue-boot {
-  font-variant-numeric: tabular-nums;
+.count-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+
+.count-badge.warm    { color: var(--green);  background: var(--green-bg); }
+.count-badge.leased  { color: var(--orange); background: var(--orange-bg); }
+.count-badge.shared  { color: var(--blue);   background: var(--blue-bg); }
+.count-badge.booting { color: var(--yellow); background: var(--yellow-bg); }
+.count-badge.none    { color: var(--grey);   background: var(--grey-bg); }
+
+.btn.provision {
+  background: var(--blue-bg);
+  border: 1px solid var(--blue);
+  color: var(--blue);
+  padding: 0.35rem 1rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.btn.provision:hover:not(:disabled) {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.btn.provision:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.btn.provision.provisioning {
+  border-color: var(--yellow);
+  color: var(--yellow);
+  background: var(--yellow-bg);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
 }

@@ -382,6 +382,17 @@
 ;; Catalogue
 ;; ---------------------------------------------------------------------------
 
+(defn get-template
+  "Look up a provisioning template by key. Returns nil if not configured."
+  [template-key]
+  (when-let [cfg (prov-config)]
+    (get-in cfg [:templates (keyword template-key)])))
+
+(defn provisioning-enabled?
+  "True if provisioning is configured."
+  []
+  (some? (prov-config)))
+
 (defn catalogue
   "Return the provisioning catalogue — what templates are available
    and what resources are currently running."
