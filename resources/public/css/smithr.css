@@ -287,6 +287,54 @@ body {
 }
 
 /* ===================================================================
+   Metrics Bar — CPU / MEM / DISK sparklines inside resource cards
+   =================================================================== */
+
+.metrics-bar {
+  display: flex;
+  gap: 1rem;
+  padding: 0.3rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  flex-wrap: wrap;
+}
+
+.metric {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.metric-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  width: 2.5em;
+  flex-shrink: 0;
+}
+
+.metric-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 2.5em;
+}
+
+.metric-value.normal  { color: var(--green); }
+.metric-value.warning { color: var(--orange); }
+.metric-value.critical { color: var(--red); }
+
+.metric-total {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
+
+.sparkline {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* ===================================================================
    Lease Box (Level 3 — inside shared VMs)
    =================================================================== */
 

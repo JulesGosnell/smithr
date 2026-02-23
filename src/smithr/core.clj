@@ -6,6 +6,7 @@
             [smithr.config :as config]
             [smithr.docker :as docker]
             [smithr.lease :as lease]
+            [smithr.metrics :as metrics]
             [smithr.api :as api])
   (:gen-class))
 
@@ -31,7 +32,9 @@
 
     ;; Start GC loop — each instance GCs all its own leases (state is per-instance)
     (let [gc-interval (get-in config [:gc :interval-seconds] 30)
-          gc-future   (lease/start-gc-loop! gc-interval nil)]
+          gc-future   (lease/start-gc-loop! gc-interval nil)
+          ;; Start metrics scrape loop (every 4s)
+          metrics-future (metrics/start-scrape-loop! 4000)]
 
       ;; Start HTTP server
       (let [port    (get-in config [:server :port] 7070)
@@ -41,10 +44,11 @@
                                               :host  host
                                               :join? false})]
         (log/info "Smithr listening on" (str host ":" port))
-        (reset! system {:config      config
-                        :connections connected
-                        :gc-future   gc-future
-                        :server      server})
+        (reset! system {:config         config
+                        :connections    connected
+                        :gc-future      gc-future
+                        :metrics-future metrics-future
+                        :server         server})
         server))))
 
 (defn stop!
@@ -58,6 +62,9 @@
     ;; Cancel GC loop
     (when-let [gc (:gc-future sys)]
       (future-cancel gc))
+    ;; Cancel metrics scrape loop
+    (when-let [mf (:metrics-future sys)]
+      (future-cancel mf))
     ;; Close Docker event subscriptions
     (doseq [conn (:connections sys)]
       (when-let [sub (:subscription conn)]

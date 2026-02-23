@@ -2,6 +2,7 @@
   "Ring handler implementations for the Smithr API."
   (:require [smithr.state :as state]
             [smithr.lease :as lease]
+            [smithr.metrics :as metrics]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -186,6 +187,11 @@
                     :workspaces (count workspaces)
                     :adopts     (count adopts)
                     :git-hash   git-hash})))
+
+(defn list-metrics
+  "GET /api/metrics"
+  [_request]
+  (json-response (metrics/metrics-snapshot)))
 
 ;; ---------------------------------------------------------------------------
 ;; Workspace handlers

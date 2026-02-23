@@ -9,5 +9,6 @@
 (defonce adopts (r/atom []))
 (defonce health (r/atom nil))
 (defonce events (r/atom []))
+(defonce metrics (r/atom {}))
 (defonce error (r/atom nil))
 (defonce last-updated (r/atom nil))

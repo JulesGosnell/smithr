@@ -61,6 +61,7 @@ services:
       - "${SMITHR_ANDROID_NOVNC_PORT:-6080}:6080"
     volumes:
       - ../docker/shared/android-entrypoint.sh:/custom-entrypoint.sh:ro
+      - /srv/shared/images/node_exporter:/usr/local/bin/node_exporter:ro,z
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     labels:

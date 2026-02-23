@@ -59,6 +59,13 @@
      :response-format :json
      :keywords?       true}))
 
+(defn fetch-metrics! []
+  (GET (str base-url "/api/metrics")
+    {:handler         #(reset! state/metrics %)
+     :error-handler   (partial handle-error "Metrics")
+     :response-format :json
+     :keywords?       true}))
+
 (defn fetch-all! []
   (fetch-resources!)
   (fetch-leases!)
@@ -66,7 +73,8 @@
   (fetch-workspaces!)
   (fetch-adopts!)
   (fetch-events!)
-  (fetch-health!))
+  (fetch-health!)
+  (fetch-metrics!))
 
 (defn acquire-lease!
   ([resource-type platform]

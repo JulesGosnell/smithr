@@ -129,6 +129,92 @@
   (js/setInterval #(swap! tick inc) 1000))
 
 ;; ---------------------------------------------------------------------------
+;; Sparkline + Metrics bar
+;; ---------------------------------------------------------------------------
+
+(defn- threshold-class
+  "Return CSS class for a utilisation fraction (0.0-1.0)."
+  [v]
+  (cond
+    (nil? v)   "normal"
+    (> v 0.9)  "critical"
+    (> v 0.7)  "warning"
+    :else      "normal"))
+
+(defn- threshold-color
+  "Return CSS color var for a utilisation fraction."
+  [v]
+  (cond
+    (nil? v)   "var(--green)"
+    (> v 0.9)  "var(--red)"
+    (> v 0.7)  "var(--orange)"
+    :else      "var(--green)"))
+
+(defn sparkline
+  "Render an inline SVG sparkline from a seq of 0.0-1.0 values.
+   Color determined by the most recent value."
+  [values]
+  (when (seq values)
+    (let [w 80 h 20
+          n (count values)
+          ;; Distribute points across width
+          points (map-indexed
+                  (fn [i v]
+                    (let [x (* (/ i (max 1 (dec n))) w)
+                          y (- h (* (min 1.0 (max 0.0 v)) h))]
+                      (str x "," y)))
+                  values)
+          color (threshold-color (last values))]
+      [:svg.sparkline {:width w :height h :viewBox (str "0 0 " w " " h)}
+       [:polyline {:points (clojure.string/join " " points)
+                   :fill "none"
+                   :stroke color
+                   :stroke-width 1.5
+                   :stroke-linejoin "round"
+                   :stroke-linecap "round"}]])))
+
+(defn- format-pct [v]
+  (when v (str (Math/round (* v 100)) "%")))
+
+(defn metrics-bar
+  "Render a metrics bar for a resource. Shows CPU/MEM/DISK sparklines."
+  [resource-id]
+  (let [m (get @state/metrics (keyword resource-id))]
+    (when m
+      (let [cpu-vals (:cpu m)
+            mem-vals (:mem m)
+            disk-vals (:disk m)]
+        (when (or (seq cpu-vals) (seq mem-vals) (seq disk-vals))
+          [:div.metrics-bar
+           ;; CPU
+           (when (seq cpu-vals)
+             [:div.metric
+              [:span.metric-label "CPU"]
+              [sparkline cpu-vals]
+              [:span.metric-value {:class (threshold-class (:cpu_current m))}
+               (format-pct (:cpu_current m))]
+              (when (:cpu_cores m)
+                [:span.metric-total (str " / " (:cpu_cores m) " cores")])])
+           ;; MEM
+           (when (seq mem-vals)
+             [:div.metric
+              [:span.metric-label "MEM"]
+              [sparkline mem-vals]
+              [:span.metric-value {:class (threshold-class (:mem_current m))}
+               (format-pct (:mem_current m))]
+              (when (:mem_total_gb m)
+                [:span.metric-total (str " / " (:mem_total_gb m) " GB")])])
+           ;; DISK
+           (when (seq disk-vals)
+             [:div.metric
+              [:span.metric-label "DISK"]
+              [sparkline disk-vals]
+              [:span.metric-value {:class (threshold-class (:disk_current m))}
+               (format-pct (:disk_current m))]
+              (when (:disk_total_gb m)
+                [:span.metric-total (str " / " (:disk_total_gb m) " GB")])])])))))
+
+;; ---------------------------------------------------------------------------
 ;; Lease box (innermost nesting level)
 ;; ---------------------------------------------------------------------------
 
@@ -209,6 +295,9 @@
             (status-icon status) " " status)]
       (when remaining
         [:span.countdown {:class urgency} (str "\u23F1 " remaining)])]
+
+     ;; Resource metrics sparklines
+     [metrics-bar (:id resource)]
 
      ;; Phone lease info (exclusive)
      (when phone-lease

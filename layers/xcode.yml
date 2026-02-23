@@ -60,6 +60,7 @@ services:
     ports:
       - "${SMITHR_MACOS_SSH_PORT:-50922}:10022"
       - "${SMITHR_MACOS_VNC_PORT:-5999}:5999"
+      - "${SMITHR_MACOS_METRICS_PORT:-10100}:10100"
     volumes:
       # Mount disk image to the path QEMU expects
       - "${SMITHR_MACOS_IMAGE:?SMITHR_MACOS_IMAGE must be set}:/home/arch/OSX-KVM/mac_hdd_ng.img"
@@ -85,6 +86,8 @@ services:
       # Only PERSISTENT=1 writes directly to base image (for updates/warming).
       # Any other value (including empty) = volatile overlay mode.
       PERSISTENT: "${SMITHR_MACOS_PERSISTENT:-0}"
+      # Port forward node_exporter from macOS guest (9100) to container (10100)
+      ADDITIONAL_PORTS: "hostfwd=tcp::10100-:9100"
       # Skip OpenCore boot picker (saves ~30s)
       NOPICKER: "${SMITHR_MACOS_NOPICKER:-true}"
       BOOTDISK: "${SMITHR_MACOS_BOOTDISK:-/home/arch/OSX-KVM/OpenCore/OpenCore-nopicker.qcow2}"

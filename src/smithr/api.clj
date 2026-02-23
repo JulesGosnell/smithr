@@ -28,6 +28,7 @@
     ["/adopts" {:get {:handler h/list-adopts}}]
     ["/adopts/:id" {:delete {:handler h/unadopt}}]
     ["/health" {:get {:handler h/health-check}}]
+    ["/metrics" {:get {:handler h/list-metrics}}]
     ["/events" {:get {:handler h/list-events}}]
     ["/compose/:template" {:get {:handler h/serve-compose-template}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])

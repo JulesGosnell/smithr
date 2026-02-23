@@ -121,7 +121,13 @@
              :host host-label
              :status status
              :container name
-             :connection connection
+             :connection (cond-> connection
+                           true (assoc :metrics-port
+                                       (if-let [mp (get labels "smithr.resource.metrics-port")]
+                                         (Integer/parseInt mp)
+                                         (case platform
+                                           :macos 10100
+                                           9100))))
              :parent (get labels "smithr.resource.parent")
              :substrate (get labels "smithr.resource.substrate")
              :model (get labels "smithr.resource.model")

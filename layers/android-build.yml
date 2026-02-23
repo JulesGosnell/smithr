@@ -25,6 +25,8 @@ services:
       - "${SMITHR_SSH_PUBKEY:-/srv/shared/images/ssh/macos-ssh-key.pub}:/tmp/authorized_keys:ro,z"
       # Docker socket — allows builds inside the container to use host Docker
       - /var/run/docker.sock:/var/run/docker.sock:z
+      # node_exporter binary for resource monitoring
+      - /srv/shared/images/node_exporter:/usr/local/bin/node_exporter:ro,z
     labels:
       smithr.managed: "true"
       smithr.resource.type: "vm"
