@@ -5,6 +5,7 @@
   (:require [reitit.ring :as ring]
             [reitit.ring.middleware.muuntaja :as muuntaja]
             [reitit.ring.coercion :as coercion]
+            [reitit.swagger-ui :as swagger-ui]
             [muuntaja.core :as m]
             [ring.middleware.params :refer [wrap-params]]
             [ring.middleware.keyword-params :refer [wrap-keyword-params]]
@@ -33,7 +34,8 @@
     ["/catalogue" {:get {:handler h/catalogue}}]
     ["/scan/devices" {:get {:handler h/scan-devices}}]
     ["/compose/:template" {:get {:handler h/serve-compose-template}}]]
-   ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])
+   ["/openapi.yaml" {:get {:handler h/serve-openapi}}]
+])
 
 (defn app
   "Create the Ring handler with middleware."
@@ -48,8 +50,11 @@
                         coercion/coerce-exceptions-middleware
                         coercion/coerce-request-middleware
                         coercion/coerce-response-middleware]}})
-   ;; Default handler: serve static files from resources/public
+   ;; Default handler: Swagger UI + static files from resources/public
    (ring/routes
+    (swagger-ui/create-swagger-ui-handler
+     {:path "/swagger"
+      :url  "/openapi.yaml"})
     (ring/create-resource-handler {:path "/"})
     (ring/create-default-handler
      {:not-found (constantly {:status 404

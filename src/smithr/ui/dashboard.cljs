@@ -486,7 +486,7 @@
         [:span.git-hash (str " (" hash ")")])]
      [:div.header-right
       [:a.header-link {:href "#catalogue"} "Catalogue"]
-      [:a.header-link {:href "/api/openapi.yaml" :target "_blank"} "OpenAPI"]
+      [:a.header-link {:href "/swagger" :target "_blank"} "API"]
       [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
        (if h
          (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "
