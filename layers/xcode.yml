@@ -31,8 +31,8 @@
 #   SMITHR_PREFIX            - Container name prefix (default: smithr)
 #   SMITHR_XCODE_RUNE       - VM instance ID (default: fe)
 #   SMITHR_MACOS_IMAGE       - Path to macOS base image (REQUIRED)
-#   SMITHR_MACOS_RAM         - RAM for macOS VM in GB (default: 22)
-#   SMITHR_MACOS_CORES       - CPU cores for VM (default: 4)
+#   SMITHR_MACOS_RAM         - RAM for macOS VM in GB (default: 24)
+#   SMITHR_MACOS_CORES       - CPU cores for VM (default: 16)
 #   SMITHR_MACOS_CPU         - CPU model (default: Haswell-noTSX) - CRITICAL for AMD
 #   SMITHR_MACOS_VGA         - VGA type (default: vmware)
 #   SMITHR_MACOS_VNC_PORT    - Host VNC port (default: 5999)
@@ -74,8 +74,8 @@ services:
       # Default to an empty temp dir if no project share is needed
       - "${SMITHR_MACOS_SHARE:-/tmp/smithr-macos-share}:/mnt/hostshare:z"
     environment:
-      RAM: "${SMITHR_MACOS_RAM:-22}"
-      CORES: "${SMITHR_MACOS_CORES:-4}"
+      RAM: "${SMITHR_MACOS_RAM:-24}"
+      CORES: "${SMITHR_MACOS_CORES:-16}"
       CPU: "${SMITHR_MACOS_CPU:-Haswell-noTSX}"
       VGA: "${SMITHR_MACOS_VGA:-vmware}"
       DISPLAY: ""

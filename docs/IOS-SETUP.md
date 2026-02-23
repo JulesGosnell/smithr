@@ -208,8 +208,8 @@ Two-stage health checking:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SMITHR_MACOS_IMAGE` | (required) | Path to macOS disk image |
-| `SMITHR_MACOS_RAM` | `22` | RAM in GB |
-| `SMITHR_MACOS_CORES` | `4` | CPU cores |
+| `SMITHR_MACOS_RAM` | `24` | RAM in GB |
+| `SMITHR_MACOS_CORES` | `16` | CPU cores |
 | `SMITHR_MACOS_CPU` | `Haswell-noTSX` | CPU model (critical for AMD) |
 | `SMITHR_MACOS_VGA` | `vmware` | VGA adapter |
 | `SMITHR_MACOS_VNC_PORT` | `5999` | Host VNC port |
