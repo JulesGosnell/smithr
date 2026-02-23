@@ -30,6 +30,8 @@
     ["/health" {:get {:handler h/health-check}}]
     ["/metrics" {:get {:handler h/list-metrics}}]
     ["/events" {:get {:handler h/list-events}}]
+    ["/catalogue" {:get {:handler h/catalogue}}]
+    ["/scan/devices" {:get {:handler h/scan-devices}}]
     ["/compose/:template" {:get {:handler h/serve-compose-template}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]])
 

@@ -66,6 +66,13 @@
      :response-format :json
      :keywords?       false}))
 
+(defn fetch-catalogue! []
+  (GET (str base-url "/api/catalogue")
+    {:handler         #(reset! state/catalogue %)
+     :error-handler   (partial handle-error "Catalogue")
+     :response-format :json
+     :keywords?       true}))
+
 (defn fetch-all! []
   (fetch-resources!)
   (fetch-leases!)
@@ -74,7 +81,8 @@
   (fetch-adopts!)
   (fetch-events!)
   (fetch-health!)
-  (fetch-metrics!))
+  (fetch-metrics!)
+  (fetch-catalogue!))
 
 (defn acquire-lease!
   ([resource-type platform]

@@ -70,6 +70,26 @@ body {
 .header .status.connected { color: var(--green); }
 .header .status.disconnected { color: var(--red); }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.header-link {
+  font-size: 0.85rem;
+  color: var(--blue);
+  text-decoration: none;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--blue);
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.header-link:hover {
+  background: var(--blue-bg);
+}
+
 /* Error Banner */
 .error-banner {
   background: var(--red-bg);
@@ -578,4 +598,74 @@ body {
 
 .btn.unadopt:hover {
   background: var(--purple-bg);
+}
+
+/* ===================================================================
+   Catalogue Section — provisionable resource templates
+   =================================================================== */
+
+.catalogue-section {
+  padding: 0 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.catalogue-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.catalogue-card {
+  background: var(--surface);
+  flex: 1 1 280px;
+  min-width: 260px;
+  max-width: 400px;
+}
+
+.catalogue-card.up    { border-color: var(--green); }
+.catalogue-card.down  { border-color: var(--grey); border-style: dashed; }
+.catalogue-card.booting { border-color: var(--yellow); }
+.catalogue-card.busy  { border-color: var(--orange); }
+
+.catalogue-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.catalogue-badge.up      { color: var(--green);  background: var(--green-bg); }
+.catalogue-badge.down    { color: var(--grey);   background: var(--grey-bg); }
+.catalogue-badge.booting { color: var(--yellow); background: var(--yellow-bg); }
+.catalogue-badge.busy    { color: var(--orange); background: var(--orange-bg); }
+
+.catalogue-meta {
+  padding: 0.3rem 1rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.catalogue-desc {
+  padding: 0.2rem 1rem 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.catalogue-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 1rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.catalogue-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.catalogue-boot {
+  font-variant-numeric: tabular-nums;
 }

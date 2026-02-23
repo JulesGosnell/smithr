@@ -98,6 +98,7 @@ services:
       SSH_USER: "${SMITHR_MACOS_SSH_USER:-smithr}"
     labels:
       smithr.managed: "true"
+      smithr.provisioned: "${SMITHR_PROVISIONED:-false}"
       smithr.resource.type: "vm"
       smithr.resource.platform: "macos"
       smithr.resource.pool: "ios"

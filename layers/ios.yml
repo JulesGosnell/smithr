@@ -56,6 +56,7 @@ services:
         exec /boot.sh
     labels:
       smithr.managed: "true"
+      smithr.provisioned: "${SMITHR_PROVISIONED:-false}"
       smithr.resource.type: "phone"
       smithr.resource.platform: "ios"
       smithr.resource.pool: "ios"

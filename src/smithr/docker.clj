@@ -131,6 +131,7 @@
              :parent (get labels "smithr.resource.parent")
              :substrate (get labels "smithr.resource.substrate")
              :model (get labels "smithr.resource.model")
+             :provisioned? (= "true" (get labels "smithr.provisioned"))
              :updated-at (Instant/now)}
       (#{:macos :android-build} platform)
       (assoc :max-slots (if-let [s (get labels "smithr.resource.max-slots")]

@@ -8,7 +8,8 @@
             [smithr.state :as state]
             [smithr.docker :as docker]
             [smithr.macos :as macos]
-            [smithr.linux :as linux])
+            [smithr.linux :as linux]
+            [smithr.provision :as provision])
   (:import [java.time Instant Duration]
            [java.util UUID]
            [java.net DatagramSocket InetAddress]))
@@ -480,9 +481,13 @@
    :workspace — optional named workspace for warm/persistent builds.
    If provided, the macOS user persists across leases (not deleted on unlease).
 
+   :substrate — optional filter: 'emulated', 'simulated', 'physical', 'virtual'
+   :model — optional filter: specific device model (e.g. 'Pixel 8')
+
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
-  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports prefer-host reverse-ports]
+  [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports
+           prefer-host reverse-ports substrate model retried?]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -515,6 +520,13 @@
              (let [;; If workspace exists, prefer its resource
                    ws-resource-id (when workspace
                                     (:resource-id (get-in s [:workspaces workspace])))
+                   ;; Optional substrate/model filtering predicate
+                   substrate-pred (if substrate
+                                    #(= (:substrate %) substrate)
+                                    (constantly true))
+                   model-pred (if model
+                                #(= (:model %) model)
+                                (constantly true))
                    candidates (if (= lease-type :build)
                                 (if ws-resource-id
                                   ;; Workspace already assigned to a resource — use it
@@ -527,6 +539,8 @@
                                   (->> (vals (:resources s))
                                        (filter #(and (= (:type %) :vm)
                                                      (= (:platform %) (keyword platform))
+                                                     (substrate-pred %)
+                                                     (model-pred %)
                                                      (or (= (:status %) :warm)
                                                          (and (= (:status %) :shared)
                                                               (< (count (:active-leases % #{}))
@@ -537,6 +551,8 @@
                                      (filter #(and (= (:status %) :warm)
                                                    (= (:type %) (keyword type))
                                                    (= (:platform %) (keyword platform))
+                                                   (substrate-pred %)
+                                                   (model-pred %)
                                                    (not (shared-lock-held? (:id %)))))
                                      (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
                (if-let [resource (first candidates)]
@@ -569,6 +585,24 @@
                          (assoc-in [:leases lease-id] lease))))
                  ;; No resource available
                  s))))
+    ;; If no candidates found and provisioning is available, try lazy provisioning
+    (if (and (nil? @result) (not retried?)
+             (provision/can-provision? (keyword type) (keyword platform)))
+      (do
+        (log/info "No warm resource for" type platform "- attempting lazy provisioning")
+        (if-let [_provisioned-id (provision/ensure-resource! {:type type :platform platform})]
+          ;; Resource is now warm — retry the acquire once
+          (do
+            (log/info "Provisioning succeeded, retrying acquire")
+            (acquire! {:type type :platform platform
+                       :ttl-seconds ttl-seconds :lessee lessee
+                       :lease-type lease-type :workspace workspace
+                       :server-ports server-ports :prefer-host prefer-host
+                       :reverse-ports reverse-ports
+                       :substrate substrate :model model
+                       :retried? true}))
+          ;; Provisioning failed
+          nil))
     (when-let [{:keys [lease resource]} @result]
       (if (= lease-type :build)
         ;; Build lease: create/ensure user, then start tunnel
@@ -712,7 +746,7 @@
           (do
             (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
             (unlease! lease-id)
-            nil)))))))
+            nil))))))))  ;; extra paren closes the if-provisioning branch
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
@@ -1002,16 +1036,35 @@
          (+ (count expired) (count expired-adopts) dead-count))))))
 
 (defn start-gc-loop!
-  "Start the GC background thread. Returns a future for cancellation."
-  [interval-seconds own-host]
+  "Start the GC background thread. Returns a future for cancellation.
+   Optional kwargs:
+     :idle-timeout — seconds before idle provisioned resources are deprovisioned
+     :device-host — host label for periodic USB device rescanning"
+  [interval-seconds own-host & {:keys [idle-timeout device-host]}]
   (log/info "Starting GC loop every" interval-seconds "seconds"
-            (if own-host (str "(host: " own-host ")") "(all hosts)"))
+            (if own-host (str "(host: " own-host ")") "(all hosts)")
+            (when idle-timeout (str " idle-timeout:" idle-timeout "s"))
+            (when device-host (str " device-scan:" device-host)))
   (future
     (while (not (Thread/interrupted))
       (try
         (let [n (gc-expired-leases! own-host)]
           (when (pos? n)
             (log/info "GC reaped" n "expired leases")))
+        ;; Idle GC for provisioned resources
+        (when idle-timeout
+          (try
+            (let [n (provision/gc-idle-provisioned! idle-timeout)]
+              (when (pos? n)
+                (log/info "GC deprovisioned" n "idle resources")))
+            (catch Exception e
+              (log/error e "Error in provisioning GC"))))
+        ;; Periodic device rescan
+        (when device-host
+          (try
+            ((requiring-resolve 'smithr.devices/register-devices!) device-host)
+            (catch Exception e
+              (log/debug "Device rescan skipped:" (.getMessage e)))))
         (catch InterruptedException _
           (log/info "GC loop interrupted, exiting")
           (.interrupt (Thread/currentThread)))

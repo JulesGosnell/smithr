@@ -29,6 +29,7 @@ services:
       - /srv/shared/images/node_exporter:/usr/local/bin/node_exporter:ro,z
     labels:
       smithr.managed: "true"
+      smithr.provisioned: "${SMITHR_PROVISIONED:-false}"
       smithr.resource.type: "vm"
       smithr.resource.platform: "android-build"
       smithr.resource.pool: "android-build"

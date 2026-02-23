@@ -294,6 +294,37 @@ paths:
                 items:
                   $ref: "#/components/schemas/Host"
 
+  /api/catalogue:
+    get:
+      operationId: getCatalogue
+      summary: List provisionable resource types and active resources
+      description: |
+        Returns the provisioning catalogue — what resource types Smithr can
+        auto-provision from compose templates, along with currently running
+        resources. Useful for CI tooling and the dashboard.
+      responses:
+        "200":
+          description: Catalogue of templates and active resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Catalogue"
+
+  /api/scan/devices:
+    get:
+      operationId: scanDevices
+      summary: Scan local host for connected USB devices
+      description: |
+        Scans for physical Android (adb) and iOS (libimobiledevice) devices
+        connected to this host. Returns device details without modifying state.
+      responses:
+        "200":
+          description: List of discovered devices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceScan"
+
   /api/health:
     get:
       operationId: healthCheck
@@ -354,6 +385,17 @@ components:
           type: integer
           description: Number of currently active build leases (macOS VMs only)
           example: 3
+        substrate:
+          type: string
+          enum: [emulated, simulated, virtual, physical]
+          description: How the resource runs (emulated, simulated, virtual, physical)
+        model:
+          type: string
+          description: Device model name
+          example: "Nexus 5"
+        provisioned:
+          type: boolean
+          description: Whether this resource was auto-provisioned by Smithr
         parent:
           type: string
           description: Parent container name (iOS simulators reference their macOS VM)
@@ -417,6 +459,19 @@ components:
           enum: [build, phone]
           default: phone
           description: Type of lease - build (shared, concurrent) or phone (exclusive)
+        substrate:
+          type: string
+          enum: [emulated, simulated, virtual, physical]
+          description: |
+            Optional filter for resource substrate. When specified, only
+            resources matching this substrate are considered.
+        model:
+          type: string
+          description: |
+            Optional filter for specific device model (e.g., "Pixel 8",
+            "iPhone 16 Pro Max"). When specified, only resources with a
+            matching model label are considered.
+          example: "Pixel 8"
         workspace:
           type: string
           pattern: "^[a-zA-Z][a-zA-Z0-9-]{2,30}$"
@@ -590,6 +645,84 @@ components:
         expires_at:
           type: string
           format: date-time
+
+    Catalogue:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+                example: android-phone
+              type:
+                type: string
+                example: phone
+              platform:
+                type: string
+                example: android
+              substrate:
+                type: string
+                example: emulated
+              model:
+                type: string
+                example: "Nexus 5"
+              os:
+                type: string
+                example: "Android 9.0"
+              description:
+                type: string
+              boot_time_seconds:
+                type: integer
+        active_resources:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              platform:
+                type: string
+              substrate:
+                type: string
+              model:
+                type: string
+              status:
+                type: string
+              provisioned:
+                type: boolean
+              host:
+                type: string
+
+    DeviceScan:
+      type: object
+      properties:
+        host:
+          type: string
+          example: megalodon
+        devices:
+          type: array
+          items:
+            type: object
+            properties:
+              serial:
+                type: string
+                description: Android device serial (adb)
+              udid:
+                type: string
+                description: iOS device UDID (libimobiledevice)
+              platform:
+                type: string
+                enum: [android, ios]
+              model:
+                type: string
+              substrate:
+                type: string
+                enum: [physical]
 
     Error:
       type: object

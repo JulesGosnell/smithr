@@ -7,6 +7,8 @@
             [smithr.docker :as docker]
             [smithr.lease :as lease]
             [smithr.metrics :as metrics]
+            [smithr.provision :as provision]
+            [smithr.devices :as devices]
             [smithr.api :as api])
   (:gen-class))
 
@@ -22,17 +24,34 @@
   (.mkdirs (java.io.File. "/srv/shared/smithr/leases"))
   (lease/cleanup-stale-shared-locks!)
 
+  ;; Initialize provisioning config (opt-in — no-op if absent)
+  (provision/set-config! config)
+  (when (:provisioning config)
+    (log/info "Provisioning enabled — lazy resource provisioning active"))
+
   ;; Connect to Docker hosts
   (let [network-name (get-in config [:compose :network] "smithr-network")
         host-connections (doall
                           (for [host-config (:hosts config)]
                             (docker/connect-host! host-config network-name)))
-        connected (filterv some? host-connections)]
+        connected (filterv some? host-connections)
+        own-host (get-in config [:gc :own-host])]
     (log/info "Connected to" (count connected) "of" (count (:hosts config)) "Docker hosts")
+
+    ;; Initial device scan
+    (when own-host
+      (try
+        (let [n (devices/register-devices! own-host)]
+          (when (pos? n)
+            (log/info "Discovered" n "physical devices")))
+        (catch Exception e
+          (log/debug "Initial device scan skipped:" (.getMessage e)))))
 
     ;; Start GC loop — each instance GCs all its own leases (state is per-instance)
     (let [gc-interval (get-in config [:gc :interval-seconds] 30)
-          gc-future   (lease/start-gc-loop! gc-interval nil)
+          gc-future   (lease/start-gc-loop! gc-interval nil
+                        :idle-timeout (get-in config [:provisioning :idle-timeout-seconds])
+                        :device-host own-host)
           ;; Start metrics scrape loop (every 4s)
           metrics-future (metrics/start-scrape-loop! 4000)]
 

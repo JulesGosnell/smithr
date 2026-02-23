@@ -10,5 +10,6 @@
 (defonce health (r/atom nil))
 (defonce events (r/atom []))
 (defonce metrics (r/atom {}))
+(defonce catalogue (r/atom nil))
 (defonce error (r/atom nil))
 (defonce last-updated (r/atom nil))

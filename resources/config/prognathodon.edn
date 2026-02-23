@@ -16,4 +16,65 @@
            :network "smithr-network"}
 
  :tunnel {:key-path "/ssh-key/macos-ssh-key"
-          :base-port 17000}}
+          :base-port 17000}
+
+ :provisioning
+ {:templates
+  {:android-phone   {:compose-files ["layers/android.yml"]
+                     :env-template {"SMITHR_ANDROID_RUNE" :auto
+                                    "SMITHR_ANDROID_IP" :auto
+                                    "SMITHR_ANDROID_ADB_PORT" :auto
+                                    "SMITHR_ANDROID_VNC_PORT" :auto
+                                    "SMITHR_ANDROID_NOVNC_PORT" :auto}
+                     :description "Android emulator with ADB access"
+                     :boot-time-seconds 30
+                     :catalogue {:type "phone"
+                                 :platform "android"
+                                 :substrate "emulated"
+                                 :model "Nexus 5"
+                                 :os "Android 9.0"}}
+   :android-build   {:compose-files ["layers/android-build.yml"]
+                     :env-template {"SMITHR_ANDROID_BUILD_RUNE" :auto
+                                    "SMITHR_ANDROID_BUILD_IP" :auto}
+                     :description "Android build container (Fedora + SDK)"
+                     :boot-time-seconds 10
+                     :catalogue {:type "vm"
+                                 :platform "android-build"
+                                 :substrate "virtual"
+                                 :os "Fedora 43"}}
+   :macos-vm        {:compose-files ["layers/xcode.yml"]
+                     :env-template {"SMITHR_XCODE_RUNE" :auto
+                                    "SMITHR_MACOS_IP" :auto
+                                    "SMITHR_MACOS_IMAGE" "/srv/shared/images/smithr-sonoma.img"}
+                     :description "macOS + Xcode build VM (shared, up to 10 concurrent)"
+                     :boot-time-seconds 180
+                     :catalogue {:type "vm"
+                                 :platform "macos"
+                                 :substrate "virtual"
+                                 :os "macOS Sonoma"}}
+   :ios-phone       {:compose-files ["layers/xcode.yml" "layers/ios.yml"]
+                     :env-template {"SMITHR_XCODE_RUNE" :auto
+                                    "SMITHR_MACOS_IP" :auto
+                                    "SMITHR_MACOS_IMAGE" "/srv/shared/images/smithr-sonoma.img"}
+                     :description "iOS Simulator inside macOS VM"
+                     :boot-time-seconds 120
+                     :catalogue {:type "phone"
+                                 :platform "ios"
+                                 :substrate "simulated"
+                                 :model "iPhone 16 Pro Max"
+                                 :os "iOS 18.3"}}}
+  :type-mapping {"phone:android"      :android-phone
+                 "phone:ios"          :ios-phone
+                 "vm:android-build"   :android-build
+                 "vm:macos"           :macos-vm}
+  :rune-pool ["fe" "ur" "thurs" "oss" "reid" "kaun" "hagall" "naud"
+              "iss" "ar" "sol" "tyr" "bjarkan" "madhr" "logr" "yr"]
+  :ip-ranges {:android       {:base "10.21.0" :start 30}
+              :android-build {:base "10.21.0" :start 50}
+              :macos         {:base "10.21.0" :start 40}}
+  :port-ranges {:android-adb   {:start 5555}
+                :android-vnc   {:start 5900}
+                :android-novnc {:start 6080}}
+  :idle-timeout-seconds 1800
+  :health-timeout-seconds 300
+  :local-only true}}

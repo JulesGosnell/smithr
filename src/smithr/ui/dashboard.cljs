@@ -406,6 +406,75 @@
           ^{:key (:id a)} [adopt-box a])]])))
 
 ;; ---------------------------------------------------------------------------
+;; Catalogue section — provisionable resource templates
+;; ---------------------------------------------------------------------------
+
+(defn- template-status
+  "Determine the live status of a catalogue template by checking active resources."
+  [template active-resources]
+  (let [matches (->> active-resources
+                     (filter #(and (= (:type %) (:type template))
+                                   (= (:platform %) (:platform template)))))]
+    (cond
+      (some #(#{"warm" "shared"} (:status %)) matches) :up
+      (some #(= (:status %) "booting") matches)        :booting
+      (some #(= (:status %) "leased") matches)         :busy
+      :else                                             :down)))
+
+(defn- status-badge [status]
+  (case status
+    :up      [:span.catalogue-badge.up "\u2705 up"]
+    :booting [:span.catalogue-badge.booting "\u23F3 booting"]
+    :busy    [:span.catalogue-badge.busy "\uD83D\uDD12 busy"]
+    :down    [:span.catalogue-badge.down "\u26AA down"]))
+
+(defn- provision-template! [template]
+  (api/acquire-lease! (:type template) (:platform template) "phone"))
+
+(defn catalogue-card [template active-resources]
+  (let [status (template-status template active-resources)
+        running-count (->> active-resources
+                           (filter #(and (= (:type %) (:type template))
+                                         (= (:platform %) (:platform template))
+                                         (#{"warm" "shared" "leased" "booting"} (:status %))))
+                           count)]
+    [:div.nested-box.catalogue-card {:class (name status)}
+     [:div.box-header
+      [:span.resource-icon
+       (case [(:type template) (:platform template)]
+         ["phone" "android"]    "\uD83E\uDD16"
+         ["phone" "ios"]        "\uD83D\uDCF1"
+         ["vm" "macos"]         "\uD83C\uDF4E"
+         ["vm" "android-build"] "\uD83D\uDD28"
+         "\uD83D\uDCE6")]
+      [:span.box-title (:key template)]
+      [status-badge status]]
+     [:div.catalogue-meta
+      [:span (:type template) " \u00B7 " (:platform template)]
+      (when (:substrate template)
+        [:span " \u00B7 " (:substrate template)])
+      (when (:model template)
+        [:span " \u00B7 " (:model template)])
+      (when (:os template)
+        [:span " \u00B7 " (:os template)])]
+     [:div.catalogue-desc (:description template)]
+     [:div.catalogue-footer
+      [:span.catalogue-count (str running-count " running")]
+      [:span.catalogue-boot
+       (str "\u23F1 ~" (:boot_time_seconds template 60) "s boot")]
+      (when (= status :down)
+        [:button.btn.lease {:on-click #(provision-template! template)} "Provision"])]]))
+
+(defn catalogue-section []
+  (let [cat @state/catalogue]
+    (when (and cat (seq (:templates cat)))
+      [:div.catalogue-section {:id "catalogue"}
+       [:div.section-header "Resource Catalogue"]
+       [:div.catalogue-grid
+        (for [t (:templates cat)]
+          ^{:key (:key t)} [catalogue-card t (or (:active_resources cat) [])])]])))
+
+;; ---------------------------------------------------------------------------
 ;; Top-level components
 ;; ---------------------------------------------------------------------------
 
@@ -415,15 +484,17 @@
      [:h1 "SMITHR"
       (when-let [hash (or (:git-hash h) (:git_hash h))]
         [:span.git-hash (str " (" hash ")")])]
-     [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
-      (if h
-        (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "
-             (:resources h) " resources \u2502 " (:leases h) " leases"
-             (when (pos? (:workspaces h 0))
-               (str " \u2502 " (:workspaces h) " workspaces"))
-             (when (pos? (:adopts h 0))
-               (str " \u2502 " (:adopts h) " adopts")))
-        "connecting...")]]))
+     [:div.header-right
+      [:a.header-link {:href "#catalogue"} "Catalogue"]
+      [:span.status {:class (if (= (:status h) "ok") "connected" "disconnected")}
+       (if h
+         (str (:status h) " \u2502 " (:hosts h) " hosts \u2502 "
+              (:resources h) " resources \u2502 " (:leases h) " leases"
+              (when (pos? (:workspaces h 0))
+                (str " \u2502 " (:workspaces h) " workspaces"))
+              (when (pos? (:adopts h 0))
+                (str " \u2502 " (:adopts h) " adopts")))
+         "connecting...")]]]))
 
 (defn summary-bar []
   (let [_ @tick
@@ -517,5 +588,6 @@
         (for [h all-hosts]
           ^{:key h} [host-box h all-resources])
         [:div.empty "No hosts connected. Waiting for Docker events..."])]
+     [catalogue-section]
      [adopts-section]
      [audit-pane]]))

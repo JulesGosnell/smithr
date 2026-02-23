@@ -3,6 +3,8 @@
   (:require [smithr.state :as state]
             [smithr.lease :as lease]
             [smithr.metrics :as metrics]
+            [smithr.provision :as provision]
+            [smithr.devices :as devices]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -62,7 +64,9 @@
       ;; For macOS VMs: expose slot info, remove internal set
       (cond->
         (:max-slots r) (assoc :active-lease-count (count (:active-leases r #{})))
-        true           (dissoc :active-leases))
+        ;; Expose provisioned flag
+        true (assoc :provisioned (:provisioned? r false))
+        true (dissoc :active-leases :provisioned?))
       kw->underscore))
 
 (defn- serialize-lease [l]
@@ -134,6 +138,8 @@
         server-ports (or (:server_ports body) (get body "server_ports"))
         prefer-host (or (:prefer_host body) (get body "prefer_host"))
         reverse-ports (or (:reverse_ports body) (get body "reverse_ports"))
+        substrate (or (:substrate body) (get body "substrate"))
+        model (or (:model body) (get body "model"))
         params    (cond-> {:type        (or (:type body) (get body "type"))
                            :platform    (or (:platform body) (get body "platform"))
                            :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
@@ -141,6 +147,8 @@
                            :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}
                     workspace (assoc :workspace workspace)
                     prefer-host (assoc :prefer-host prefer-host)
+                    substrate (assoc :substrate substrate)
+                    model (assoc :model model)
                     (seq server-ports) (assoc :server-ports (vec server-ports))
                     (seq reverse-ports) (assoc :reverse-ports (vec reverse-ports)))]
     (log/info "Lease request:" params)
@@ -291,6 +299,28 @@
     {:status  200
      :headers {"Content-Type" "text/yaml; charset=utf-8"}
      :body    spec}))
+
+;; ---------------------------------------------------------------------------
+;; Compose template handler
+;; ---------------------------------------------------------------------------
+
+;; ---------------------------------------------------------------------------
+;; Catalogue + device scan handlers
+;; ---------------------------------------------------------------------------
+
+(defn catalogue
+  "GET /api/catalogue — list provisionable resource types and active resources."
+  [_request]
+  (if-let [cat (provision/catalogue)]
+    (json-response cat)
+    (json-response {:templates [] :active_resources []})))
+
+(defn scan-devices
+  "GET /api/scan/devices — scan local host for connected USB devices."
+  [_request]
+  (let [host-label (.. java.net.InetAddress getLocalHost getHostName)
+        result (devices/scan-all-devices host-label)]
+    (json-response result)))
 
 ;; ---------------------------------------------------------------------------
 ;; Compose template handler
