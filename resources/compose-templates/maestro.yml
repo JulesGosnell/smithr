@@ -36,17 +36,18 @@ services:
         done
         adb -s "$$ADB_TARGET" wait-for-device
         echo "[maestro] ADB connected."
-        ## Uncomment the block below once the Artha APK uses api-config.json
-        ## (same mechanism as the iOS app). This pushes a config file into the
-        ## app's data directory so the release APK connects to a local server
-        ## instead of the baked-in production URL (https://artha.care).
-        ## Requires API_URL to be set, e.g. API_URL=http://10.21.0.1:3000
-        #if [ -n "$$API_URL" ]; then
-        #    echo "[maestro] Injecting api-config.json: $$API_URL"
-        #    adb -s "$$ADB_TARGET" shell "mkdir -p /data/data/$$BUNDLE_ID/files"
-        #    adb -s "$$ADB_TARGET" shell "echo '{\"apiUrl\": \"$$API_URL\"}' > /data/data/$$BUNDLE_ID/files/api-config.json"
-        #    echo "[maestro] api-config.json written."
-        #fi
+        # Inject api-config.json so the release APK connects to the test
+        # server instead of the baked-in production URL (https://artha.care).
+        # Writing to /data/data/ requires root — emulators support adb root.
+        if [ -n "$$API_URL" ]; then
+            echo "[maestro] Injecting api-config.json: $$API_URL"
+            adb -s "$$ADB_TARGET" root 2>/dev/null || true
+            sleep 1
+            adb -s "$$ADB_TARGET" connect "$$ADB_TARGET" 2>/dev/null || true
+            adb -s "$$ADB_TARGET" shell "mkdir -p /data/data/$$BUNDLE_ID/files"
+            adb -s "$$ADB_TARGET" shell "echo '{\"apiUrl\": \"$$API_URL\"}' > /data/data/$$BUNDLE_ID/files/api-config.json"
+            echo "[maestro] api-config.json written."
+        fi
         echo "[maestro] Sidecar ready."
         echo "[maestro] Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
         exec sleep infinity
@@ -56,8 +57,7 @@ services:
       MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
       JAVA_TOOL_OPTIONS: ""
       BUNDLE_ID: ${BUNDLE_ID:-com.artha.healthcare}
-      ## Uncomment once APK supports api-config.json:
-      #API_URL: ${API_URL:-}
+      API_URL: ${API_URL:-}
     healthcheck:
       test: ["CMD-SHELL", "adb -s $$ADB_TARGET shell echo ok 2>/dev/null | grep -q ok"]
       interval: 10s
