@@ -15,7 +15,7 @@ services:
       SMITHR_RESOURCE_TYPE: phone
       SMITHR_PLATFORM: ios
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
-      SMITHR_PORTS: "7001"
+      SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
     networks:
       - smithr-network

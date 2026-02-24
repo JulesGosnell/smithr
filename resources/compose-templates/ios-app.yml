@@ -1,0 +1,50 @@
+#
+# iOS app install/uninstall sidecar
+#
+# SSHes into the macOS VM (via ios-phone proxy), installs the .app
+# bundle on the iOS Simulator, launches it, and stays alive.
+# On shutdown: uninstalls the app before the phone lease is released.
+#
+# Compose with the ios-phone proxy template:
+#
+#   curl -s http://localhost:7070/api/compose/ios-phone > /tmp/ios.yml
+#   curl -s http://localhost:7070/api/compose/ios-app > /tmp/ios-app.yml
+#   APP_PATH=/path/to/MyApp.app docker compose -f /tmp/ios.yml -f /tmp/ios-app.yml -p test up -d
+#
+# Env vars:
+#   APP_PATH        — host path to .app bundle (required)
+#   BUNDLE_ID       — iOS bundle identifier (default: com.artha.healthcare)
+#   APP_BASENAME    — .app directory name (default: Artha.app)
+#   SSH_USER        — SSH user on macOS VM (default: smithr)
+#   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_macos)
+#   API_URL         — override api-config.json in the app bundle (optional)
+#
+services:
+  app:
+    image: smithr-simctl-tools:latest
+    depends_on:
+      ios-phone:
+        condition: service_healthy
+    environment:
+      SSH_TARGET: ios-phone:22
+      SSH_USER: ${SSH_USER:-smithr}
+      SSH_KEY: /root/.ssh/id_macos
+      BUNDLE_ID: ${BUNDLE_ID:-com.artha.healthcare}
+      APP_FILE: /app/${APP_BASENAME:-Artha.app}
+      API_URL: ${API_URL:-}
+    volumes:
+      - ${APP_PATH:?APP_PATH must be set}:/app:ro
+      - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/app-installed"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    stop_grace_period: 30s
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

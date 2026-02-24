@@ -210,6 +210,8 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | Physical Phone | `layers/physical-phone.yml` | ADB proxy for USB-connected Android phones |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
 | Maestro Sidecar | compose template `maestro` | Persistent Maestro test runner (Android) |
+| iOS App Sidecar | compose template `ios-app` | App install/uninstall via SSH + simctl |
+| iOS Maestro Sidecar | compose template `ios-maestro` | Maestro test runner via SSH into macOS VM |
 | Smithr Service | `layers/server.yml` | Clojure control plane (port 7070) |
 
 ### Project Layers
@@ -462,9 +464,101 @@ Key design decisions:
 - **Substrate filtering**: Pass `SMITHR_SUBSTRATE=emulated` or `physical` to
   target a specific phone type.
 
-For iOS, Maestro requires macOS (XCTest framework). The iOS Maestro approach
-uses SSH into the macOS VM — a fundamentally different code path handled by
-the `ios-maestro.yml` layer in the consuming project.
+### Maestro Sidecar (iOS)
+
+iOS Maestro is fundamentally different from Android. Maestro requires the
+XCTest framework, which only runs on macOS — the same host as the Simulator.
+The sidecar SSHes into the macOS VM to execute Maestro remotely.
+
+```bash
+# Download templates
+curl -s http://localhost:7070/api/compose/ios-phone > ios.yml
+curl -s http://localhost:7070/api/compose/ios-maestro > ios-maestro.yml
+
+# Start — Maestro sidecar waits for phone proxy (SSH tunnel)
+SMITHR_LESSEE="ci-123" SSH_KEY_PATH=~/.ssh/id_macos FLOWS_DIR=/path/to/flows \
+  docker compose -f ios.yml -f ios-maestro.yml -p test up -d
+
+# Run tests via docker exec (Maestro runs ON the macOS VM via SSH)
+docker exec test-maestro-1 /run-test.sh /flows/login.yaml
+
+# Tear down
+docker compose -p test down
+```
+
+Key design decisions:
+
+- **SSH-through-proxy**: The iOS phone proxy tunnels port 22 (SSH) from the
+  macOS VM. The sidecar SSHes through `ios-phone:22` to run Maestro remotely.
+- **Sidecar mode**: Like Android, the container stays alive and tests are
+  invoked via `docker exec /run-test.sh <flow>`. Flow files are SCP'd to the
+  VM before each test and cleaned up afterwards.
+- **`path_helper` for SSH sessions**: macOS SSH sessions lack the full PATH.
+  The run script sources `/usr/libexec/path_helper` to find Maestro.
+
+#### Custom Maestro Build (smithr)
+
+Maestro 2.1.0 ships pre-built XCTest runners for arm64 only. Our macOS VMs
+run under QEMU on x86_64 hosts, so the Simulator needs x86_64 binaries. We
+also need the driver-port patch for concurrent Maestro instances.
+
+**Two patched jars** (both at `/srv/shared/images/`):
+
+| Jar | Size | What's changed |
+|-----|------|----------------|
+| `maestro-cli-2.1.0-smithr.jar` | 1.1 MB | `selectPort()` reads `-Dmaestro.driver.port` system property for concurrent instances |
+| `maestro-ios-driver-smithr.jar` | 17 MB | XCTest runner rebuilt as **universal binary (x86_64 + arm64)** for Simulator; arm64 for physical devices |
+
+**How to rebuild** (on the macOS VM):
+
+```bash
+# Clone Maestro source
+cd ~/src && git clone --depth 1 --branch v2.1.0 https://github.com/mobile-dev-inc/maestro.git
+
+# Build universal Simulator runner
+cd maestro/maestro-ios-xctest-runner
+xcodebuild build-for-testing \
+  -project maestro-driver-ios.xcodeproj \
+  -scheme maestro-driver-ios \
+  -sdk iphonesimulator \
+  -destination "generic/platform=iOS Simulator" \
+  ARCHS="x86_64 arm64" ONLY_ACTIVE_ARCH=NO \
+  -derivedDataPath /tmp/maestro-build-sim
+
+# Build device runner
+xcodebuild build-for-testing \
+  -project maestro-driver-ios.xcodeproj \
+  -scheme maestro-driver-ios \
+  -sdk iphoneos \
+  -destination "generic/platform=iOS" \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=NO \
+  ARCHS="arm64" \
+  -derivedDataPath /tmp/maestro-build-device
+
+# Repack: extract original jar, replace zipped .app bundles, rejar
+```
+
+**Install on VM**: Copy both jars to `~/.maestro/lib/`, replacing
+`maestro-cli-2.1.0.jar` and `maestro-ios-driver.jar`.
+
+### iOS App Sidecar
+
+The `ios-app` compose template installs/uninstalls an iOS app on the Simulator
+via SSH + `xcrun simctl`. It composes with the `ios-phone` proxy:
+
+```bash
+curl -s http://localhost:7070/api/compose/ios-phone > ios.yml
+curl -s http://localhost:7070/api/compose/ios-app > ios-app.yml
+
+APP_PATH=/path/to/MyApp.app SSH_KEY_PATH=~/.ssh/id_macos \
+  docker compose -f ios.yml -f ios-app.yml -p test up -d
+
+# On shutdown: uninstalls the app automatically
+docker compose -p test down
+```
+
+Supports optional `API_URL` env var to inject `api-config.json` into the app
+bundle after install (overrides the baked-in production URL for E2E testing).
 
 ## Shared Server Environment
 
