@@ -33,6 +33,17 @@
         (str/trim out)))
     (catch Exception _ nil)))
 
+(defn- adb-device-name
+  "Get the user-facing device name (e.g. 'OPPO A53') from settings."
+  [serial]
+  (try
+    (let [{:keys [exit out]} (shell/sh "adb" "-s" serial "shell"
+                                       "settings" "get" "global" "device_name")]
+      (when (and (zero? exit) (not (str/blank? out))
+                 (not= (str/trim out) "null"))
+        (str/trim out)))
+    (catch Exception _ nil)))
+
 (defn- adb-device-wifi-ip
   "Get the WiFi IP address of a physical Android device.
    Does NOT switch to TCP mode — just reads the IP via USB.
@@ -64,11 +75,14 @@
                            (remove #(str/includes? % ":")))]
           (doall
             (for [serial serials]
-              (let [ip (adb-device-wifi-ip serial)]
+              (let [ip (adb-device-wifi-ip serial)
+                    model (or (adb-device-model serial) "Unknown")
+                    dname (adb-device-name serial)]
                 (cond-> {:serial serial
                          :platform "android"
                          :substrate "physical"
-                         :model (or (adb-device-model serial) "Unknown")}
+                         :model model
+                         :device-name (or dname model)}
                   ip (assoc :wifi-ip ip))))))
         (do (log/debug "adb devices failed, exit:" exit)
             [])))
@@ -87,14 +101,26 @@
        (map str/trim)
        (remove str/blank?)))
 
-(defn- idevice-model
-  "Get the model identifier of an iOS device by UDID."
-  [udid]
+(defn- idevice-info-key
+  "Get a single key from ideviceinfo for a device."
+  [udid key]
   (try
-    (let [{:keys [exit out]} (shell/sh "ideviceinfo" "-u" udid "-k" "ProductType")]
-      (when (zero? exit)
+    (let [{:keys [exit out]} (shell/sh "ideviceinfo" "-u" udid "-k" key)]
+      (when (and (zero? exit) (not (str/blank? out)))
         (str/trim out)))
     (catch Exception _ nil)))
+
+(defn- idevice-model
+  "Get the marketing model name of an iOS device (e.g. 'iPhone 12 Pro Max').
+   Falls back to ProductType (e.g. 'iPhone13,4') if MarketingName unavailable."
+  [udid]
+  (or (idevice-info-key udid "MarketingName")
+      (idevice-info-key udid "ProductType")))
+
+(defn- idevice-name
+  "Get the user-set device name (e.g. \"Jules' iPhone 12 Pro Max\")."
+  [udid]
+  (idevice-info-key udid "DeviceName"))
 
 (defn scan-ios-devices
   "Scan for physical iOS devices via libimobiledevice.
@@ -106,10 +132,13 @@
         (let [udids (parse-idevice-list out)]
           (doall
             (for [udid udids]
-              {:udid udid
-               :platform "ios"
-               :substrate "physical"
-               :model (or (idevice-model udid) "Unknown")})))
+              (let [model (or (idevice-model udid) "Unknown")
+                    dname (idevice-name udid)]
+                {:udid udid
+                 :platform "ios"
+                 :substrate "physical"
+                 :model model
+                 :device-name (or dname model)}))))
         (do (log/debug "idevice_id failed, exit:" exit)
             [])))
     (catch Exception e
@@ -139,6 +168,7 @@
      :container (str "physical-" (or (:serial device) (:udid device)))
      :substrate "physical"
      :model (:model device)
+     :device-name (:device-name device)
      :provisioned? false
      :connection (case platform
                    :android (cond-> {:adb-host (or (:wifi-ip device) "localhost")
@@ -179,12 +209,14 @@
       (let [resource (device->resource host-label device)
             existing (state/resource (:id resource))]
         (when-not existing
-          (log/info "Discovered physical device:" (:id resource) "model:" (:model device))
+          (log/info "Discovered physical device:" (:device-name device)
+                    "(" (:model device) ")" (:id resource))
           (state/upsert-resource! resource)
           (state/record-event! "device-discovered"
             {:resource (:id resource)
              :platform (:platform device)
              :model (:model device)
+             :device-name (:device-name device)
              :substrate "physical"}))))
     ;; Remove unplugged devices (only if not currently leased)
     (doseq [r current-physical]

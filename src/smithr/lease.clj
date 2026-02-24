@@ -808,7 +808,10 @@
                              (seq server-ports) (assoc :server-ports server-ports)
                              ;; Include UDID for physical iOS devices
                              (get-in resource [:connection :udid])
-                             (assoc :udid (get-in resource [:connection :udid])))]
+                             (assoc :udid (get-in resource [:connection :udid]))
+                             ;; Include device name for physical devices
+                             (:device-name resource)
+                             (assoc :device-name (:device-name resource)))]
             (swap! state/state
                    (fn [s]
                      (cond-> s
@@ -823,6 +826,7 @@
               (when port-map
                 (swap! state/state assoc-in [:leases lease-id :connection] final-connection))
               (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
+                        (when (:device-name resource) (str "\"" (:device-name resource) "\""))
                         "lessee:" lessee "ttl:" ttl-seconds "s"
                         "tunnel-port:" (:port tunnel)
                         (when (seq server-ports) (str "server-ports:" server-ports))

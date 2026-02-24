@@ -286,8 +286,8 @@
        (:type resource) " · " (:platform resource)
        (when-let [sub (:substrate resource)]
          (str " · " sub))
-       (when-let [model (:model resource)]
-         (str " · " model))
+       (when-let [dname (or (:device_name resource) (:model resource))]
+         (str " · " dname))
        (when max-slots (str " · " active-count "/" max-slots " slots"))]
       [:span.box-status {:class status}
        (str (when-let [si (substrate-icon (:substrate resource))]
