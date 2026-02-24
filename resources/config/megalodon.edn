@@ -31,8 +31,13 @@
                      :catalogue {:type "phone"
                                  :platform "android"
                                  :substrate "emulated"
-                                 :model "Nexus 5"
-                                 :os "Android 9.0"}}
+                                 :os "Android 9.0"}
+                     :variants [{:model "Nexus 5"  :resolution "1080x1920" :screen "4.95\"" :device-env {"EMULATOR_DEVICE" "Nexus 5"}}
+                                {:model "Nexus 6"  :resolution "1440x2560" :screen "5.96\"" :device-env {"EMULATOR_DEVICE" "Nexus 6"}}
+                                {:model "Pixel 2"  :resolution "1080x1920" :screen "5.0\""  :device-env {"EMULATOR_DEVICE" "pixel_2"}}
+                                {:model "Pixel 3a" :resolution "1080x2220" :screen "5.6\""  :device-env {"EMULATOR_DEVICE" "pixel_3a"}}
+                                {:model "Pixel 5"  :resolution "1080x2340" :screen "6.0\""  :device-env {"EMULATOR_DEVICE" "pixel_5"}}
+                                {:model "Pixel 6"  :resolution "1080x2400" :screen "6.4\""  :device-env {"EMULATOR_DEVICE" "pixel_6"}}]}
    :android-build   {:compose-files ["layers/android-build.yml"]
                      :env-template {"SMITHR_ANDROID_BUILD_RUNE" :auto
                                     "SMITHR_ANDROID_BUILD_IP" :auto}
@@ -41,7 +46,8 @@
                      :catalogue {:type "vm"
                                  :platform "android-build"
                                  :substrate "virtual"
-                                 :os "Fedora 43"}}
+                                 :os "Fedora 43"}
+                     :variants [{:model "Fedora 43"}]}
    :macos-vm        {:compose-files ["layers/xcode.yml"]
                      :env-template {"SMITHR_XCODE_RUNE" :auto
                                     "SMITHR_MACOS_IP" :auto
@@ -51,7 +57,8 @@
                      :catalogue {:type "vm"
                                  :platform "macos"
                                  :substrate "virtual"
-                                 :os "macOS Sonoma"}}
+                                 :os "macOS Sonoma"}
+                     :variants [{:model "macOS Sonoma"}]}
    :ios-phone       {:compose-files ["layers/xcode.yml" "layers/ios.yml"]
                      :env-template {"SMITHR_XCODE_RUNE" :auto
                                     "SMITHR_MACOS_IP" :auto
@@ -61,8 +68,14 @@
                      :catalogue {:type "phone"
                                  :platform "ios"
                                  :substrate "simulated"
-                                 :model "iPhone 16 Pro Max"
-                                 :os "iOS 18.3"}}}
+                                 :os "iOS 18.3"}
+                     :variants [{:model "iPhone SE (3rd generation)" :resolution "750x1334"  :screen "4.7\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone SE (3rd generation)"}}
+                                {:model "iPhone 12 mini"             :resolution "1080x2340" :screen "5.4\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 12 mini"}}
+                                {:model "iPhone 13"                  :resolution "1170x2532" :screen "6.1\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 13"}}
+                                {:model "iPhone 14 Plus"             :resolution "1284x2778" :screen "6.7\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 14 Plus"}}
+                                {:model "iPhone 15 Pro"              :resolution "1179x2556" :screen "6.1\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 15 Pro"}}
+                                {:model "iPhone 16 Pro Max"          :resolution "1320x2868" :screen "6.9\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 16 Pro Max"}}
+                                {:model "iPhone 16e"                 :resolution "1170x2532" :screen "6.1\"" :device-env {"SMITHR_IOS_DEVICE" "iPhone 16e"}}]}}
   :type-mapping {"phone:android"      :android-phone
                  "phone:ios"          :ios-phone
                  "vm:android-build"   :android-build

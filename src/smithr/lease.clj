@@ -151,6 +151,44 @@
                            "attempt" attempt ":" out-str)
                 (Thread/sleep 1000) (recur (inc attempt)))))))))
 
+(defn- start-socat-bridge!
+  "Start a socat bridge for resources that don't need SSH tunnels.
+   Forwards from an allocated tunnel port directly to the target IP:port.
+   Works for server containers (container-ip), physical phones (adb-host), etc.
+   Returns tunnel info map compatible with start-tunnel!."
+  [lease-id resource target-port]
+  (let [conn (:connection resource)
+        target-ip (or (:container-ip conn) (:adb-host conn) (:wifi-ip conn) "localhost")
+        tunnel-port (allocate-tunnel-port!)
+        target-str (str target-ip ":" target-port)]
+    (log/info "Starting socat bridge on port" tunnel-port "for lease" lease-id
+              "→" target-str)
+    (try
+      (let [cmd ["socat"
+                 (str "TCP-LISTEN:" tunnel-port ",fork,reuseaddr")
+                 (str "TCP:" target-str)]
+            proc (-> (ProcessBuilder. ^java.util.List cmd)
+                     (.redirectErrorStream true)
+                     (.start))
+            tunnel-info {:port        tunnel-port
+                         :process     proc
+                         :resource-id (:id resource)
+                         :target      target-str
+                         :started-at  (Instant/now)}]
+        (swap! tunnels assoc lease-id tunnel-info)
+        (if (await-port-ready tunnel-port 5000)
+          (do (log/info "Socat bridge ready: port" tunnel-port "→" target-str "pid" (.pid proc))
+              tunnel-info)
+          (do (if (.isAlive proc)
+                (log/error "Socat process alive but port" tunnel-port
+                           "not accepting connections after 5s")
+                (log/error "Socat exited on port" tunnel-port))
+              (stop-tunnel! lease-id)
+              nil)))
+      (catch Exception e
+        (log/error "Failed to start socat bridge on port" tunnel-port ":" (.getMessage e))
+        nil))))
+
 (defn- start-tunnel!
   "Start an SSH tunnel for a lease. Returns tunnel info map.
    Uses `ssh -N -L` for port forwarding. One SSH process per lease.
@@ -686,7 +724,28 @@
             (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
             (unlease! lease-id)
             nil)
-        (if-let [tunnel (start-tunnel! lease-id resource)]
+        (if-let [tunnel (cond
+                          ;; Server resources: socat bridge to container IP (no SSH)
+                          (= (:type resource) :server)
+                          (let [svc-port (get-in resource [:connection :service-port] 3000)]
+                            (start-socat-bridge! lease-id resource svc-port))
+                          ;; Physical devices: switch to TCP, socat bridge to WiFi IP
+                          (= (:substrate resource) "physical")
+                          (let [{:keys [adb-host adb-port serial wifi-ip]} (:connection resource)
+                                target-ip (or wifi-ip adb-host)
+                                target-port (or adb-port 5555)]
+                            ;; Switch physical device to TCP ADB if needed
+                            (when serial
+                              (log/info "Switching physical device" serial "to TCP mode")
+                              (shell/sh "adb" "-s" serial "tcpip" (str target-port))
+                              (Thread/sleep 2000)
+                              ;; Ensure we can reach it over TCP
+                              (when (and target-ip (not= target-ip "localhost"))
+                                (shell/sh "adb" "connect" (str target-ip ":" target-port))))
+                            (start-socat-bridge! lease-id resource target-port))
+                          ;; All others: SSH tunnel
+                          :else
+                          (start-tunnel! lease-id resource))]
           (if (and (= (:platform resource) :android)
                    (not (await-adb-ready! (:port tunnel) 15000)))
             ;; ADB not ready through tunnel — rollback

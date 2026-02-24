@@ -406,92 +406,78 @@
           ^{:key (:id a)} [adopt-box a])]])))
 
 ;; ---------------------------------------------------------------------------
-;; Catalogue section — provisionable resource templates
+;; Catalogue section — table of provisionable device variants
 ;; ---------------------------------------------------------------------------
 
-(defn- matching-resources
-  "Find active resources matching a catalogue template's type+platform."
-  [template active-resources]
-  (->> active-resources
-       (filter #(and (= (:type %) (:type template))
-                     (= (:platform %) (:platform template))))))
+(defonce provisioning (r/atom #{}))  ;; set of "template:model" keys currently provisioning
 
-(defn- template-counts
-  "Count resources by status for a template."
-  [template active-resources]
-  (let [matches (matching-resources template active-resources)]
-    {:warm    (count (filter #(= (:status %) "warm") matches))
-     :leased  (count (filter #(= (:status %) "leased") matches))
-     :shared  (count (filter #(= (:status %) "shared") matches))
-     :booting (count (filter #(= (:status %) "booting") matches))
-     :total   (count matches)}))
+(defn- provision-key [template model]
+  (str template ":" model))
 
-(defonce provisioning (r/atom #{}))  ;; set of template keys currently provisioning
+(defn- provision-variant! [template model]
+  (let [pk (provision-key template model)]
+    (swap! provisioning conj pk)
+    (api/provision! template model)
+    ;; Clear the spinner after 60s regardless (safety net)
+    (js/setTimeout #(swap! provisioning disj pk) 60000)))
 
-(defn- provision-template! [template-key]
-  (swap! provisioning conj template-key)
-  (api/provision! template-key)
-  ;; Clear the spinner after 60s regardless (safety net)
-  (js/setTimeout #(swap! provisioning disj template-key) 60000))
+(defn- variant-platform-icon [variant]
+  (case (:platform variant)
+    "android"       "\uD83E\uDD16"   ;; 🤖
+    "ios"           "\uD83D\uDCF1"   ;; 📱
+    "macos"         "\uD83C\uDF4E"   ;; 🍎
+    "android-build" "\uD83D\uDD28"   ;; 🔨
+    "\uD83D\uDCE6"))                  ;; 📦
 
-(defn catalogue-card [template active-resources]
-  (let [counts (template-counts template active-resources)
-        in-progress? (contains? @provisioning (:key template))]
-    [:div.nested-box.catalogue-card
-     [:div.box-header
-      [:span.resource-icon
-       (case [(:type template) (:platform template)]
-         ["phone" "android"]    "\uD83E\uDD16"
-         ["phone" "ios"]        "\uD83D\uDCF1"
-         ["vm" "macos"]         "\uD83C\uDF4E"
-         ["vm" "android-build"] "\uD83D\uDD28"
-         "\uD83D\uDCE6")]
-      [:span.box-title (:key template)]]
+(defn- variant-platform-label [variant]
+  (case (:platform variant)
+    "android"       "Android"
+    "ios"           "iOS"
+    "macos"         "macOS"
+    "android-build" "Build"
+    (:platform variant)))
 
-     ;; Device / variant info
-     [:div.catalogue-device
-      (when (:model template)
-        [:span.catalogue-model (:model template)])
-      (when (:os template)
-        [:span.catalogue-os (:os template)])]
+(defn- running-badge [running]
+  (cond
+    (pos? running) [:span.count-badge.warm (str running " running")]
+    :else          [:span.count-badge.none "0"]))
 
-     ;; Type metadata
-     [:div.catalogue-meta
-      [:span (:type template)]
-      (when (:substrate template)
-        [:span " \u00B7 " (:substrate template)])
-      [:span " \u00B7 ~" (:boot_time_seconds template 60) "s boot"]]
-
-     ;; Live resource counts
-     [:div.catalogue-counts
-      (when (pos? (:warm counts))
-        [:span.count-badge.warm (str (:warm counts) " warm")])
-      (when (pos? (:leased counts))
-        [:span.count-badge.leased (str (:leased counts) " leased")])
-      (when (pos? (:shared counts))
-        [:span.count-badge.shared (str (:shared counts) " shared")])
-      (when (pos? (:booting counts))
-        [:span.count-badge.booting (str (:booting counts) " booting")])
-      (when (zero? (:total counts))
-        [:span.count-badge.none "none running"])]
-
-     ;; Provision button — always visible
-     [:div.box-controls
+(defn catalogue-row [variant]
+  (let [pk (provision-key (:template variant) (:model variant))
+        in-progress? (contains? @provisioning pk)]
+    [:tr.catalogue-row {:class (:platform variant)}
+     [:td [:span.cat-platform
+      [:span.cat-platform-icon (variant-platform-icon variant)]
+      [:span.cat-platform-label (variant-platform-label variant)]]]
+     [:td.cat-model (:model variant)]
+     [:td.cat-resolution (or (:resolution variant) "\u2014")]
+     [:td.cat-screen (or (:screen variant) "\u2014")]
+     [:td.cat-running [running-badge (:running variant)]]
+     [:td.cat-action
       [:button.btn.provision
-       {:on-click #(when-not in-progress? (provision-template! (:key template)))
+       {:on-click #(when-not in-progress? (provision-variant! (:template variant) (:model variant)))
         :disabled in-progress?
         :class (when in-progress? "provisioning")}
        (if in-progress? "Provisioning\u2026" "Provision")]]]))
 
 (defn catalogue-section []
   (let [cat @state/catalogue]
-    (when (and cat (seq (:templates cat)))
+    (when (and cat (seq (:variants cat)))
       [:div.catalogue-section {:id "catalogue"}
        [:div.section-header "Resource Catalogue"]
        [:div.section-subtitle "Spin up new resources on demand"]
-       [:div.catalogue-grid
-        (for [t (:templates cat)]
-          ^{:key (:key t)} [catalogue-card t (or (:active_resources cat) [])])]])))
+       [:table.catalogue-table
+        [:thead
+         [:tr
+          [:th "Platform"]
+          [:th "Model"]
+          [:th "Resolution"]
+          [:th "Screen"]
+          [:th "Running"]
+          [:th ""]]]
+        [:tbody
+         (for [v (:variants cat)]
+           ^{:key (str (:template v) ":" (:model v))} [catalogue-row v])]]])))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level components

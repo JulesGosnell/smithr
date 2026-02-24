@@ -17,6 +17,8 @@ SMITHR_PLATFORM="${SMITHR_PLATFORM:-}"
 SMITHR_LEASE_TYPE="${SMITHR_LEASE_TYPE:-phone}"
 SMITHR_WORKSPACE="${SMITHR_WORKSPACE:-}"
 SMITHR_PREFER_HOST="${SMITHR_PREFER_HOST:-}"
+SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-}"
+SMITHR_MODEL="${SMITHR_MODEL:-}"
 
 # Reverse tunnel vars (build leases only)
 # Format: "bind:host:tunnel_port,..." — Smithr creates -R tunnels in its SSH session.
@@ -183,6 +185,12 @@ do_lease() {
   fi
   if [[ -n "$SMITHR_PREFER_HOST" ]]; then
     body=$(echo "$body" | jq --arg h "$SMITHR_PREFER_HOST" '. + {prefer_host: $h}')
+  fi
+  if [[ -n "$SMITHR_SUBSTRATE" ]]; then
+    body=$(echo "$body" | jq --arg s "$SMITHR_SUBSTRATE" '. + {substrate: $s}')
+  fi
+  if [[ -n "$SMITHR_MODEL" ]]; then
+    body=$(echo "$body" | jq --arg m "$SMITHR_MODEL" '. + {model: $m}')
   fi
 
   # Add server_ports for multi-port leases

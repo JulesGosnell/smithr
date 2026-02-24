@@ -34,7 +34,12 @@
     ["/catalogue" {:get {:handler h/catalogue}}]
     ["/provision" {:post {:handler h/provision-resource}}]
     ["/scan/devices" {:get {:handler h/scan-devices}}]
-    ["/compose/:template" {:get {:handler h/serve-compose-template}}]]
+    ["/compose/:template" {:get {:handler h/serve-compose-template}}]
+    ["/templates"
+     {:get  {:handler h/list-published-templates}
+      :post {:handler h/publish-template}}]
+    ["/templates/:name"
+     {:delete {:handler h/delete-published-template}}]]
    ["/openapi.yaml" {:get {:handler h/serve-openapi}}]
 ])
 

@@ -5,6 +5,7 @@
             [smithr.metrics :as metrics]
             [smithr.provision :as provision]
             [smithr.devices :as devices]
+            [smithr.templates :as templates]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -309,18 +310,20 @@
 ;; ---------------------------------------------------------------------------
 
 (defn catalogue
-  "GET /api/catalogue — list provisionable resource types and active resources."
+  "GET /api/catalogue — list provisionable device variants and active resources."
   [_request]
   (if-let [cat (provision/catalogue)]
     (json-response cat)
-    (json-response {:templates [] :active_resources []})))
+    (json-response {:variants [] :active_resources []})))
 
 (defn provision-resource
   "POST /api/provision — spin up a new resource from a catalogue template.
-   Does NOT create a lease — just provisions the container for later use."
+   Does NOT create a lease — just provisions the container for later use.
+   Optional 'model' param selects a device variant (e.g. 'Pixel 3a')."
   [request]
   (let [body (:body-params request)
-        template-key (or (:template body) (get body "template"))]
+        template-key (or (:template body) (get body "template"))
+        model (or (:model body) (get body "model"))]
     (if-not template-key
       {:status 400
        :body {:error "bad_request" :message "Missing 'template' field"}}
@@ -331,16 +334,21 @@
             (not-found (str "Unknown template: " template-key))
             (let [cat-info (:catalogue tmpl)
                   type (:type cat-info)
-                  platform (:platform cat-info)]
-              (log/info "Provision request: template=" template-key)
+                  platform (:platform cat-info)
+                  device-env (when model (provision/lookup-variant template-key model))]
+              (log/info "Provision request: template=" template-key "model=" model)
               (future
                 (try
-                  (provision/ensure-resource! {:type type :platform platform})
+                  (provision/ensure-resource! {:type type :platform platform
+                                              :device-env device-env})
                   (catch Exception e
                     (log/error e "Provisioning failed for" template-key))))
               (json-response 202 {:status "provisioning"
                                   :template template-key
-                                  :message (str "Provisioning " template-key " — check dashboard for progress")}))))))))
+                                  :model model
+                                  :message (str "Provisioning " template-key
+                                                (when model (str " (" model ")"))
+                                                " — check dashboard for progress")}))))))))
 
 (defn scan-devices
   "GET /api/scan/devices — scan local host for connected USB devices."
@@ -353,28 +361,98 @@
 ;; Compose template handler
 ;; ---------------------------------------------------------------------------
 
-(def ^:private valid-templates
+(def ^:private static-templates
   #{"android-phone" "ios-phone" "macos-build" "android-build"})
+
+(defn- resolve-registry-url []
+  [(or (System/getenv "SMITHR_REGISTRY") "localhost:5000")
+   (or (System/getenv "SMITHR_URL") "http://10.21.0.1:7070")])
 
 (defn serve-compose-template
   "GET /api/compose/:template — serve a ready-to-use compose YAML for a resource type.
+   Checks static templates first, then dynamic (published) templates.
    Substitutes {{REGISTRY}} and {{SMITHR_URL}} with the current host's values."
   [request]
-  (let [template (get-in request [:path-params :template])]
-    (if-not (valid-templates template)
-      (not-found (str "Unknown template: " template
-                      ". Available: " (str/join ", " (sort valid-templates))))
+  (let [template (get-in request [:path-params :template])
+        [registry api-url] (resolve-registry-url)]
+    (cond
+      ;; Static template (built-in)
+      (static-templates template)
       (let [resource (io/resource (str "compose-templates/" template ".yml"))]
         (if-not resource
           (not-found (str "Template file missing: " template))
           (let [yaml     (slurp resource)
-                ;; Resolve placeholders with runtime values
-                registry (or (System/getenv "SMITHR_REGISTRY") "localhost:5000")
-                api-url  (or (System/getenv "SMITHR_URL") "http://10.21.0.1:7070")
                 resolved (-> yaml
                               (str/replace "{{REGISTRY}}" registry)
                               (str/replace "{{SMITHR_URL}}" api-url))]
             {:status  200
              :headers {"Content-Type"        "application/x-yaml; charset=utf-8"
                        "Content-Disposition" (str "inline; filename=\"" template ".yml\"")}
-             :body    resolved}))))))
+             :body    resolved})))
+
+      ;; Dynamic template (published via API)
+      (templates/get-template template)
+      (let [yaml (templates/generate-proxy-compose template registry api-url)]
+        (if yaml
+          {:status  200
+           :headers {"Content-Type"        "application/x-yaml; charset=utf-8"
+                     "Content-Disposition" (str "inline; filename=\"" template ".yml\"")}
+           :body    yaml}
+          (not-found (str "Failed to generate proxy for template: " template))))
+
+      :else
+      (let [all-names (sort (into static-templates (templates/template-names)))]
+        (not-found (str "Unknown template: " template
+                        ". Available: " (str/join ", " all-names)))))))
+
+;; ---------------------------------------------------------------------------
+;; Template publish handlers
+;; ---------------------------------------------------------------------------
+
+(defn publish-template
+  "POST /api/templates — publish a dynamic compose template.
+   Body: {name, compose_yaml, ports, type, platform}"
+  [request]
+  (let [body (:body-params request)
+        tname (or (:name body) (get body "name"))
+        compose (or (:compose_yaml body) (get body "compose_yaml"))
+        ports (vec (or (:ports body) (get body "ports") [3000]))
+        rtype (or (:type body) (get body "type") "server")
+        platform (or (:platform body) (get body "platform"))]
+    (cond
+      (not tname)
+      {:status 400 :body {:error "bad_request" :message "Missing 'name'"}}
+
+      (not compose)
+      {:status 400 :body {:error "bad_request" :message "Missing 'compose_yaml'"}}
+
+      (not platform)
+      {:status 400 :body {:error "bad_request" :message "Missing 'platform'"}}
+
+      (static-templates tname)
+      (conflict (str "Cannot overwrite built-in template: " tname))
+
+      :else
+      (let [meta {:ports ports :type rtype :platform platform}
+            result (templates/save-template! tname meta compose)]
+        (json-response 201 {:name tname
+                            :type rtype
+                            :platform platform
+                            :ports ports
+                            :message (str "Template '" tname "' published. "
+                                          "Fetch proxy: GET /api/compose/" tname)})))))
+
+(defn list-published-templates
+  "GET /api/templates — list all published (dynamic) templates."
+  [_request]
+  (json-response (templates/list-templates)))
+
+(defn delete-published-template
+  "DELETE /api/templates/:name — remove a published template."
+  [request]
+  (let [tname (get-in request [:path-params :name])]
+    (if (templates/get-template tname)
+      (do (templates/delete-template! tname)
+          {:status 204 :body nil})
+      (not-found (str "Template not found: " tname))))
+)

@@ -9,6 +9,7 @@
             [smithr.metrics :as metrics]
             [smithr.provision :as provision]
             [smithr.devices :as devices]
+            [smithr.templates :as templates]
             [smithr.api :as api])
   (:gen-class))
 
@@ -28,6 +29,9 @@
   (provision/set-config! config)
   (when (:provisioning config)
     (log/info "Provisioning enabled — lazy resource provisioning active"))
+
+  ;; Load dynamic templates from shared storage
+  (templates/load-templates!)
 
   ;; Connect to Docker hosts
   (let [network-name (get-in config [:compose :network] "smithr-network")

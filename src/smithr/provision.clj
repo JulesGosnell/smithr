@@ -247,8 +247,9 @@
 (defn ensure-resource!
   "Provision a resource matching type+platform if no warm one exists.
    Returns the resource ID if provisioning succeeded, nil otherwise.
-   Blocks until the container is healthy or timeout."
-  [{:keys [type platform]}]
+   Blocks until the container is healthy or timeout.
+   Optional :device-env merges extra env vars (e.g. EMULATOR_DEVICE)."
+  [{:keys [type platform device-env]}]
   (let [type (keyword type)
         platform (keyword platform)]
     (when-not (prov-config)
@@ -265,7 +266,8 @@
               (log/warn "Cannot allocate rune/IP for" (:key tmpl))
               nil)
             (when allocation
-              (let [env-map (resolve-env (:env-template tmpl) allocation)
+              (let [env-map (cond-> (resolve-env (:env-template tmpl) allocation)
+                              device-env (merge device-env))
                     rune (:rune allocation)
                     prefix (container-prefix-for (:key tmpl))
                     container-name (str prefix "-" rune)]
@@ -393,20 +395,51 @@
   []
   (some? (prov-config)))
 
+(defn- running-counts-by-template
+  "Count running resources per template key."
+  []
+  (let [cfg (prov-config)
+        type-mapping (:type-mapping cfg)]
+    (->> (state/resources)
+         (map (fn [r]
+                (let [tk (get type-mapping
+                              (str (name (:type r)) ":" (name (:platform r))))]
+                  (when tk (name tk)))))
+         (remove nil?)
+         frequencies)))
+
 (defn catalogue
-  "Return the provisioning catalogue — what templates are available
-   and what resources are currently running."
+  "Return the provisioning catalogue — a flat list of device variants
+   with running counts and active resource details."
   []
   (let [cfg (prov-config)]
     (when cfg
-      (let [templates (->> (:templates cfg)
-                           (map (fn [[k tmpl]]
-                                  (merge {:key (name k)
-                                          :description (:description tmpl "")
-                                          :boot_time_seconds (:boot-time-seconds tmpl 60)}
-                                         (:catalogue tmpl))))
-                           (sort-by :key)
-                           vec)
+      (let [counts (running-counts-by-template)
+            ;; Platform sort order for grouping
+            platform-order {"android" 0 "ios" 1 "macos" 2 "android-build" 3}
+            variants (->> (:templates cfg)
+                          (mapcat (fn [[k tmpl]]
+                                    (let [cat-info (:catalogue tmpl)
+                                          base {:template (name k)
+                                                :type (:type cat-info)
+                                                :platform (:platform cat-info)
+                                                :substrate (:substrate cat-info)
+                                                :os (:os cat-info)
+                                                :boot_time_seconds (:boot-time-seconds tmpl 60)
+                                                :running (get counts (name k) 0)}]
+                                      (if-let [vs (:variants tmpl)]
+                                        (map (fn [v]
+                                               (merge base
+                                                      {:model (:model v)
+                                                       :resolution (:resolution v)
+                                                       :screen (:screen v)}))
+                                             vs)
+                                        ;; No variants — single row with model from catalogue
+                                        [(merge base {:model (:model cat-info)})]))))
+                          (sort-by (fn [v]
+                                     [(get platform-order (:platform v) 99)
+                                      (:model v)]))
+                          vec)
             resources (->> (state/resources)
                            (map (fn [r]
                                   {:id (:id r)
@@ -419,5 +452,15 @@
                                    :host (:host r)}))
                            (sort-by :id)
                            vec)]
-        {:templates templates
+        {:variants variants
          :active_resources resources}))))
+
+(defn lookup-variant
+  "Find the device-env overrides for a specific model within a template.
+   Returns the variant's :device-env map, or nil if not found."
+  [template-key model]
+  (when-let [cfg (prov-config)]
+    (when-let [tmpl (get-in cfg [:templates (keyword template-key)])]
+      (when-let [variants (:variants tmpl)]
+        (some (fn [v] (when (= (:model v) model) (:device-env v)))
+              variants)))))

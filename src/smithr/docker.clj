@@ -114,7 +114,10 @@
                                                  host-address ip)
                                      :ssh-port (if (and remote? (host-port-for 22))
                                                  (host-port-for 22) 22)}
-                     {})]
+                     ;; Default: store container IP for direct-access resources (e.g. servers)
+                     (cond-> {:container-ip ip}
+                       (get labels "smithr.resource.service-port")
+                       (assoc :service-port (Integer/parseInt (get labels "smithr.resource.service-port")))))]
     (cond-> {:id id
              :type res-type
              :platform platform

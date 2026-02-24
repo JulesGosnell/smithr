@@ -615,49 +615,79 @@ body {
   padding: 0.2rem 0 0.6rem;
 }
 
-.catalogue-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.catalogue-card {
+/* Catalogue table */
+.catalogue-table {
+  width: 100%;
+  border-collapse: collapse;
   background: var(--surface);
-  flex: 1 1 240px;
-  min-width: 220px;
-  max-width: 320px;
-  border-color: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 0.85rem;
 }
 
-.catalogue-device {
-  padding: 0.4rem 1rem 0.2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.catalogue-model {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.catalogue-os {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-
-.catalogue-meta {
-  padding: 0.2rem 1rem 0.3rem;
+.catalogue-table thead th {
+  padding: 0.5rem 1rem;
+  text-align: left;
   font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+
+.catalogue-table thead th:last-child {
+  text-align: right;
+}
+
+.catalogue-row td {
+  padding: 0.45rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+
+.catalogue-row:last-child td {
+  border-bottom: none;
+}
+
+.catalogue-row:hover td {
+  background: rgba(255,255,255,0.03);
+}
+
+.cat-platform {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.cat-platform-icon {
+  font-size: 1.1rem;
+}
+
+.cat-platform-label {
+  font-weight: 500;
   color: var(--text-dim);
 }
 
-.catalogue-counts {
-  padding: 0.2rem 1rem 0.4rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+.cat-model {
+  font-weight: 600;
+}
+
+.cat-resolution,
+.cat-screen {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-running {
+  white-space: nowrap;
+}
+
+.cat-action {
+  text-align: right;
 }
 
 .count-badge {
@@ -678,13 +708,13 @@ body {
   background: var(--blue-bg);
   border: 1px solid var(--blue);
   color: var(--blue);
-  padding: 0.35rem 1rem;
+  padding: 0.3rem 0.75rem;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 4px;
   transition: all 0.15s;
-  width: 100%;
+  white-space: nowrap;
 }
 
 .btn.provision:hover:not(:disabled) {

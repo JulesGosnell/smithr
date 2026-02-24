@@ -130,14 +130,18 @@
     {:handler       (fn [_] (fetch-all!))
      :error-handler (partial handle-error "Purge workspace")}))
 
-(defn provision! [template-key]
-  (POST (str base-url "/api/provision")
-    {:params          {:template template-key}
-     :handler         (fn [_] (fetch-all!))
-     :error-handler   (partial handle-error "Provision")
-     :format          :json
-     :response-format :json
-     :keywords?       true}))
+(defn provision!
+  ([template-key]
+   (provision! template-key nil))
+  ([template-key model]
+   (POST (str base-url "/api/provision")
+     {:params          (cond-> {:template template-key}
+                         model (assoc :model model))
+      :handler         (fn [_] (fetch-all!))
+      :error-handler   (partial handle-error "Provision")
+      :format          :json
+      :response-format :json
+      :keywords?       true})))
 
 (defn start-polling!
   "Start polling the API every interval-ms."

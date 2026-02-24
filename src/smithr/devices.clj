@@ -33,6 +33,21 @@
         (str/trim out)))
     (catch Exception _ nil)))
 
+(defn- adb-device-wifi-ip
+  "Get the WiFi IP address of a physical Android device.
+   Does NOT switch to TCP mode — just reads the IP via USB.
+   Returns nil if WiFi is not connected or ADB fails."
+  [serial]
+  (try
+    (let [{:keys [exit out]} (shell/sh "adb" "-s" serial "shell"
+                                       "ip" "addr" "show" "wlan0")]
+      (when (zero? exit)
+        (when-let [m (re-find #"inet (\d+\.\d+\.\d+\.\d+)" out)]
+          (second m))))
+    (catch Exception e
+      (log/debug "Failed to get WiFi IP for" serial ":" (.getMessage e))
+      nil)))
+
 (defn scan-android-devices
   "Scan for physical Android devices via adb.
    Filters out emulator serials (emulator-NNNN) and tunnel endpoints
@@ -49,10 +64,12 @@
                            (remove #(str/includes? % ":")))]
           (doall
             (for [serial serials]
-              {:serial serial
-               :platform "android"
-               :substrate "physical"
-               :model (or (adb-device-model serial) "Unknown")})))
+              (let [ip (adb-device-wifi-ip serial)]
+                (cond-> {:serial serial
+                         :platform "android"
+                         :substrate "physical"
+                         :model (or (adb-device-model serial) "Unknown")}
+                  ip (assoc :wifi-ip ip))))))
         (do (log/debug "adb devices failed, exit:" exit)
             [])))
     (catch Exception e
@@ -124,9 +141,10 @@
      :model (:model device)
      :provisioned? false
      :connection (case platform
-                   :android {:adb-host "localhost"
-                             :adb-port 5555
-                             :serial (:serial device)}
+                   :android (cond-> {:adb-host (or (:wifi-ip device) "localhost")
+                                     :adb-port 5555
+                                     :serial (:serial device)}
+                              (:wifi-ip device) (assoc :wifi-ip (:wifi-ip device)))
                    :ios     {:udid (:udid device)}
                    {})
      :updated-at (Instant/now)}))
