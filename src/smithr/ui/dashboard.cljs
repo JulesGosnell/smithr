@@ -545,6 +545,7 @@
   (let [t (:type event)
         lessee (or (:lessee event) "?")
         container (runic-name (or (:container event) (:resource event) "?"))
+        dname (or (:device_name event) (:device-name event))
         lease-type (or (:lease-type event) "")
         ttl (:ttl event)
         held (:held-seconds event)
@@ -558,14 +559,19 @@
                      (when ws (str " workspace:" ws))
                      (when held (str " held for " (format-duration held))))
       "gc"      (str "GC expires " container " (" lessee ")")
+      "device-discovered" (str "Discovered " (or dname (:model event) container)
+                               (when (:platform event) (str " (" (:platform event) ")")))
+      "device-removed"    (str "Removed " (or dname container))
       (str t " " container))))
 
 (defn- event-icon [event-type]
   (case event-type
-    "lease"   "\uD83D\uDD12"   ;; 🔒
-    "unlease" "\uD83D\uDD11"   ;; 🔑
-    "gc"      "\uD83D\uDDD1"   ;; 🗑
-    "\u2022"))                   ;; •
+    "lease"              "\uD83D\uDD12"   ;; 🔒
+    "unlease"            "\uD83D\uDD11"   ;; 🔑
+    "gc"                 "\uD83D\uDDD1"   ;; 🗑
+    "device-discovered"  "\uD83D\uDD0C"   ;; 🔌
+    "device-removed"     "\u26A0"         ;; ⚠
+    "\u2022"))                              ;; •
 
 (defn audit-pane []
   (let [events (reverse @state/events)]
