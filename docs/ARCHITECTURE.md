@@ -209,6 +209,7 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | iOS Simulator | `layers/ios.yml` | iOS Simulator sidecar (boots inside Xcode VM) |
 | Physical Phone | `layers/physical-phone.yml` | ADB proxy for USB-connected Android phones |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
+| Maestro Sidecar | compose template `maestro` | Persistent Maestro test runner (Android) |
 | Smithr Service | `layers/server.yml` | Clojure control plane (port 7070) |
 
 ### Project Layers
@@ -295,6 +296,59 @@ smithr phone status
   - Compose: `layers/physical-phone.yml`
   - Labels include `smithr.resource.substrate: "physical"` and `smithr.resource.model`
 
+### Android Scaling Strategy
+
+**One emulator per container, multiple containers per host.** This is a deliberate
+architectural choice, not a limitation.
+
+The `budtmo/docker-android` image is designed for a single emulator — its startup
+code, port forwarder, health check, and supervisord config all assume one instance.
+Running multiple emulators in a single container would require forking the image's
+Python startup code to manage multiple AVDs, port pairs, and health checks.
+
+More importantly, multi-emulator-per-container provides no meaningful benefit:
+
+| Factor | Multi-container | Multi-emulator-in-one |
+|--------|----------------|----------------------|
+| **RAM per emulator** | ~2.3 GiB | ~2.3 GiB (same) |
+| **CPU per emulator** | ~4 cores | ~4 cores (same) |
+| **System image sharing** | Docker layer dedup | Filesystem sharing |
+| **Isolation** | Full (independent restart/kill) | None (one crash affects all) |
+| **Health checks** | Per-container (native Docker) | Custom multi-target needed |
+| **Smithr integration** | 1 container = 1 resource | Complex slot tracking |
+| **Image modification** | None (use upstream as-is) | Fork + maintain startup code |
+
+**Resource budget per emulator:**
+- RAM: ~2.3 GiB (hw.ramSize=2048 + QEMU overhead)
+- CPU: 4 cores (hw.cpu.ncore=4)
+- Disk: ~3.2 GiB per AVD + 2.7 GiB shared system images
+
+**Capacity planning (per host):**
+
+| Host | RAM | Cores | Max emulators | Practical limit |
+|------|-----|-------|---------------|-----------------|
+| megalodon (64 GiB) | 62.7 GiB | 32 | ~8 | 4-6 (with other workloads) |
+| prognathodon (64 GiB) | 62.7 GiB | 32 | ~8 | 4-6 (with other workloads) |
+
+To add capacity, launch more containers with different rune suffixes:
+
+```bash
+# Second emulator
+SMITHR_ANDROID_RUNE=ur SMITHR_ANDROID_ADB_PORT=5556 \
+  SMITHR_ANDROID_VNC_PORT=5901 SMITHR_ANDROID_IP=10.21.0.31 \
+  docker compose -f layers/network.yml -f layers/android.yml \
+  -p smithr-phone-ur up -d
+
+# Third emulator
+SMITHR_ANDROID_RUNE=thurs SMITHR_ANDROID_ADB_PORT=5557 \
+  SMITHR_ANDROID_VNC_PORT=5902 SMITHR_ANDROID_IP=10.21.0.32 \
+  docker compose -f layers/network.yml -f layers/android.yml \
+  -p smithr-phone-thurs up -d
+```
+
+Each container is independently discoverable by Smithr via `smithr.managed=true`
+labels, independently leasable, and independently restartable.
+
 ### Substrate Labels
 
 Resources carry a `substrate` label indicating their backing technology:
@@ -373,6 +427,44 @@ The Clojure service has replaced the legacy NFS JSON + flock phone pool.
 
 - In **sandbox mode**: one phone gets a VNC view forwarded to the host desktop
 - In **CI mode**: phones run headless — no display needed
+
+### Maestro Sidecar (Android)
+
+The `maestro` compose template provides a persistent Maestro test runner for
+Android targets (emulator and physical). It composes with the `android-phone`
+proxy template:
+
+```bash
+# Download both templates
+curl -s http://localhost:7070/api/compose/android-phone > phone.yml
+curl -s http://localhost:7070/api/compose/maestro > maestro.yml
+
+# Start together — Maestro waits for phone proxy to be healthy
+SMITHR_LESSEE="ci-123" FLOWS_DIR=/path/to/flows \
+  docker compose -f phone.yml -f maestro.yml -p test up -d
+
+# Run tests via docker exec
+docker exec test-maestro-1 maestro --device android-phone:5555 test /flows/login.yaml
+
+# Tear down
+docker compose -p test down
+```
+
+Key design decisions:
+
+- **Sidecar mode**: Connects ADB on startup, stays alive via `sleep infinity`.
+  Tests are invoked via `docker exec`, not by restarting the container.
+- **ADB key sharing**: Mounts host's `~/.android/adbkey` so physical phones
+  don't prompt for USB debugging authorization.
+- **Same image for emulator and physical**: The proxy abstracts the phone
+  substrate. Maestro sees ADB at `android-phone:5555` regardless of whether
+  the backend is an emulator or a USB-connected phone.
+- **Substrate filtering**: Pass `SMITHR_SUBSTRATE=emulated` or `physical` to
+  target a specific phone type.
+
+For iOS, Maestro requires macOS (XCTest framework). The iOS Maestro approach
+uses SSH into the macOS VM — a fundamentally different code path handled by
+the `ios-maestro.yml` layer in the consuming project.
 
 ## Shared Server Environment
 
