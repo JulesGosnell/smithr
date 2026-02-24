@@ -33,8 +33,8 @@ services:
       APP_FILE: /app/${APP_BASENAME:-Artha.app}
       API_URL: ${API_URL:-}
     volumes:
-      - ${APP_PATH:?APP_PATH must be set}:/app:ro
-      - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro
+      - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]
       interval: 3s
