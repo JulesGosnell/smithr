@@ -17,6 +17,9 @@ services:
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: "5555"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
+      SMITHR_MODEL: ${SMITHR_MODEL:-}
+      SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
     networks:
       - smithr-network
 

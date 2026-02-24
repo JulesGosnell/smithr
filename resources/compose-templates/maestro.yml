@@ -1,0 +1,59 @@
+#
+# Maestro test sidecar (Android)
+#
+# Stays alive as a sidecar — run tests via docker exec:
+#
+#   docker exec <project>-maestro-1 maestro --device $$ADB_TARGET test /flows/login.yaml
+#
+# Compose this with the android-phone proxy template:
+#
+#   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
+#   curl -s http://localhost:7070/api/compose/maestro > /tmp/maestro.yml
+#   FLOWS_DIR=/path/to/flows docker compose -f /tmp/phone.yml -f /tmp/maestro.yml -p test up -d
+#
+# Env vars:
+#   ADB_TARGET   — ADB connection target (default: android-phone:5555)
+#   DRIVER_PORT  — Maestro driver port (default: 7101)
+#   FLOWS_DIR    — Host path to Maestro flow files (default: current dir)
+#
+services:
+  maestro:
+    image: artha-maestro:latest
+    depends_on:
+      android-phone:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "[maestro] Connecting ADB to $$ADB_TARGET..."
+        for i in $$(seq 1 60); do
+          if adb connect "$$ADB_TARGET" 2>/dev/null | grep -q "connected"; then
+            break
+          fi
+          sleep 2
+        done
+        adb -s "$$ADB_TARGET" wait-for-device
+        echo "[maestro] ADB connected. Sidecar ready."
+        echo "[maestro] Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
+        exec sleep infinity
+    environment:
+      ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
+      DRIVER_PORT: ${DRIVER_PORT:-7101}
+      MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
+      JAVA_TOOL_OPTIONS: ""
+    healthcheck:
+      test: ["CMD-SHELL", "adb -s $$ADB_TARGET shell echo ok 2>/dev/null | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    volumes:
+      - ${FLOWS_DIR:-.}:/flows:ro
+      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro
+      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true
