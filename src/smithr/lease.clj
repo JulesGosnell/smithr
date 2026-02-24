@@ -729,8 +729,9 @@
                           (= (:type resource) :server)
                           (let [svc-port (get-in resource [:connection :service-port] 3000)]
                             (start-socat-bridge! lease-id resource svc-port))
-                          ;; Physical devices: switch to TCP, socat bridge to WiFi IP
-                          (= (:substrate resource) "physical")
+                          ;; Physical Android: switch to TCP, socat bridge to WiFi IP
+                          (and (= (:substrate resource) "physical")
+                               (= (:platform resource) :android))
                           (let [{:keys [adb-host adb-port serial wifi-ip]} (:connection resource)
                                 target-ip (or wifi-ip adb-host)
                                 target-port (or adb-port 5555)]
@@ -743,6 +744,37 @@
                               (when (and target-ip (not= target-ip "localhost"))
                                 (shell/sh "adb" "connect" (str target-ip ":" target-port))))
                             (start-socat-bridge! lease-id resource target-port))
+                          ;; Physical iOS: iproxy bridge over USB
+                          (and (= (:substrate resource) "physical")
+                               (= (:platform resource) :ios))
+                          (let [udid (get-in resource [:connection :udid])
+                                tunnel-port (allocate-tunnel-port!)
+                                ;; Forward lockdownd (62078) — allows usbmuxd-style access over TCP
+                                device-port 62078]
+                            (log/info "Starting iproxy bridge on port" tunnel-port
+                                      "→ device" udid "port" device-port)
+                            (try
+                              (let [cmd ["iproxy" "-u" udid
+                                         (str tunnel-port ":" device-port)]
+                                    proc (-> (ProcessBuilder. ^java.util.List cmd)
+                                             (.redirectErrorStream true)
+                                             (.start))
+                                    tunnel-info {:port        tunnel-port
+                                                 :process     proc
+                                                 :resource-id (:id resource)
+                                                 :target      (str "iproxy:" udid ":" device-port)
+                                                 :started-at  (Instant/now)}]
+                                (swap! tunnels assoc lease-id tunnel-info)
+                                (if (await-port-ready tunnel-port 5000)
+                                  (do (log/info "iproxy bridge ready: port" tunnel-port
+                                                "→ device" udid "pid" (.pid proc))
+                                      tunnel-info)
+                                  (do (log/error "iproxy not ready on port" tunnel-port)
+                                      (stop-tunnel! lease-id)
+                                      nil)))
+                              (catch Exception e
+                                (log/error "Failed to start iproxy:" (.getMessage e))
+                                nil)))
                           ;; All others: SSH tunnel
                           :else
                           (start-tunnel! lease-id resource))]
@@ -773,7 +805,10 @@
           (let [port-results (when (seq server-ports)
                                (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
                 connection (cond-> {:tunnel-port (:port tunnel)}
-                             (seq server-ports) (assoc :server-ports server-ports))]
+                             (seq server-ports) (assoc :server-ports server-ports)
+                             ;; Include UDID for physical iOS devices
+                             (get-in resource [:connection :udid])
+                             (assoc :udid (get-in resource [:connection :udid])))]
             (swap! state/state
                    (fn [s]
                      (cond-> s
