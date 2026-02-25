@@ -174,8 +174,10 @@ workspace name = the SSH username on the VM. State survives across leases.
 up socat port forwarding, and handles cleanup. Clients interact with the proxy
 instead of the Smithr API directly.
 
-**Adopt** — Register an external container (one you own) with Smithr so
-workspace VMs can reach it via tunnels. Inverse of leasing.
+**Adopt** — Register an external container (one you own) with Smithr. The
+adopted container becomes a leasable resource — clients lease it identically
+to native Smithr containers. Cross-host tunneling works transparently.
+See [E2E Test Architecture](docs/ARCHITECTURE.md#ci-mode--e2e-test-architecture).
 
 ## Container Naming
 

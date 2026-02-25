@@ -643,75 +643,112 @@ Smithr provides 4 named sandbox slots with fixed port allocations:
 
 (All Norse, all monosyllabic, no collisions with Artha's Ulfr/Bjorn/Arn/Orm.)
 
-## CI Mode
+## CI Mode — E2E Test Architecture
 
-### GitHub Actions Integration
+### Overview
 
-```yaml
-# .github/workflows/ci.yml (in the consuming project)
-jobs:
-  build:
-    runs-on: [self-hosted, linux]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build artifacts
-        run: smithr build --config smithr.yml
+CI clients use Smithr's compose templates to lease resources without any
+direct Smithr API calls. Each resource appears as a local Docker service
+with forwarded ports — Smithr handles host selection, SSH tunneling, and
+cleanup transparently.
 
-  test:
-    needs: build
-    runs-on: [self-hosted, linux]
-    strategy:
-      matrix:
-        test: [documents, profile, notifications, schedule]
-    steps:
-      - name: Start shared server (idempotent — safe for matrix)
-        run: smithr server ensure --config smithr.yml
-
-      - name: Acquire phone
-        id: phone
-        run: echo "lease_id=$(smithr phone get --platform android)" >> $GITHUB_OUTPUT
-
-      - name: Run E2E test
-        run: |
-          smithr test run ${{ matrix.test }} \
-            --config smithr.yml
-
-      - name: Unlease phone
-        if: always()
-        run: smithr phone unlease ${{ steps.phone.outputs.lease_id }}
-
-  deploy:
-    needs: test
-    runs-on: [self-hosted, linux]
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Deploy
-        run: smithr deploy --config smithr.yml
-```
-
-### Pipeline Flow
+### Artha CI Pipeline (Reference Implementation)
 
 ```
-Build Phase (parallel)
-├── Build server Docker image
-├── Build Android APK
-└── Build iOS app
+Build Phase (parallel, 4 runners across 2 hosts)
+├── build-server    → artha-api Docker image → NFS
+├── build-android   → app-release.apk → NFS
+└── build-ios       → ArthaHealthcare.tar.gz → NFS
         │
-        ▼ (artifacts to NFS)
-Server Start (once)
-├── Start shared DB + Redis + API + TLS
+        ▼ (artifacts on shared NFS)
+Server Start (once, any runner)
+├── Start postgres + redis + API + TLS (plain Docker containers)
+├── POST /api/adopt → registers API container as leasable server resource
+│   (resource_type=server, resource_platform=linux)
+├── Outputs: server_host, adopt_id
         │
         ▼
-Test Phase (parallel matrix)
-├── Test 1: get phone → run test → unlease phone
-├── Test 2: get phone → run test → unlease phone
-├── Test 3: get phone → run test → unlease phone
-└── Test 4: get phone → run test → unlease phone
+E2E Tests (parallel matrix: android × ios)
+├── Each test fetches compose templates from Smithr API
+├── Leases: phone (android/ios) + server (adopted API container)
+├── Maestro sidecar runs login/logout flow
+└── Compose down → proxy traps → Smithr auto-unleases
         │
         ▼ (all green)
 Deploy Phase
-└── Deploy to production
+└── Push image to Fly.io, deploy, health check
+        │
+        ▼
+Cleanup
+└── docker rm server containers, prune networks
+    (adopted resource auto-cleaned when container dies)
 ```
+
+### Server Adopt Flow
+
+The API server runs as a plain Docker container (not managed by Smithr).
+`e2e-server.sh` adopts it into Smithr via the REST API:
+
+```bash
+# e2e-server.sh starts postgres, redis, API, TLS, then:
+curl -sf -X POST "$SMITHR_API/api/adopt" \
+  -H 'Content-Type: application/json' \
+  -d '{"container_name": "artha-123-api", "ports": [3000],
+       "lessee": "artha-e2e", "ttl_seconds": 3600,
+       "resource_type": "server", "resource_platform": "linux"}'
+```
+
+This creates:
+1. An adopt record in Smithr state
+2. SSH tunnels from Smithr hosts to the container's port 3000
+3. A synthetic resource `adopted:artha-123-api` (type=server, platform=linux)
+
+The resource is now leasable like any native Smithr container.
+
+### E2E Test Compose Stack
+
+Each E2E test job fetches templates and starts a compose stack:
+
+```bash
+# Android E2E test
+curl -s $SMITHR_API/api/compose/server > server.yml
+curl -s $SMITHR_API/api/compose/android-phone > phone.yml
+curl -s $SMITHR_API/api/compose/maestro > maestro.yml
+
+SMITHR_LESSEE="artha-e2e" \
+SMITHR_PREFER_HOST="$SERVER_HOST" \
+SERVER_SERVICE="server" \
+FLOWS_DIR="$FLOWS_DIR" \
+  docker compose -f server.yml -f phone.yml -f maestro.yml \
+  -p e2e-maestro-android up -d --wait
+```
+
+**Android data path:**
+```
+App localhost:3000
+  → adb reverse tcp:3000
+  → maestro container localhost:3000
+  → socat → server:3000 (lease proxy)
+  → socat → Smithr SSH tunnel
+  → API container :3000
+```
+
+**iOS data path:**
+```
+App localhost:3000
+  → SSH -R 3000:server:3000 (reverse tunnel into VM)
+  → server compose service :3000 (lease proxy)
+  → socat → Smithr SSH tunnel
+  → API container :3000
+```
+
+### Cross-Host Transparency
+
+The `SMITHR_PREFER_HOST` hint tells Smithr to lease a server resource on
+the same host where it was adopted — avoiding unnecessary cross-host
+tunneling. But if resources are on different hosts, Smithr's SSH tunnel
+infrastructure routes traffic automatically. The E2E scripts don't need
+to know which host anything runs on.
 
 ## Configuration System
 

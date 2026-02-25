@@ -23,3 +23,4 @@ resources/smithr.edn
 .env
 tls/*.pem
 layers/scripts/ios/ssh/macos-ssh-key
+smithr.pid
