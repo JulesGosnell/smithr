@@ -1,0 +1,40 @@
+#
+# Generic adopt-mode proxy
+#
+# Adopts an external container by name and tunnels specified ports through Smithr.
+# The container must already be running on a Docker network visible to Smithr.
+#
+# Usage:
+#   curl -s http://localhost:7070/api/compose/adopt-proxy > /tmp/adopt.yml
+#   SMITHR_CONTAINER_NAME=my-container docker compose -f /tmp/adopt.yml -p my-adopt up -d
+#
+# Env vars:
+#   SMITHR_CONTAINER_NAME  — Name of the container to adopt (required)
+#   SMITHR_PORTS           — Comma-separated ports to tunnel (default: 3000)
+#   SMITHR_LESSEE          — Who owns this adopt (default: anonymous)
+#   SMITHR_TTL             — Adopt TTL in seconds (default: 3600)
+#
+services:
+  adopt-proxy:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    pull_policy: always
+    stop_grace_period: 30s
+    healthcheck:
+      test: /usr/local/bin/healthcheck.sh
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 15s
+    environment:
+      SMITHR_MODE: adopt
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_CONTAINER_NAME: ${SMITHR_CONTAINER_NAME:?required}
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: ${SMITHR_PORTS:-3000}
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

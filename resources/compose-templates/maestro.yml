@@ -36,6 +36,14 @@ services:
         done
         adb -s "$$ADB_TARGET" wait-for-device
         echo "[maestro] ADB connected."
+        # Server bridge: relay SERVER_SERVICE:SERVER_PORT into the emulator
+        if [ -n "$$SERVER_SERVICE" ]; then
+            echo "[maestro] Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → emulator localhost:$$SERVER_PORT"
+            socat TCP-LISTEN:$$SERVER_PORT,fork,reuseaddr TCP:$$SERVER_SERVICE:$$SERVER_PORT &
+            sleep 1
+            adb -s "$$ADB_TARGET" reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
+            echo "[maestro] Server bridge ready."
+        fi
         # Inject api-config.json so the release APK connects to the test
         # server instead of the baked-in production URL (https://artha.care).
         # Writing to /data/data/ requires root — emulators support adb root.
@@ -58,6 +66,8 @@ services:
       JAVA_TOOL_OPTIONS: ""
       BUNDLE_ID: ${BUNDLE_ID:-com.artha.healthcare}
       API_URL: ${API_URL:-}
+      SERVER_SERVICE: ${SERVER_SERVICE:-}
+      SERVER_PORT: ${SERVER_PORT:-3000}
     healthcheck:
       test: ["CMD-SHELL", "adb -s $$ADB_TARGET shell echo ok 2>/dev/null | grep -q ok"]
       interval: 10s
