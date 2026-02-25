@@ -589,7 +589,7 @@
                                       [r]))
                                   ;; Build: warm or shared with capacity
                                   (->> (vals (:resources s))
-                                       (filter #(and (= (:type %) :vm)
+                                       (filter #(and (= (:type %) (keyword type))
                                                      (= (:platform %) (keyword platform))
                                                      (substrate-pred %)
                                                      (model-pred %)
@@ -657,80 +657,105 @@
           nil))
     (when-let [{:keys [lease resource]} @result]
       (if (= lease-type :build)
-        ;; Build lease: create/ensure user, then start tunnel
-        (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
-              cached-ws (when workspace (state/workspace workspace))
-              user-info (cond
-                          ;; Workspace user already verified on this resource — skip SSH
-                          (and workspace cached-ws
-                               (:macos-user cached-ws)
-                               (:home-dir cached-ws)
-                               (= (:resource-id cached-ws) (:id resource)))
-                          (do
-                            (log/info "Workspace" workspace "user cached on"
-                                      (:id resource) "- skipping ensure-user")
-                            {:macos-user (:macos-user cached-ws)
-                             :home-dir   (:home-dir cached-ws)})
-                          ;; Named workspace but not cached — create/verify via SSH
-                          workspace
-                          (ensure-user! resource workspace)
-                          ;; Ephemeral build — always create new user
-                          :else
-                          (create-user! resource lease-id))]
-          (if user-info
-            (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
-              (let [{:keys [ssh-host ssh-port]} (:connection resource)
-                    connection (cond-> {:tunnel-port (:port tunnel)
-                                        :ssh-user    (:macos-user user-info)
-                                        :ssh-host    ssh-host
-                                        :ssh-port    (or ssh-port 10022)
-                                        :home-dir    (:home-dir user-info)}
-                                 (seq reverse-ports) (assoc :reverse-ports
-                                                            (into {} (map (fn [{:keys [bind target]}]
-                                                                           [(str bind) target])
-                                                                         reverse-ports))))]
-              ;; Update lease and workspace state
-              (swap! state/state
-                     (fn [s]
-                       (cond-> s
-                         true (assoc-in [:leases lease-id :connection] connection)
-                         true (assoc-in [:leases lease-id :macos-user] (:macos-user user-info))
-                         ;; Register/update workspace
-                         workspace (assoc-in [:workspaces workspace]
-                                             {:name        workspace
-                                              :resource-id (:id resource)
-                                              :macos-user  (:macos-user user-info)
-                                              :home-dir    (:home-dir user-info)
-                                              :status      :leased
-                                              :lease-id    lease-id
-                                              :created-at  (or (:created-at (get-in s [:workspaces workspace]))
-                                                               now)}))))
-              (log/info (if workspace "Workspace" "Build") "lease acquired:" lease-id
-                        "resource:" (:id resource) "lessee:" lessee
-                        "user:" (:macos-user user-info)
-                        (when workspace (str "workspace:" workspace)))
+        (if (= (:type resource) :server)
+          ;; Server build lease: just tunnel, no user creation
+          (if-let [tunnel (let [svc-port (get-in resource [:connection :service-port] 3000)
+                                ssh-host (get-in resource [:connection :ssh-host] "localhost")
+                                local?   (= ssh-host "localhost")]
+                            (if local?
+                              (start-socat-bridge! lease-id resource svc-port)
+                              (start-tunnel! lease-id resource)))]
+            (let [connection {:tunnel-port (:port tunnel)}]
+              (swap! state/state assoc-in [:leases lease-id :connection] connection)
+              (log/info "Server lease acquired:" lease-id
+                        "resource:" (:id resource) "lessee:" lessee)
               (state/record-event! "lease"
                 {:lessee    lessee
                  :container (:container resource)
                  :resource  (:id resource)
                  :lease-id  lease-id
                  :lease-type "build"
-                 :ttl       ttl-seconds
-                 :workspace workspace
-                 :user      (:macos-user user-info)})
-              (assoc lease
-                     :connection connection
-                     :macos-user (:macos-user user-info)))
-              ;; Tunnel failed — rollback
-              (do
-                (log/error "Failed to start tunnel for lease" lease-id "- rolling back")
-                (unlease! lease-id)
-                nil))
-            ;; User creation failed — rollback
+                 :ttl       ttl-seconds})
+              (assoc lease :connection connection))
+            ;; Tunnel failed — rollback
             (do
-              (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
+              (log/error "Failed to start tunnel for server lease" lease-id "- rolling back")
               (unlease! lease-id)
-              nil)))
+              nil))
+          ;; VM build lease: create/ensure user, then start tunnel
+          (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
+                cached-ws (when workspace (state/workspace workspace))
+                user-info (cond
+                            ;; Workspace user already verified on this resource — skip SSH
+                            (and workspace cached-ws
+                                 (:macos-user cached-ws)
+                                 (:home-dir cached-ws)
+                                 (= (:resource-id cached-ws) (:id resource)))
+                            (do
+                              (log/info "Workspace" workspace "user cached on"
+                                        (:id resource) "- skipping ensure-user")
+                              {:macos-user (:macos-user cached-ws)
+                               :home-dir   (:home-dir cached-ws)})
+                            ;; Named workspace but not cached — create/verify via SSH
+                            workspace
+                            (ensure-user! resource workspace)
+                            ;; Ephemeral build — always create new user
+                            :else
+                            (create-user! resource lease-id))]
+            (if user-info
+              (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
+                (let [{:keys [ssh-host ssh-port]} (:connection resource)
+                      connection (cond-> {:tunnel-port (:port tunnel)
+                                          :ssh-user    (:macos-user user-info)
+                                          :ssh-host    ssh-host
+                                          :ssh-port    (or ssh-port 10022)
+                                          :home-dir    (:home-dir user-info)}
+                                   (seq reverse-ports) (assoc :reverse-ports
+                                                              (into {} (map (fn [{:keys [bind target]}]
+                                                                             [(str bind) target])
+                                                                           reverse-ports))))]
+                ;; Update lease and workspace state
+                (swap! state/state
+                       (fn [s]
+                         (cond-> s
+                           true (assoc-in [:leases lease-id :connection] connection)
+                           true (assoc-in [:leases lease-id :macos-user] (:macos-user user-info))
+                           ;; Register/update workspace
+                           workspace (assoc-in [:workspaces workspace]
+                                               {:name        workspace
+                                                :resource-id (:id resource)
+                                                :macos-user  (:macos-user user-info)
+                                                :home-dir    (:home-dir user-info)
+                                                :status      :leased
+                                                :lease-id    lease-id
+                                                :created-at  (or (:created-at (get-in s [:workspaces workspace]))
+                                                                 now)}))))
+                (log/info (if workspace "Workspace" "Build") "lease acquired:" lease-id
+                          "resource:" (:id resource) "lessee:" lessee
+                          "user:" (:macos-user user-info)
+                          (when workspace (str "workspace:" workspace)))
+                (state/record-event! "lease"
+                  {:lessee    lessee
+                   :container (:container resource)
+                   :resource  (:id resource)
+                   :lease-id  lease-id
+                   :lease-type "build"
+                   :ttl       ttl-seconds
+                   :workspace workspace
+                   :user      (:macos-user user-info)})
+                (assoc lease
+                       :connection connection
+                       :macos-user (:macos-user user-info)))
+                ;; Tunnel failed — rollback
+                (do
+                  (log/error "Failed to start tunnel for lease" lease-id "- rolling back")
+                  (unlease! lease-id)
+                  nil))
+              ;; User creation failed — rollback
+              (do
+                (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
+                (unlease! lease-id)
+                nil))))
         ;; Phone lease: acquire shared lock, start tunnel, ADB check, cascading parent
         (if-not (try-acquire-shared-lock! (:id resource) lessee lease-id)
           ;; Shared lock failed — another Smithr instance grabbed it between check and swap
@@ -992,11 +1017,12 @@
    and register it as a leasable resource so clients can lease it like any other.
    Returns the adopt record on success, or throws on failure.
    Tunnels are cleaned up automatically when the container dies (Docker event)."
-  [{:keys [container-name ports lessee ttl-seconds resource-type resource-platform]
+  [{:keys [container-name ports lessee ttl-seconds resource-type resource-platform max-slots]
     :or   {ttl-seconds       3600
            lessee            "anonymous"
            resource-type     "server"
-           resource-platform "linux"}}]
+           resource-platform "linux"
+           max-slots         100}}]
   (let [found (docker/find-container container-name)]
     (when-not found
       (throw (ex-info "Container not found" {:container-name container-name :not-found true})))
@@ -1061,21 +1087,24 @@
       ;; Register as a leasable resource so clients can acquire via POST /api/leases
       (let [resource-id (str "adopted:" container-name)]
         (state/upsert-resource!
-          {:id          resource-id
-           :type        (keyword resource-type)
-           :platform    (keyword resource-platform)
-           :status      :warm
-           :host        host-label
-           :container   container-name
-           :adopt-id    adopt-id
-           :adopted?    true
-           :connection  {:container-ip ip
-                         :service-port (first ports)
-                         :ssh-host     (or host-address "localhost")
-                         :ssh-port     22}
-           :updated-at  now})
+          {:id             resource-id
+           :type           (keyword resource-type)
+           :platform       (keyword resource-platform)
+           :status         :warm
+           :host           host-label
+           :container      container-name
+           :adopt-id       adopt-id
+           :adopted?       true
+           :max-slots      max-slots
+           :active-leases  #{}
+           :connection     {:container-ip ip
+                            :service-port (first ports)
+                            :ssh-host     (or host-address "localhost")
+                            :ssh-port     22}
+           :updated-at     now})
         (log/info "Adopted resource registered:" resource-id
-                  "type:" resource-type "platform:" resource-platform))
+                  "type:" resource-type "platform:" resource-platform
+                  "max-slots:" max-slots))
       (state/record-event! "adopt"
         {:lessee         lessee
          :container-name container-name

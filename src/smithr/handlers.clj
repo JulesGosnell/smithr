@@ -268,7 +268,9 @@
                  (or (:resource_type body) (get body "resource_type"))
                  (assoc :resource-type (or (:resource_type body) (get body "resource_type")))
                  (or (:resource_platform body) (get body "resource_platform"))
-                 (assoc :resource-platform (or (:resource_platform body) (get body "resource_platform"))))]
+                 (assoc :resource-platform (or (:resource_platform body) (get body "resource_platform")))
+                 (or (:max_slots body) (get body "max_slots"))
+                 (assoc :max-slots (or (:max_slots body) (get body "max_slots"))))]
     (log/info "Adopt request:" params)
     (try
       (let [result (lease/adopt! params)]

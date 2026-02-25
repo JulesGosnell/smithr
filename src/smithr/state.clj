@@ -121,16 +121,18 @@
                s)))))
 
 (defn available-for-build
-  "Get macOS VMs available for a shared build lease.
-   Returns VMs that are :warm (no leases) or :shared with capacity remaining."
-  [platform]
-  (resources (fn [r]
-               (and (= (:type r) :vm)
-                    (= (:platform r) (keyword platform))
-                    (or (= (:status r) :warm)
-                        (and (= (:status r) :shared)
-                             (< (count (:active-leases r #{}))
-                                (:max-slots r 10))))))))
+  "Get resources available for a shared build lease.
+   Returns resources that are :warm (no leases) or :shared with capacity remaining."
+  ([platform]
+   (available-for-build :vm platform))
+  ([resource-type platform]
+   (resources (fn [r]
+                (and (= (:type r) (keyword resource-type))
+                     (= (:platform r) (keyword platform))
+                     (or (= (:status r) :warm)
+                         (and (= (:status r) :shared)
+                              (< (count (:active-leases r #{}))
+                                 (:max-slots r 10)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Adopt operations
