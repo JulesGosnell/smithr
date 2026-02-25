@@ -36,6 +36,15 @@ services:
         done
         adb -s "$$ADB_TARGET" wait-for-device
         echo "[maestro] ADB connected."
+        # Switch to root early so later adb root calls are no-ops
+        # (adbd restart kills reverse mappings; making it a no-op prevents that)
+        if [ -n "$$SERVER_SERVICE" ] || [ -n "$$API_URL" ]; then
+            adb -s "$$ADB_TARGET" root 2>/dev/null || true
+            sleep 2
+            adb -s "$$ADB_TARGET" connect "$$ADB_TARGET" 2>/dev/null || true
+            adb -s "$$ADB_TARGET" wait-for-device
+            echo "[maestro] ADB running as root."
+        fi
         # Server bridge: relay SERVER_SERVICE:SERVER_PORT into the emulator
         if [ -n "$$SERVER_SERVICE" ]; then
             echo "[maestro] Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → emulator localhost:$$SERVER_PORT"
@@ -46,20 +55,12 @@ services:
         fi
         # Inject api-config.json so the release APK connects to the test
         # server instead of the baked-in production URL (https://artha.care).
-        # Writing to /data/data/ requires root — emulators support adb root.
+        # Requires root (already switched above).
         if [ -n "$$API_URL" ]; then
             echo "[maestro] Injecting api-config.json: $$API_URL"
-            adb -s "$$ADB_TARGET" root 2>/dev/null || true
-            sleep 1
-            adb -s "$$ADB_TARGET" connect "$$ADB_TARGET" 2>/dev/null || true
             adb -s "$$ADB_TARGET" shell "mkdir -p /data/data/$$BUNDLE_ID/files"
             adb -s "$$ADB_TARGET" shell "echo '{\"apiUrl\": \"$$API_URL\"}' > /data/data/$$BUNDLE_ID/files/api-config.json"
             echo "[maestro] api-config.json written."
-        fi
-        # Re-establish adb reverse if server bridge is active (adb root kills reverse mappings)
-        if [ -n "$$SERVER_SERVICE" ]; then
-            adb -s "$$ADB_TARGET" reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
-            echo "[maestro] Re-established adb reverse after adb root."
         fi
         echo "[maestro] Sidecar ready."
         echo "[maestro] Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
