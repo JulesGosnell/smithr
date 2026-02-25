@@ -56,6 +56,11 @@ services:
             adb -s "$$ADB_TARGET" shell "echo '{\"apiUrl\": \"$$API_URL\"}' > /data/data/$$BUNDLE_ID/files/api-config.json"
             echo "[maestro] api-config.json written."
         fi
+        # Re-establish adb reverse if server bridge is active (adb root kills reverse mappings)
+        if [ -n "$$SERVER_SERVICE" ]; then
+            adb -s "$$ADB_TARGET" reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
+            echo "[maestro] Re-established adb reverse after adb root."
+        fi
         echo "[maestro] Sidecar ready."
         echo "[maestro] Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
         exec sleep infinity
