@@ -89,9 +89,11 @@
         port))))
 
 (defn- docker-network-ip?
-  "Is this a Docker network IP (10.x.x.x) reachable only from the local host?"
+  "Is this a Docker network IP reachable only from the local host?
+   Matches 10.x.x.x (smithr-network) and 172.16-31.x.x (Docker default bridges)."
   [host]
-  (and host (re-matches #"10\.\d+\.\d+\.\d+" host)))
+  (and host (or (re-matches #"10\.\d+\.\d+\.\d+" host)
+                (re-matches #"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+" host))))
 
 (defn- resolve-tunnel-route
   "Given a target host:port, determine SSH -L forward and hop host.
@@ -223,8 +225,16 @@
                          port (or (:service-port conn) 3000)]
                      [ip port])
           ["localhost" 0])
-        ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname
-        {:keys [fwd-host fwd-port hop]} (resolve-tunnel-route target-host target-port)
+        ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname.
+        ;; Special case: `:linux` with remote ssh-host — hop via ssh-host, forward to container IP.
+        {:keys [fwd-host fwd-port hop]}
+        (if (and (= platform :linux)
+                 (docker-network-ip? target-host)
+                 (not= (get-in resource [:connection :ssh-host] "localhost") "localhost"))
+          ;; Cross-host server: hop through remote host to reach container IP
+          {:fwd-host target-host :fwd-port target-port
+           :hop (get-in resource [:connection :ssh-host])}
+          (resolve-tunnel-route target-host target-port))
         ;; When reverse-ports are present, SSH must connect directly to the build
         ;; container so -R binds on the container's sshd (not on the hop host).
         ;; For Docker IPs: SSH directly to the container, -L forwards to localhost.
@@ -730,10 +740,12 @@
             nil)
         (if-let [tunnel (cond
                           ;; Server resources: socat if local, SSH tunnel if remote
+                          ;; Local = ssh-host is "localhost" (same host as Smithr)
+                          ;; Remote = ssh-host is a hostname → tunnel via that host
                           (= (:type resource) :server)
                           (let [svc-port (get-in resource [:connection :service-port] 3000)
-                                conn-ip (get-in resource [:connection :container-ip])
-                                local?  (docker-network-ip? conn-ip)]
+                                ssh-host (get-in resource [:connection :ssh-host] "localhost")
+                                local?   (= ssh-host "localhost")]
                             (if local?
                               (start-socat-bridge! lease-id resource svc-port)
                               (start-tunnel! lease-id resource)))
