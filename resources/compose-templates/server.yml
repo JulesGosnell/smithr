@@ -1,0 +1,42 @@
+#
+# Lease a server resource through Smithr
+#
+# Used to reach adopted containers (e.g. an API server started by CI).
+# The adopt registers the container as a leasable resource; this template
+# leases it and forwards the service port through Smithr's tunnel.
+#
+# Usage:
+#   curl -s http://localhost:7070/api/compose/server > /tmp/server.yml
+#   SMITHR_LESSEE=ci-123 docker compose -f /tmp/server.yml -p my-server up -d
+#
+# Env vars:
+#   SMITHR_LESSEE      — Who owns this lease (default: anonymous)
+#   SMITHR_TTL         — Lease TTL in seconds (default: 3600)
+#   SMITHR_PREFER_HOST — Prefer a specific host for the lease
+#
+services:
+  server:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    pull_policy: always
+    stop_grace_period: 30s
+    healthcheck:
+      test: /usr/local/bin/healthcheck.sh
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 15s
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_RESOURCE_TYPE: server
+      SMITHR_PLATFORM: linux
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "3000"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

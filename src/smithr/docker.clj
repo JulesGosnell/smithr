@@ -214,6 +214,13 @@
       (when-let [adopt (state/adopt-by-container-id container-id)]
         (log/info "Adopted container" (:container-name adopt) "event:" action "- cleaning up")
         (try
+          ;; Force-unlease any active lease on the adopted resource first
+          (let [resource-id (str "adopted:" (:container-name adopt))
+                active-lease (first (filter #(= (:resource-id %) resource-id)
+                                            (state/leases)))]
+            (when active-lease
+              (log/info "Force-unleasing" (:id active-lease) "for dying adopted container")
+              ((requiring-resolve 'smithr.lease/unlease!) (:id active-lease))))
           ((requiring-resolve 'smithr.lease/unadopt!) (:id adopt))
           (catch Exception e
             (log/error e "Error cleaning up adopted container" (:id adopt))))))

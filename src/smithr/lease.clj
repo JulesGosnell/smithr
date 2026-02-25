@@ -218,6 +218,10 @@
           :ios     (let [conn (or parent-conn (:connection resource))]
                      [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
           :android-build [(or ssh-host "localhost") (or ssh-port 22)]
+          :linux   (let [conn (:connection resource)
+                         ip   (or (:container-ip conn) "localhost")
+                         port (or (:service-port conn) 3000)]
+                     [ip port])
           ["localhost" 0])
         ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname
         {:keys [fwd-host fwd-port hop]} (resolve-tunnel-route target-host target-port)
@@ -725,10 +729,14 @@
             (unlease! lease-id)
             nil)
         (if-let [tunnel (cond
-                          ;; Server resources: socat bridge to container IP (no SSH)
+                          ;; Server resources: socat if local, SSH tunnel if remote
                           (= (:type resource) :server)
-                          (let [svc-port (get-in resource [:connection :service-port] 3000)]
-                            (start-socat-bridge! lease-id resource svc-port))
+                          (let [svc-port (get-in resource [:connection :service-port] 3000)
+                                conn-ip (get-in resource [:connection :container-ip])
+                                local?  (docker-network-ip? conn-ip)]
+                            (if local?
+                              (start-socat-bridge! lease-id resource svc-port)
+                              (start-tunnel! lease-id resource)))
                           ;; Physical Android: switch to TCP, socat bridge to WiFi IP
                           (and (= (:substrate resource) "physical")
                                (= (:platform resource) :android))
@@ -968,12 +976,15 @@
   (atom {}))  ;; adopt-id -> [{:port int, :process Process, :target-port int} ...]
 
 (defn adopt!
-  "Adopt an external container: locate it, create SSH tunnels for specified ports.
+  "Adopt an external container: locate it, create SSH tunnels for specified ports,
+   and register it as a leasable resource so clients can lease it like any other.
    Returns the adopt record on success, or throws on failure.
    Tunnels are cleaned up automatically when the container dies (Docker event)."
-  [{:keys [container-name ports lessee ttl-seconds]
-    :or   {ttl-seconds 3600
-           lessee      "anonymous"}}]
+  [{:keys [container-name ports lessee ttl-seconds resource-type resource-platform]
+    :or   {ttl-seconds       3600
+           lessee            "anonymous"
+           resource-type     "server"
+           resource-platform "linux"}}]
   (let [found (docker/find-container container-name)]
     (when-not found
       (throw (ex-info "Container not found" {:container-name container-name :not-found true})))
@@ -1035,6 +1046,24 @@
       ;; Store tunnels and state
       (swap! adopt-tunnels assoc adopt-id tunnel-infos)
       (state/add-adopt! adopt)
+      ;; Register as a leasable resource so clients can acquire via POST /api/leases
+      (let [resource-id (str "adopted:" container-name)]
+        (state/upsert-resource!
+          {:id          resource-id
+           :type        (keyword resource-type)
+           :platform    (keyword resource-platform)
+           :status      :warm
+           :host        host-label
+           :container   container-name
+           :adopt-id    adopt-id
+           :adopted?    true
+           :connection  {:container-ip ip
+                         :service-port (first ports)
+                         :ssh-host     (or host-address "localhost")
+                         :ssh-port     22}
+           :updated-at  now})
+        (log/info "Adopted resource registered:" resource-id
+                  "type:" resource-type "platform:" resource-platform))
       (state/record-event! "adopt"
         {:lessee         lessee
          :container-name container-name
@@ -1045,28 +1074,39 @@
       adopt)))
 
 (defn unadopt!
-  "Clean up an adopted container: kill tunnels, remove state.
+  "Clean up an adopted container: kill tunnels, remove resource, remove state.
+   Fails if the adopted resource has active leases — unlease first.
    Returns true if found and cleaned up."
   [adopt-id]
   (when-let [adopt (state/adopt adopt-id)]
-    ;; Kill all tunnel processes
-    (when-let [infos (get @adopt-tunnels adopt-id)]
-      (doseq [{:keys [port process]} infos]
-        (when process
-          (try
-            (when (.isAlive process)
-              (.destroyForcibly process)
-              (log/info "Adopt tunnel killed: port" port "pid" (.pid process)))
-            (catch Exception e
-              (log/warn "Error stopping adopt tunnel on port" port ":" (.getMessage e)))))))
-    (swap! adopt-tunnels dissoc adopt-id)
-    (state/remove-adopt! adopt-id)
-    (state/record-event! "unadopt"
-      {:lessee         (:lessee adopt)
-       :container-name (:container-name adopt)
-       :adopt-id       adopt-id})
-    (log/info "Container unadopted:" adopt-id "name:" (:container-name adopt))
-    true))
+    (let [resource-id (str "adopted:" (:container-name adopt))]
+      ;; Check for active leases on the adopted resource
+      (when-let [active-lease (first (filter #(= (:resource-id %) resource-id)
+                                              (state/leases)))]
+        (throw (ex-info "Cannot unadopt: resource has active lease"
+                        {:adopt-id adopt-id
+                         :lease-id (:id active-lease)
+                         :has-lease true})))
+      ;; Kill all tunnel processes
+      (when-let [infos (get @adopt-tunnels adopt-id)]
+        (doseq [{:keys [port process]} infos]
+          (when process
+            (try
+              (when (.isAlive process)
+                (.destroyForcibly process)
+                (log/info "Adopt tunnel killed: port" port "pid" (.pid process)))
+              (catch Exception e
+                (log/warn "Error stopping adopt tunnel on port" port ":" (.getMessage e)))))))
+      (swap! adopt-tunnels dissoc adopt-id)
+      ;; Remove the synthetic resource
+      (state/remove-resource! resource-id)
+      (state/remove-adopt! adopt-id)
+      (state/record-event! "unadopt"
+        {:lessee         (:lessee adopt)
+         :container-name (:container-name adopt)
+         :adopt-id       adopt-id})
+      (log/info "Container unadopted:" adopt-id "name:" (:container-name adopt))
+      true)))
 
 ;; ---------------------------------------------------------------------------
 ;; Garbage collection
@@ -1128,6 +1168,12 @@
            {:lessee         (:lessee adopt)
             :container-name (:container-name adopt)
             :adopt-id       (:id adopt)})
+         ;; Force-unlease any remaining lease on the adopted resource
+         (let [resource-id (str "adopted:" (:container-name adopt))
+               active-lease (first (filter #(= (:resource-id %) resource-id) (state/leases)))]
+           (when active-lease
+             (log/info "GC: force-unleasing" (:id active-lease) "for expiring adopt")
+             (unlease! (:id active-lease))))
          (unadopt! (:id adopt)))
        ;; Also reap leases with dead tunnel processes
        (let [dead-count (gc-dead-tunnels!)]

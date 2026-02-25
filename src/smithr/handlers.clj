@@ -261,10 +261,14 @@
   "POST /api/adopt"
   [request]
   (let [body   (:body-params request)
-        params {:container-name (or (:container_name body) (get body "container_name"))
-                :ports          (vec (or (:ports body) (get body "ports")))
-                :lessee         (or (:lessee body) (get body "lessee") "anonymous")
-                :ttl-seconds    (or (:ttl_seconds body) (get body "ttl_seconds") 3600)}]
+        params (cond-> {:container-name    (or (:container_name body) (get body "container_name"))
+                        :ports             (vec (or (:ports body) (get body "ports")))
+                        :lessee            (or (:lessee body) (get body "lessee") "anonymous")
+                        :ttl-seconds       (or (:ttl_seconds body) (get body "ttl_seconds") 3600)}
+                 (or (:resource_type body) (get body "resource_type"))
+                 (assoc :resource-type (or (:resource_type body) (get body "resource_type")))
+                 (or (:resource_platform body) (get body "resource_platform"))
+                 (assoc :resource-platform (or (:resource_platform body) (get body "resource_platform"))))]
     (log/info "Adopt request:" params)
     (try
       (let [result (lease/adopt! params)]
@@ -284,9 +288,15 @@
   "DELETE /api/adopts/:id"
   [request]
   (let [id (get-in request [:path-params :id])]
-    (if (lease/unadopt! id)
-      {:status 204 :body nil}
-      (not-found (str "Adopt not found: " id)))))
+    (try
+      (if (lease/unadopt! id)
+        {:status 204 :body nil}
+        (not-found (str "Adopt not found: " id)))
+      (catch clojure.lang.ExceptionInfo e
+        (let [data (ex-data e)]
+          (if (:has-lease data)
+            (conflict (.getMessage e))
+            {:status 500 :body {:error "unadopt_failed" :message (.getMessage e)}}))))))
 
 (defn list-adopts
   "GET /api/adopts"
@@ -363,7 +373,7 @@
 
 (def ^:private static-templates
   #{"android-phone" "ios-phone" "macos-build" "android-build"
-    "maestro" "ios-app" "ios-maestro" "adopt-proxy"})
+    "maestro" "ios-app" "ios-maestro" "adopt-proxy" "server"})
 
 (defn- resolve-registry-url []
   [(or (System/getenv "SMITHR_REGISTRY") "localhost:5000")
