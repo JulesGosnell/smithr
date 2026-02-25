@@ -599,28 +599,14 @@
                                                                  (:max-slots % 10))))))
                                        (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
                                 ;; Phone: warm + no shared lock held (cross-host safe)
-                                (let [all-resources (vals (:resources s))
-                                      _ (log/info "Phone lease candidates: type=" type "platform=" platform
-                                                   "total-resources=" (count all-resources)
-                                                   "type-matches="
-                                                   (count (filter #(= (:type %) (keyword type)) all-resources))
-                                                   "platform-matches="
-                                                   (count (filter #(= (:platform %) (keyword platform)) all-resources))
-                                                   "warm-matches="
-                                                   (count (filter #(= (:status %) :warm) all-resources))
-                                                   "full-matches="
-                                                   (count (filter #(and (= (:status %) :warm)
-                                                                        (= (:type %) (keyword type))
-                                                                        (= (:platform %) (keyword platform)))
-                                                                  all-resources)))]
-                                  (->> all-resources
-                                       (filter #(and (= (:status %) :warm)
-                                                     (= (:type %) (keyword type))
-                                                     (= (:platform %) (keyword platform))
-                                                     (substrate-pred %)
-                                                     (model-pred %)
-                                                     (not (shared-lock-held? (:id %)))))
-                                       (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id)))))]
+                                (->> (vals (:resources s))
+                                     (filter #(and (= (:status %) :warm)
+                                                   (= (:type %) (keyword type))
+                                                   (= (:platform %) (keyword platform))
+                                                   (substrate-pred %)
+                                                   (model-pred %)
+                                                   (not (shared-lock-held? (:id %)))))
+                                     (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)
