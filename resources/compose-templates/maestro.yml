@@ -1,28 +1,33 @@
 #
-# Maestro test sidecar (Android)
+# Maestro test runner sidecar (Android)
 #
-# Stays alive as a sidecar — run tests via docker exec:
+# Lightweight shell for running Maestro test flows via docker exec.
+# Depends on the android-app sidecar being healthy (app installed and logged in).
 #
-#   docker exec <project>-maestro-1 maestro --device $$ADB_TARGET test /flows/login.yaml
+# The android-app sidecar handles ADB setup, APK install, server bridge,
+# config injection, and login/logout lifecycle. This container just provides
+# a ready-to-use Maestro environment for running the test body.
 #
-# Compose this with the android-phone proxy template:
+# Usage:
+#   docker exec <project>-maestro-1 maestro --device $ADB_TARGET test /flows/<flow>.yaml
+#
+# Compose with android-phone, android-app, and server templates:
 #
 #   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
+#   curl -s http://localhost:7070/api/compose/android-app > /tmp/app.yml
 #   curl -s http://localhost:7070/api/compose/maestro > /tmp/maestro.yml
-#   FLOWS_DIR=/path/to/flows docker compose -f /tmp/phone.yml -f /tmp/maestro.yml -p test up -d
+#   docker compose -f /tmp/phone.yml -f /tmp/app.yml -f /tmp/maestro.yml -p test up -d
 #
 # Env vars:
 #   ADB_TARGET   — ADB connection target (default: android-phone:5555)
-#   DRIVER_PORT  — Maestro driver port (default: 7101)
+#   DRIVER_PORT  — Maestro driver port (default: 7102, avoids collision with app sidecar)
 #   FLOWS_DIR    — Host path to Maestro flow files (default: current dir)
-#   API_URL      — (optional) Override app API endpoint via api-config.json
-#   BUNDLE_ID    — (optional) Android package name (default: com.artha.healthcare)
 #
 services:
   maestro:
     image: artha-maestro:latest
     depends_on:
-      android-phone:
+      app:
         condition: service_healthy
     entrypoint: ["/bin/bash", "-c"]
     command:
@@ -36,44 +41,14 @@ services:
         done
         adb -s "$$ADB_TARGET" wait-for-device
         echo "[maestro] ADB connected."
-        # Root only for legacy config injection (API_URL).
-        # Server bridge (SERVER_SERVICE) uses adb reverse — no root needed.
-        if [ -n "$$API_URL" ]; then
-            adb -s "$$ADB_TARGET" root 2>/dev/null || true
-            sleep 2
-            adb -s "$$ADB_TARGET" connect "$$ADB_TARGET" 2>/dev/null || true
-            adb -s "$$ADB_TARGET" wait-for-device
-            echo "[maestro] ADB running as root."
-        fi
-        # Server bridge: relay SERVER_SERVICE:SERVER_PORT into the emulator
-        if [ -n "$$SERVER_SERVICE" ]; then
-            echo "[maestro] Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → emulator localhost:$$SERVER_PORT"
-            socat TCP-LISTEN:$$SERVER_PORT,fork,reuseaddr TCP:$$SERVER_SERVICE:$$SERVER_PORT &
-            sleep 1
-            adb -s "$$ADB_TARGET" reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
-            echo "[maestro] Server bridge ready."
-        fi
-        # Inject api-config.json so the release APK connects to the test
-        # server instead of the baked-in production URL (https://artha.care).
-        # Requires root (already switched above).
-        if [ -n "$$API_URL" ]; then
-            echo "[maestro] Injecting api-config.json: $$API_URL"
-            adb -s "$$ADB_TARGET" shell "mkdir -p /data/data/$$BUNDLE_ID/files"
-            adb -s "$$ADB_TARGET" shell "echo '{\"apiUrl\": \"$$API_URL\"}' > /data/data/$$BUNDLE_ID/files/api-config.json"
-            echo "[maestro] api-config.json written."
-        fi
         echo "[maestro] Sidecar ready."
         echo "[maestro] Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
         exec sleep infinity
     environment:
       ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
-      DRIVER_PORT: ${DRIVER_PORT:-7101}
-      MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
+      DRIVER_PORT: ${DRIVER_PORT:-7102}
+      MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7102}"
       JAVA_TOOL_OPTIONS: ""
-      BUNDLE_ID: ${BUNDLE_ID:-com.artha.healthcare}
-      API_URL: ${API_URL:-}
-      SERVER_SERVICE: ${SERVER_SERVICE:-}
-      SERVER_PORT: ${SERVER_PORT:-3000}
     healthcheck:
       test: ["CMD-SHELL", "adb -s $$ADB_TARGET shell echo ok 2>/dev/null | grep -q ok"]
       interval: 10s
