@@ -87,19 +87,30 @@ services:
         fi
 
         # ── Install APK ───────────────────────────────────────
+        # Uses push + pm-install (two-stage) instead of streamed adb install.
+        # Streamed install fails through multi-hop socat/SSH tunnels because
+        # socat's 8KB buffers cause window stalls on 40MB+ transfers.
+        # Two-stage is tunnel-safe: push handles retries, pm install is local.
         log "APK: /app/$$APP_FILE ($$(du -h "/app/$$APP_FILE" 2>/dev/null | cut -f1))"
         log "Uninstalling stale app..."
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
-        log "Installing /app/$$APP_FILE..."
+        log "Pushing APK to device..."
         INSTALL_OK=false
         for attempt in 1 2 3; do
-            if $$ADB install "/app/$$APP_FILE"; then
-                INSTALL_OK=true
-                break
+            if $$ADB push "/app/$$APP_FILE" /data/local/tmp/app.apk; then
+                log "Push complete. Installing..."
+                if $$ADB shell pm install -r /data/local/tmp/app.apk; then
+                    INSTALL_OK=true
+                    break
+                fi
+                log "pm install failed on attempt $$attempt"
+            else
+                log "Push attempt $$attempt failed"
             fi
-            log "Install attempt $$attempt failed, retrying in 3s..."
+            log "Retrying in 3s..."
             sleep 3
         done
+        $$ADB shell rm -f /data/local/tmp/app.apk 2>/dev/null || true
         if [ "$$INSTALL_OK" != "true" ]; then
             log "FATAL: APK install failed after 3 attempts"
             exit 1
