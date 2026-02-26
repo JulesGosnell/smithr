@@ -229,12 +229,16 @@
         ;; Special case: server-type resources with remote ssh-host — hop via ssh-host to
         ;; reach container IP on the remote Docker network.
         {:keys [fwd-host fwd-port hop]}
-        (if (and (docker-network-ip? target-host)
-                 (not= (get-in resource [:connection :ssh-host] "localhost") "localhost"))
-          ;; Cross-host: hop through remote host to reach container IP
-          {:fwd-host target-host :fwd-port target-port
-           :hop (get-in resource [:connection :ssh-host])}
-          (resolve-tunnel-route target-host target-port))
+        (let [ssh-host (get-in resource [:connection :ssh-host] "localhost")]
+          (if (and (docker-network-ip? target-host)
+                   (not= ssh-host "localhost")
+                   (not (docker-network-ip? ssh-host)))
+            ;; Cross-host: target is a Docker IP on a remote host — hop through
+            ;; the remote hostname to reach it. Only applies when ssh-host is a
+            ;; real hostname (e.g. "prognathodon"), NOT a Docker IP (e.g. "10.21.0.40"
+            ;; for local macOS VMs — those use standard routing via localhost).
+            {:fwd-host target-host :fwd-port target-port :hop ssh-host}
+            (resolve-tunnel-route target-host target-port)))
         ;; When reverse-ports are present, SSH must connect directly to the build
         ;; container so -R binds on the container's sshd (not on the hop host).
         ;; For Docker IPs: SSH directly to the container, -L forwards to localhost.
