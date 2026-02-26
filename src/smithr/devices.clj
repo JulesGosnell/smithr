@@ -419,8 +419,10 @@
                          nil)]
             (when bridge
               (let [cname (container-name-for device)]
-                ;; Remove stale wrapper container if bridge port changed
-                (when (and existing (wrapper-container-exists? cname))
+                ;; Remove stale wrapper container so it gets recreated with
+                ;; the new bridge port. After Smithr restart, the old container
+                ;; still points to the dead bridge port — must recreate.
+                (when (wrapper-container-exists? cname)
                   (remove-wrapper-container! cname))
                 (when (create-wrapper-container! host-label device (:bridge-port bridge))
                   ;; Apply CI-friendly settings, save originals for teardown
