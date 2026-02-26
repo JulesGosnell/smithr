@@ -42,29 +42,32 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        T0=$$(date +%s)
+        log() { echo "[android-app] [$$(( $$(date +%s) - T0 ))s] $$*"; }
         ADB="adb -s $$ADB_TARGET"
 
         # ── Teardown (SIGTERM/INT) ──────────────────────────────
         APP_INSTALLED=false
         teardown() {
-            echo "[android-app] Teardown starting..."
+            log "Teardown starting..."
             if [ "$$APP_INSTALLED" = "true" ]; then
                 if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
-                    echo "[android-app] Running logout flow: $$LOGOUT_FLOW"
+                    log "Running logout flow: $$LOGOUT_FLOW"
                     maestro --device "$$ADB_TARGET" test "$$LOGOUT_FLOW" 2>&1 || true
+                    log "Logout complete."
                 fi
-                echo "[android-app] Force-stopping $$BUNDLE_ID..."
+                log "Force-stopping $$BUNDLE_ID..."
                 $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
-                echo "[android-app] Uninstalling $$BUNDLE_ID..."
+                log "Uninstalling $$BUNDLE_ID..."
                 $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
             fi
-            echo "[android-app] Teardown complete."
+            log "Teardown complete."
             exit 0
         }
         trap teardown TERM INT
 
         # ── Connect ADB ────────────────────────────────────────
-        echo "[android-app] Connecting ADB to $$ADB_TARGET..."
+        log "Connecting ADB to $$ADB_TARGET..."
         for i in $$(seq 1 60); do
           if adb connect "$$ADB_TARGET" 2>/dev/null | grep -q "connected"; then
             break
@@ -72,62 +75,61 @@ services:
           sleep 2
         done
         $$ADB wait-for-device
-        echo "[android-app] ADB connected."
+        log "ADB connected."
 
         # ── Server bridge ──────────────────────────────────────
         if [ -n "$$SERVER_SERVICE" ]; then
-            echo "[android-app] Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → device localhost:$$SERVER_PORT"
+            log "Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → device localhost:$$SERVER_PORT"
             socat TCP-LISTEN:$$SERVER_PORT,fork,reuseaddr TCP:$$SERVER_SERVICE:$$SERVER_PORT &
             sleep 1
             $$ADB reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
-            echo "[android-app] Server bridge ready."
+            log "Server bridge ready."
         fi
 
         # ── Install APK ───────────────────────────────────────
-        echo "[android-app] Device ABI: $$($$ADB shell getprop ro.product.cpu.abi 2>/dev/null)"
-        echo "[android-app] Device ABI list: $$($$ADB shell getprop ro.product.cpu.abilist 2>/dev/null)"
-        echo "[android-app] APK contents:"
-        ls -la /app/ 2>/dev/null || true
-        echo "[android-app] Uninstalling stale app..."
+        log "Uninstalling stale app..."
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
-        echo "[android-app] Installing /app/$$APP_FILE..."
+        log "Installing /app/$$APP_FILE..."
         INSTALL_OK=false
         for attempt in 1 2 3; do
             if $$ADB install "/app/$$APP_FILE"; then
                 INSTALL_OK=true
                 break
             fi
-            echo "[android-app] Install attempt $$attempt failed, retrying in 3s..."
+            log "Install attempt $$attempt failed, retrying in 3s..."
             sleep 3
         done
         if [ "$$INSTALL_OK" != "true" ]; then
-            echo "[android-app] FATAL: APK install failed after 3 attempts"
+            log "FATAL: APK install failed after 3 attempts"
             exit 1
         fi
         APP_INSTALLED=true
+        log "APK installed."
 
         # ── Inject api-config.json ─────────────────────────────
         if [ -n "$$API_URL" ]; then
-            echo "[android-app] Injecting api-config.json: $$API_URL"
+            log "Injecting api-config.json: $$API_URL"
             echo "{\"apiUrl\": \"$$API_URL\"}" > /tmp/api-config.json
             $$ADB push /tmp/api-config.json \
               /sdcard/Android/data/$$BUNDLE_ID/files/api-config.json
+            log "Config injected."
         fi
 
         # ── Login ──────────────────────────────────────────────
         if [ -n "$$LOGIN_FLOW" ] && [ -f "$$LOGIN_FLOW" ]; then
-            echo "[android-app] Running login flow: $$LOGIN_FLOW"
+            log "Running login flow: $$LOGIN_FLOW"
             if ! maestro --device "$$ADB_TARGET" test \
               -e EMAIL="$$EMAIL" -e PASSWORD="$$PASSWORD" \
               "$$LOGIN_FLOW"; then
-                echo "[android-app] FATAL: Login flow failed"
+                log "FATAL: Login flow failed"
                 exit 1
             fi
+            log "Login complete."
         fi
 
         # ── Ready ──────────────────────────────────────────────
         touch /tmp/app-installed
-        echo "[android-app] Ready. App installed and logged in."
+        log "Ready. App installed and logged in."
 
         # Stay alive — sleep in background so trap fires promptly
         while true; do sleep 60 & wait $$!; done

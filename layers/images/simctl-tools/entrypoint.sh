@@ -14,6 +14,9 @@
 #
 set -e
 
+T0=$(date +%s)
+log() { echo "[ios-app] [$(( $(date +%s) - T0 ))s] $*"; }
+
 SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
 SSH_USER="${SSH_USER:-smithr}"
 SSH_KEY="${SSH_KEY:-}"
@@ -40,51 +43,55 @@ remote() {
 }
 
 teardown() {
-    echo "[ios-app] Uninstalling $BUNDLE_ID..."
+    log "Teardown starting..."
+    log "Uninstalling $BUNDLE_ID..."
     remote "xcrun simctl uninstall booted $BUNDLE_ID" 2>/dev/null || true
     remote "rm -rf $REMOTE_APP_DIR" 2>/dev/null || true
-    echo "[ios-app] Teardown complete."
+    log "Teardown complete."
     exit 0
 }
 trap teardown TERM INT
 
 # Wait for SSH to be reachable
-echo "[ios-app] Waiting for SSH at $SSH_TARGET..."
+log "Waiting for SSH at $SSH_TARGET..."
 for i in $(seq 1 60); do
     if remote "echo ok" >/dev/null 2>&1; then
         break
     fi
     sleep 2
 done
-echo "[ios-app] SSH connected."
+log "SSH connected."
 
 # Copy .app bundle to VM
-echo "[ios-app] Copying app to VM..."
+log "Copying app to VM..."
 remote "mkdir -p $REMOTE_APP_DIR"
 scp $SCP_OPTS -r "$APP_FILE" "$SSH_USER@$SSH_HOST:$REMOTE_APP_DIR/"
+log "App copied."
 
 APP_BASENAME=$(basename "$APP_FILE")
 
 # Install on Simulator
-echo "[ios-app] Installing $APP_BASENAME on Simulator..."
+log "Installing $APP_BASENAME on Simulator..."
 remote "xcrun simctl install booted $REMOTE_APP_DIR/$APP_BASENAME"
+log "Installed."
 
 # Inject API config if specified (must be after install, before launch)
 if [ -n "$API_URL" ]; then
-    echo "[ios-app] Injecting api-config.json: $API_URL"
+    log "Injecting api-config.json: $API_URL"
     DATA_CONTAINER=$(remote "xcrun simctl get_app_container booted $BUNDLE_ID data")
     DOCS_DIR="$DATA_CONTAINER/Documents"
     remote "mkdir -p $DOCS_DIR && echo '{\"apiUrl\": \"$API_URL\"}' > $DOCS_DIR/api-config.json"
-    echo "[ios-app] api-config.json written to $DOCS_DIR/"
+    log "Config injected."
 fi
 
 # Launch
-echo "[ios-app] Launching $BUNDLE_ID..."
+log "Launching $BUNDLE_ID..."
 remote "xcrun simctl launch booted $BUNDLE_ID"
+log "Launched."
 
 # Signal healthy
 touch /tmp/app-installed
-echo "[ios-app] Ready."
+log "Ready."
 
 # Stay alive — sleep in background so trap fires promptly
 while true; do sleep 60 & wait $!; done
