@@ -45,15 +45,19 @@ services:
         ADB="adb -s $$ADB_TARGET"
 
         # ── Teardown (SIGTERM/INT) ──────────────────────────────
+        APP_INSTALLED=false
         teardown() {
-            if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
-                echo "[android-app] Running logout flow: $$LOGOUT_FLOW"
-                maestro --device "$$ADB_TARGET" test "$$LOGOUT_FLOW" 2>&1 || true
+            echo "[android-app] Teardown starting..."
+            if [ "$$APP_INSTALLED" = "true" ]; then
+                if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
+                    echo "[android-app] Running logout flow: $$LOGOUT_FLOW"
+                    maestro --device "$$ADB_TARGET" test "$$LOGOUT_FLOW" 2>&1 || true
+                fi
+                echo "[android-app] Force-stopping $$BUNDLE_ID..."
+                $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
+                echo "[android-app] Uninstalling $$BUNDLE_ID..."
+                $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
             fi
-            echo "[android-app] Force-stopping $$BUNDLE_ID..."
-            $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
-            echo "[android-app] Uninstalling $$BUNDLE_ID..."
-            $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
             echo "[android-app] Teardown complete."
             exit 0
         }
@@ -83,7 +87,11 @@ services:
         echo "[android-app] Uninstalling stale app..."
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
         echo "[android-app] Installing /app/$$APP_FILE..."
-        $$ADB install "/app/$$APP_FILE"
+        if ! $$ADB install "/app/$$APP_FILE"; then
+            echo "[android-app] FATAL: APK install failed"
+            exit 1
+        fi
+        APP_INSTALLED=true
 
         # ── Inject api-config.json ─────────────────────────────
         if [ -n "$$API_URL" ]; then
@@ -96,9 +104,12 @@ services:
         # ── Login ──────────────────────────────────────────────
         if [ -n "$$LOGIN_FLOW" ] && [ -f "$$LOGIN_FLOW" ]; then
             echo "[android-app] Running login flow: $$LOGIN_FLOW"
-            maestro --device "$$ADB_TARGET" test \
+            if ! maestro --device "$$ADB_TARGET" test \
               -e EMAIL="$$EMAIL" -e PASSWORD="$$PASSWORD" \
-              "$$LOGIN_FLOW"
+              "$$LOGIN_FLOW"; then
+                echo "[android-app] FATAL: Login flow failed"
+                exit 1
+            fi
         fi
 
         # ── Ready ──────────────────────────────────────────────
