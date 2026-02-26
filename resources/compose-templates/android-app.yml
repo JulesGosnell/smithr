@@ -87,23 +87,27 @@ services:
         fi
 
         # ── Install APK ───────────────────────────────────────
-        # Uses push + pm-install (two-stage) instead of streamed adb install.
-        # Streamed install fails through multi-hop socat/SSH tunnels because
-        # socat's 8KB buffers cause window stalls on 40MB+ transfers.
-        # Two-stage is tunnel-safe: push handles retries, pm install is local.
+        # Two-stage: push file to device, then install from device storage.
+        # Streamed `adb install` fails through cross-host SSH tunnels.
+        # Plain `pm install` fails on some devices with extractNativeLibs=false.
+        # The `cat | pm install -S` approach uses the streaming installer API
+        # (same code path as `adb install`) but with data already on-device.
         log "APK: /app/$$APP_FILE ($$(du -h "/app/$$APP_FILE" 2>/dev/null | cut -f1))"
         log "Uninstalling stale app..."
+        $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
+        sleep 1
+        APK_SIZE=$$(stat -c%s "/app/$$APP_FILE")
         log "Pushing APK to device..."
         INSTALL_OK=false
         for attempt in 1 2 3; do
             if $$ADB push "/app/$$APP_FILE" /data/local/tmp/app.apk; then
                 log "Push complete. Installing..."
-                if $$ADB shell pm install -r /data/local/tmp/app.apk; then
+                if $$ADB shell "cat /data/local/tmp/app.apk | pm install -S $$APK_SIZE" 2>&1 | grep -q "Success"; then
                     INSTALL_OK=true
                     break
                 fi
-                log "pm install failed on attempt $$attempt"
+                log "Install attempt $$attempt failed"
             else
                 log "Push attempt $$attempt failed"
             fi
