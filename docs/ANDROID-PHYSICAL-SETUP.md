@@ -91,17 +91,26 @@ You can open the Play Protect settings screen remotely via:
 adb shell am start -a com.google.android.gms.settings.VERIFY_APPS_SETTINGS
 ```
 
-### Step 5: Keep Screen Awake (Optional)
+### Step 5: CI-Friendly Settings
 
-For phones that will be permanently connected as CI devices:
+Smithr automatically applies CI-friendly settings when a phone is
+registered (animations off, stay awake, rotation locked, popup
+notifications suppressed, lock screen disabled). Originals are restored
+when the phone is deregistered.
 
-1. Open **Settings > Developer Options**
-2. Enable **Stay Awake** (screen stays on while charging)
+**OEM restriction**: Some manufacturers (OPPO/ColorOS, Xiaomi/MIUI)
+block `settings put global` from ADB, requiring `WRITE_SECURE_SETTINGS`
+which the shell user doesn't have. On these phones, configure manually:
 
-### Step 6: Disable Lock Screen (Recommended)
+1. **Stay Awake**: Developer Options > Enable **Stay Awake**
+2. **Disable Lock Screen**: Settings > Security > Screen Lock > **None**
+3. **Disable Animations**: Developer Options >
+   - Window animation scale: **Off**
+   - Transition animation scale: **Off**
+   - Animator duration scale: **Off**
 
-1. Open **Settings > Security > Screen Lock**
-2. Set to **None** or **Swipe**
+On stock Android, Pixel, and Samsung devices, Smithr handles these
+automatically — no manual steps needed.
 
 ## How It Works
 

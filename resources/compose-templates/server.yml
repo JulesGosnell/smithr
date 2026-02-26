@@ -30,7 +30,7 @@ services:
       SMITHR_MODE: lease
       SMITHR_URL: {{SMITHR_URL}}
       SMITHR_RESOURCE_TYPE: server
-      SMITHR_PLATFORM: linux
+      SMITHR_PLATFORM: ${SMITHR_SERVER_PLATFORM:-artha}
       SMITHR_LEASE_TYPE: build
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: ${SMITHR_PORTS:-3000}
