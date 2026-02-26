@@ -72,9 +72,10 @@ remote "xcrun simctl install booted $REMOTE_APP_DIR/$APP_BASENAME"
 # Inject API config if specified (must be after install, before launch)
 if [ -n "$API_URL" ]; then
     echo "[ios-app] Injecting api-config.json: $API_URL"
-    APP_CONTAINER=$(remote "xcrun simctl get_app_container booted $BUNDLE_ID")
-    remote "echo '{\"apiUrl\": \"$API_URL\"}' > $APP_CONTAINER/api-config.json"
-    echo "[ios-app] api-config.json written to $APP_CONTAINER/"
+    DATA_CONTAINER=$(remote "xcrun simctl get_app_container booted $BUNDLE_ID data")
+    DOCS_DIR="$DATA_CONTAINER/Documents"
+    remote "mkdir -p $DOCS_DIR && echo '{\"apiUrl\": \"$API_URL\"}' > $DOCS_DIR/api-config.json"
+    echo "[ios-app] api-config.json written to $DOCS_DIR/"
 fi
 
 # Launch

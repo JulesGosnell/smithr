@@ -37,10 +37,10 @@ services:
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]
-      interval: 3s
+      interval: 5s
       timeout: 3s
       retries: 60
-      start_period: 5s
+      start_period: 120s
     stop_grace_period: 30s
     networks:
       - smithr-network
