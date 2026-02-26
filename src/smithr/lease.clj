@@ -337,14 +337,21 @@
   (when-let [tunnel (get @tunnels lease-id)]
     (log/info "Stopping tunnel on port" (:port tunnel) "for lease" lease-id
               (when (:target tunnel) (str "→ " (:target tunnel))))
-    ;; Kill the socat process if running
-    (when-let [^Process proc (:process tunnel)]
-      (try
-        (when (.isAlive proc)
-          (.destroyForcibly proc)
-          (log/info "Tunnel process killed: pid" (.pid proc)))
-        (catch Exception e
-          (log/warn "Error stopping tunnel process:" (.getMessage e)))))
+    ;; ADB forward: remove the port mapping (no process to kill)
+    (if (:adb-forward tunnel)
+      (let [{:keys [exit]} (shell/sh "adb" "forward" "--remove"
+                                     (str "tcp:" (:port tunnel)))]
+        (if (zero? exit)
+          (log/info "ADB forward removed: port" (:port tunnel))
+          (log/warn "ADB forward --remove failed for port" (:port tunnel))))
+      ;; Process-based tunnel (socat, iproxy, ssh): kill the process
+      (when-let [^Process proc (:process tunnel)]
+        (try
+          (when (.isAlive proc)
+            (.destroyForcibly proc)
+            (log/info "Tunnel process killed: pid" (.pid proc)))
+          (catch Exception e
+            (log/warn "Error stopping tunnel process:" (.getMessage e))))))
     (swap! tunnels dissoc lease-id)))
 
 ;; ---------------------------------------------------------------------------
@@ -774,21 +781,31 @@
                             (if local?
                               (start-socat-bridge! lease-id resource svc-port)
                               (start-tunnel! lease-id resource)))
-                          ;; Physical Android: switch to TCP, socat bridge to WiFi IP
+                          ;; Physical Android: adb forward over USB (no WiFi needed)
                           (and (= (:substrate resource) "physical")
                                (= (:platform resource) :android))
-                          (let [{:keys [adb-host adb-port serial wifi-ip]} (:connection resource)
-                                target-ip (or wifi-ip adb-host)
-                                target-port (or adb-port 5555)]
-                            ;; Switch physical device to TCP ADB if needed
-                            (when serial
-                              (log/info "Switching physical device" serial "to TCP mode")
-                              (shell/sh "adb" "-s" serial "tcpip" (str target-port))
-                              (Thread/sleep 2000)
-                              ;; Ensure we can reach it over TCP
-                              (when (and target-ip (not= target-ip "localhost"))
-                                (shell/sh "adb" "connect" (str target-ip ":" target-port))))
-                            (start-socat-bridge! lease-id resource target-port))
+                          (let [serial (get-in resource [:connection :serial])
+                                tunnel-port (allocate-tunnel-port!)
+                                device-port 5555]
+                            (log/info "Starting ADB USB forward on port" tunnel-port
+                                      "→ device" serial "port" device-port)
+                            (let [{:keys [exit]} (shell/sh "adb" "-s" serial
+                                                           "forward"
+                                                           (str "tcp:" tunnel-port)
+                                                           (str "tcp:" device-port))]
+                              (if (zero? exit)
+                                (let [tunnel-info {:port        tunnel-port
+                                                   :adb-forward true
+                                                   :serial      serial
+                                                   :resource-id (:id resource)
+                                                   :target      (str "adb-forward:" serial ":" device-port)
+                                                   :started-at  (Instant/now)}]
+                                  (swap! tunnels assoc lease-id tunnel-info)
+                                  (log/info "ADB USB forward ready: port" tunnel-port
+                                            "→ device" serial)
+                                  tunnel-info)
+                                (do (log/error "ADB forward failed for device" serial)
+                                    nil))))
                           ;; Physical iOS: iproxy bridge over USB
                           (and (= (:substrate resource) "physical")
                                (= (:platform resource) :ios))
