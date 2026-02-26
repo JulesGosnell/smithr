@@ -339,7 +339,8 @@
               (when (:target tunnel) (str "→ " (:target tunnel))))
     ;; ADB forward: remove the port mapping (no process to kill)
     (if (:adb-forward tunnel)
-      (let [{:keys [exit]} (shell/sh "adb" "forward" "--remove"
+      (let [{:keys [exit]} (shell/sh "adb" "-s" (:serial tunnel)
+                                     "forward" "--remove"
                                      (str "tcp:" (:port tunnel)))]
         (if (zero? exit)
           (log/info "ADB forward removed: port" (:port tunnel))
