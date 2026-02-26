@@ -220,18 +220,18 @@
           :ios     (let [conn (or parent-conn (:connection resource))]
                      [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
           :android-build [(or ssh-host "localhost") (or ssh-port 22)]
-          :linux   (let [conn (:connection resource)
-                         ip   (or (:container-ip conn) "localhost")
-                         port (or (:service-port conn) 3000)]
-                     [ip port])
-          ["localhost" 0])
+          ;; Default: container-ip + service-port (servers, adopted containers, etc.)
+          (let [conn (:connection resource)
+                ip   (or (:container-ip conn) "localhost")
+                port (or (:service-port conn) 3000)]
+            [ip port]))
         ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname.
-        ;; Special case: `:linux` with remote ssh-host — hop via ssh-host, forward to container IP.
+        ;; Special case: server-type resources with remote ssh-host — hop via ssh-host to
+        ;; reach container IP on the remote Docker network.
         {:keys [fwd-host fwd-port hop]}
-        (if (and (= platform :linux)
-                 (docker-network-ip? target-host)
+        (if (and (docker-network-ip? target-host)
                  (not= (get-in resource [:connection :ssh-host] "localhost") "localhost"))
-          ;; Cross-host server: hop through remote host to reach container IP
+          ;; Cross-host: hop through remote host to reach container IP
           {:fwd-host target-host :fwd-port target-port
            :hop (get-in resource [:connection :ssh-host])}
           (resolve-tunnel-route target-host target-port))

@@ -123,7 +123,9 @@
                                      :ssh-port (if (and remote? (host-port-for 22))
                                                  (host-port-for 22) 22)}
                      ;; Default: store container IP for direct-access resources (e.g. servers)
+                     ;; Include ssh-host for remote resources so cross-host tunneling works.
                      (cond-> {:container-ip ip}
+                       remote? (assoc :ssh-host host-address)
                        (get labels "smithr.resource.service-port")
                        (assoc :service-port (Integer/parseInt (get labels "smithr.resource.service-port")))))]
     (cond-> {:id id
