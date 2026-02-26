@@ -16,7 +16,12 @@
 
 (defonce ^:private device-bridges
   ;; serial/udid -> {:fwd-port N :bridge-port M :bridge-process Process
-  ;;                  :container-name String :platform String}
+  ;;                  :container-name String :platform String
+  ;;                  :original-settings {[ns key] orig-val}}
+  ;; NOTE: This atom is volatile — original-settings are lost on Smithr
+  ;; restart. If Smithr restarts while a device is connected, the CI
+  ;; settings will be re-applied but the true original values (from before
+  ;; the first registration) are lost. See #70 for persistence.
   (atom {}))
 
 (defn- find-free-port
@@ -251,7 +256,7 @@
     (zero? exit)))
 
 (defn- create-wrapper-container!
-  "Create a marker Docker container on smithr-network for a physical device.
+  "Create a wrapper Docker container on smithr-network for a physical device.
    The container carries smithr labels so both hosts discover it via
    Docker event subscription — making it indistinguishable from an
    emulated device."
@@ -304,6 +309,78 @@
       (log/debug "Wrapper container removal skipped:" cname))))
 
 ;; ---------------------------------------------------------------------------
+;; CI-friendly device configuration (automated setup / teardown)
+;; ---------------------------------------------------------------------------
+
+(def ^:private ci-android-settings
+  "Android settings to apply for CI. Each entry is [namespace key ci-value].
+   Original values are saved per-device and restored on teardown."
+  [["global" "window_animation_scale"       "0"]
+   ["global" "transition_animation_scale"    "0"]
+   ["global" "animator_duration_scale"       "0"]
+   ["global" "stay_on_while_plugged_in"      "3"]    ;; AC + USB
+   ["system" "accelerometer_rotation"        "0"]    ;; lock rotation
+   ["global" "heads_up_notifications_enabled" "0"]]) ;; suppress popups
+
+(defn- adb-get-setting
+  "Read a setting value from a physical Android device."
+  [serial namespace key]
+  (try
+    (let [{:keys [exit out]} (shell/sh "adb" "-s" serial "shell"
+                                       "settings" "get" namespace key)]
+      (when (zero? exit)
+        (str/trim out)))
+    (catch Exception _ nil)))
+
+(defn- adb-put-setting!
+  "Write a setting value on a physical Android device.
+   Returns true on success, false on failure (e.g. permission denied)."
+  [serial namespace key value]
+  (try
+    (let [{:keys [exit]} (shell/sh "adb" "-s" serial "shell"
+                                   "settings" "put" namespace key value)]
+      (zero? exit))
+    (catch Exception _ false)))
+
+(defn- configure-android-for-ci!
+  "Apply CI-friendly settings to a physical Android device.
+   Saves original values and returns them as a map for later restoration."
+  [serial]
+  (log/info "Configuring Android device" serial "for CI")
+  (let [originals (into {}
+                    (for [[ns key ci-val] ci-android-settings]
+                      (let [orig (adb-get-setting serial ns key)]
+                        (if (adb-put-setting! serial ns key ci-val)
+                          (do (log/debug "  set" ns "/" key ":" orig "→" ci-val)
+                              [[ns key] orig])
+                          (do (log/warn "  failed to set" ns "/" key
+                                        "(permission denied?)")
+                              [[ns key] nil])))))]
+    ;; Also try to disable lock screen (best-effort)
+    (try
+      (let [{:keys [exit]} (shell/sh "adb" "-s" serial "shell"
+                                     "locksettings" "set-disabled" "true")]
+        (when (zero? exit)
+          (log/debug "  lock screen disabled")))
+      (catch Exception _ nil))
+    originals))
+
+(defn- restore-android-settings!
+  "Restore a physical Android device's original settings saved during CI setup."
+  [serial originals]
+  (when (seq originals)
+    (log/info "Restoring original settings on Android device" serial)
+    (doseq [[[ns key] orig-val] originals]
+      (when (and orig-val (not= orig-val "null"))
+        (if (adb-put-setting! serial ns key orig-val)
+          (log/debug "  restored" ns "/" key "→" orig-val)
+          (log/warn "  failed to restore" ns "/" key))))
+    ;; Re-enable lock screen
+    (try
+      (shell/sh "adb" "-s" serial "shell" "locksettings" "set-disabled" "false")
+      (catch Exception _ nil))))
+
+;; ---------------------------------------------------------------------------
 ;; Scan + register (with wrapper containers)
 ;; ---------------------------------------------------------------------------
 
@@ -320,7 +397,9 @@
   "Scan for physical devices, create host bridges and wrapper containers.
    The wrapper containers carry smithr labels on smithr-network, so
    Docker event subscription on all hosts discovers them automatically.
-   Bridge = adb forward + socat (Android) or iproxy (iOS) on the host."
+   Bridge = adb forward + socat (Android) or iproxy (iOS) on the host.
+   Also applies CI-friendly settings (animations off, stay awake, etc.)
+   and saves originals for restoration on device removal."
   [host-label]
   (let [{:keys [devices]} (scan-all-devices host-label)
         scanned-keys (set (map device-id-key devices))
@@ -344,10 +423,16 @@
                 (when (and existing (wrapper-container-exists? cname))
                   (remove-wrapper-container! cname))
                 (when (create-wrapper-container! host-label device (:bridge-port bridge))
-                  (swap! device-bridges assoc dk
-                         (assoc bridge
-                                :container-name cname
-                                :platform (:platform device))))))))))
+                  ;; Apply CI-friendly settings, save originals for teardown
+                  (let [originals (case (:platform device)
+                                   "android" (configure-android-for-ci!
+                                               (:serial device))
+                                   nil)]
+                    (swap! device-bridges assoc dk
+                           (assoc bridge
+                                  :container-name cname
+                                  :platform (:platform device)
+                                  :original-settings originals))))))))))
     ;; Remove unplugged devices
     (doseq [[dk bridge] current-bridges]
       (when-not (contains? scanned-keys dk)
@@ -361,6 +446,10 @@
             (log/warn "Physical device" dk "unplugged but has active lease!")
             (do
               (log/info "Physical device removed:" dk)
+              ;; Restore original settings before tearing down
+              (when (and (= (:platform bridge) "android")
+                         (:original-settings bridge))
+                (restore-android-settings! dk (:original-settings bridge)))
               (stop-bridge! dk bridge)
               (when cname (remove-wrapper-container! cname))
               (swap! device-bridges dissoc dk))))))
@@ -404,10 +493,14 @@
           (state/update-resource-status! (:id r) :dead))))))
 
 (defn shutdown-bridges!
-  "Stop all device bridges (called on Smithr shutdown)."
+  "Stop all device bridges and restore original settings (called on Smithr shutdown)."
   []
   (doseq [[dk bridge] @device-bridges]
     (log/info "Shutting down bridge for" dk)
+    ;; Restore original settings before shutdown
+    (when (and (= (:platform bridge) "android")
+               (:original-settings bridge))
+      (restore-android-settings! dk (:original-settings bridge)))
     (stop-bridge! dk bridge)
     (when-let [cname (:container-name bridge)]
       (remove-wrapper-container! cname)))
