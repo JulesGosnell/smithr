@@ -88,6 +88,10 @@
     ;; Cancel metrics scrape loop
     (when-let [mf (:metrics-future sys)]
       (future-cancel mf))
+    ;; Shutdown device bridges (stops socat/iproxy, removes marker containers)
+    (try (devices/shutdown-bridges!)
+         (catch Exception e
+           (log/debug "Device bridge shutdown:" (.getMessage e))))
     ;; Close Docker event subscriptions
     (doseq [conn (:connections sys)]
       (when-let [sub (:subscription conn)]

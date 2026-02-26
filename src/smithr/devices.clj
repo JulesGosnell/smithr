@@ -1,12 +1,29 @@
 (ns smithr.devices
   "USB device discovery and registration.
    Scans for physical Android (adb) and iOS (libimobiledevice) devices
-   plugged into any host, registers them as leasable resources."
+   plugged into any host, creates marker Docker containers so they're
+   visible via cross-host Docker event subscription — identical to
+   emulated devices from the outside."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [smithr.state :as state])
-  (:import [java.time Instant]))
+  (:import [java.net ServerSocket]))
+
+;; ---------------------------------------------------------------------------
+;; Bridge state — tracks host-side processes per physical device
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private device-bridges
+  ;; serial/udid -> {:fwd-port N :bridge-port M :bridge-process Process
+  ;;                  :container-name String :platform String}
+  (atom {}))
+
+(defn- find-free-port
+  "Find an available TCP port by briefly binding a ServerSocket."
+  []
+  (with-open [sock (ServerSocket. 0)]
+    (.getLocalPort sock)))
 
 ;; ---------------------------------------------------------------------------
 ;; Android device scanning (adb)
@@ -44,21 +61,6 @@
         (str/trim out)))
     (catch Exception _ nil)))
 
-(defn- adb-device-wifi-ip
-  "Get the WiFi IP address of a physical Android device.
-   Does NOT switch to TCP mode — just reads the IP via USB.
-   Returns nil if WiFi is not connected or ADB fails."
-  [serial]
-  (try
-    (let [{:keys [exit out]} (shell/sh "adb" "-s" serial "shell"
-                                       "ip" "addr" "show" "wlan0")]
-      (when (zero? exit)
-        (when-let [m (re-find #"inet (\d+\.\d+\.\d+\.\d+)" out)]
-          (second m))))
-    (catch Exception e
-      (log/debug "Failed to get WiFi IP for" serial ":" (.getMessage e))
-      nil)))
-
 (defn scan-android-devices
   "Scan for physical Android devices via adb.
    Filters out emulator serials (emulator-NNNN) and tunnel endpoints
@@ -75,15 +77,13 @@
                            (remove #(str/includes? % ":")))]
           (doall
             (for [serial serials]
-              (let [ip (adb-device-wifi-ip serial)
-                    model (or (adb-device-model serial) "Unknown")
+              (let [model (or (adb-device-model serial) "Unknown")
                     dname (adb-device-name serial)]
-                (cond-> {:serial serial
-                         :platform "android"
-                         :substrate "physical"
-                         :model model
-                         :device-name (or dname model)}
-                  ip (assoc :wifi-ip ip))))))
+                {:serial serial
+                 :platform "android"
+                 :substrate "physical"
+                 :model model
+                 :device-name (or dname model)}))))
         (do (log/debug "adb devices failed, exit:" exit)
             [])))
     (catch Exception e
@@ -146,41 +146,161 @@
       [])))
 
 ;; ---------------------------------------------------------------------------
-;; Resource registration
+;; Host-side bridge management
 ;; ---------------------------------------------------------------------------
 
-(defn- device->resource-id
-  "Generate a resource ID for a physical device."
-  [host-label device]
-  (let [id-suffix (or (:serial device) (:udid device) "unknown")]
-    (str host-label ":" (:platform device) ":physical-" id-suffix)))
+(defn- device-id-key
+  "Get the unique key for a device (serial for Android, UDID for iOS)."
+  [device]
+  (or (:serial device) (:udid device)))
 
-(defn- device->resource
-  "Convert a discovered device into a Smithr resource map."
-  [host-label device]
-  (let [platform (keyword (:platform device))
-        id (device->resource-id host-label device)]
-    {:id id
-     :type :phone
-     :platform platform
-     :host host-label
-     :status :warm
-     :container (str "physical-" (or (:serial device) (:udid device)))
-     :substrate "physical"
-     :model (:model device)
-     :device-name (:device-name device)
-     :provisioned? false
-     :connection (case platform
-                   :android (cond-> {:adb-host (or (:wifi-ip device) "localhost")
-                                     :adb-port 5555
-                                     :serial (:serial device)}
-                              (:wifi-ip device) (assoc :wifi-ip (:wifi-ip device)))
-                   :ios     {:udid (:udid device)}
-                   {})
-     :updated-at (Instant/now)}))
+(defn- container-name-for
+  "Docker container name for a physical device marker."
+  [device]
+  (str "physical-" (device-id-key device)))
+
+(defn- start-android-bridge!
+  "Start adb forward + socat for a physical Android device.
+   adb forward binds localhost only, socat makes it reachable on 0.0.0.0.
+   Returns {:fwd-port N :bridge-port M :bridge-process Process} or nil."
+  [serial]
+  (let [fwd-port (find-free-port)
+        bridge-port (find-free-port)]
+    (log/info "Starting Android bridge:" serial
+              "adb-forward:" fwd-port "socat:" bridge-port)
+    (let [{:keys [exit]} (shell/sh "adb" "-s" serial
+                                   "forward"
+                                   (str "tcp:" fwd-port)
+                                   (str "tcp:5555"))]
+      (if (zero? exit)
+        (let [cmd ["socat"
+                   (str "TCP-LISTEN:" bridge-port ",fork,reuseaddr")
+                   (str "TCP:localhost:" fwd-port)]
+              proc (-> (ProcessBuilder. ^java.util.List cmd)
+                       (.redirectErrorStream true)
+                       (.start))]
+          (Thread/sleep 200)
+          (if (.isAlive proc)
+            (do (log/info "Android bridge ready:" serial
+                          "port" bridge-port "pid" (.pid proc))
+                {:fwd-port fwd-port
+                 :bridge-port bridge-port
+                 :bridge-process proc})
+            (do (log/error "socat died immediately for" serial)
+                (shell/sh "adb" "-s" serial "forward" "--remove"
+                          (str "tcp:" fwd-port))
+                nil)))
+        (do (log/error "adb forward failed for" serial)
+            nil)))))
+
+(defn- start-ios-bridge!
+  "Start iproxy for a physical iOS device.
+   Returns {:bridge-port N :bridge-process Process} or nil."
+  [udid]
+  (let [bridge-port (find-free-port)]
+    (log/info "Starting iOS bridge:" udid "iproxy port:" bridge-port)
+    (try
+      (let [cmd ["iproxy" "-u" udid (str bridge-port ":62078")]
+            proc (-> (ProcessBuilder. ^java.util.List cmd)
+                     (.redirectErrorStream true)
+                     (.start))]
+        (Thread/sleep 200)
+        (if (.isAlive proc)
+          (do (log/info "iOS bridge ready:" udid "port" bridge-port "pid" (.pid proc))
+              {:bridge-port bridge-port
+               :bridge-process proc})
+          (do (log/error "iproxy died immediately for" udid)
+              nil)))
+      (catch Exception e
+        (log/error "Failed to start iproxy for" udid ":" (.getMessage e))
+        nil))))
+
+(defn- stop-bridge!
+  "Stop a device bridge (kill socat/iproxy, remove adb forward)."
+  [device-key bridge]
+  (when-let [^Process proc (:bridge-process bridge)]
+    (try
+      (when (.isAlive proc)
+        (.destroyForcibly proc)
+        (log/info "Bridge process killed:" device-key "pid" (.pid proc)))
+      (catch Exception e
+        (log/warn "Error killing bridge for" device-key ":" (.getMessage e)))))
+  ;; Remove adb forward if applicable
+  (when (:fwd-port bridge)
+    (let [{:keys [exit]} (shell/sh "adb" "-s" device-key
+                                   "forward" "--remove"
+                                   (str "tcp:" (:fwd-port bridge)))]
+      (if (zero? exit)
+        (log/info "ADB forward removed:" device-key "port" (:fwd-port bridge))
+        (log/debug "ADB forward --remove skipped for" device-key)))))
+
+(defn- bridge-alive?
+  "Check if a device bridge's socat/iproxy process is still running."
+  [bridge]
+  (when-let [^Process proc (:bridge-process bridge)]
+    (.isAlive proc)))
 
 ;; ---------------------------------------------------------------------------
-;; Scan + register
+;; Wrapper container management
+;; ---------------------------------------------------------------------------
+
+(defn- wrapper-container-exists?
+  "Check if a Docker container with the given name exists."
+  [name]
+  (let [{:keys [exit]} (shell/sh "docker" "inspect" name)]
+    (zero? exit)))
+
+(defn- create-wrapper-container!
+  "Create a marker Docker container on smithr-network for a physical device.
+   The container carries smithr labels so both hosts discover it via
+   Docker event subscription — making it indistinguishable from an
+   emulated device."
+  [host-label device bridge-port]
+  (let [cname (container-name-for device)
+        platform (:platform device)
+        device-key (device-id-key device)
+        labels (cond-> ["--label" "smithr.managed=true"
+                        "--label" "smithr.resource.type=phone"
+                        "--label" (str "smithr.resource.platform=" platform)
+                        "--label" "smithr.resource.substrate=physical"
+                        "--label" (str "smithr.resource.model=" (:model device))
+                        "--label" (str "smithr.resource.device-name=" (:device-name device))
+                        "--label" (str "smithr.resource.connect-host=" host-label)
+                        "--label" (str "smithr.resource.connect-port=" bridge-port)]
+                 (= platform "android")
+                 (into ["--label" (str "smithr.resource.serial=" (:serial device))])
+                 (= platform "ios")
+                 (into ["--label" (str "smithr.resource.udid=" (:udid device))]))]
+    (if (wrapper-container-exists? cname)
+      (do (log/debug "Wrapper container already exists:" cname)
+          cname)
+      (let [cmd (into ["docker" "run" "-d"
+                        "--name" cname
+                        "--network" "smithr-network"
+                        "--restart" "unless-stopped"
+                        "-e" (str "BRIDGE_PORT=" bridge-port)
+                        "-e" (str "BRIDGE_HOST=10.21.0.1")
+                        "-e" (str "SERIAL=" device-key)]
+                      (into labels
+                            ["smithr-phone-bridge:latest"]))
+            {:keys [exit err]} (apply shell/sh cmd)]
+        (if (zero? exit)
+          (do (log/info "Created wrapper container:" cname "for" device-key
+                        "bridge-port:" bridge-port)
+              cname)
+          (do (log/error "Failed to create wrapper container:" cname err)
+              nil))))))
+
+(defn- remove-wrapper-container!
+  "Remove a marker Docker container."
+  [cname]
+  (let [{:keys [exit]} (shell/sh "docker" "rm" "-f" cname)]
+    (if (zero? exit)
+      (log/info "Removed wrapper container:" cname)
+      (log/debug "Wrapper container removal skipped:" cname))))
+
+;; ---------------------------------------------------------------------------
+;; Scan + register (with wrapper containers)
 ;; ---------------------------------------------------------------------------
 
 (defn scan-all-devices
@@ -193,41 +313,53 @@
      :devices (vec (concat android ios))}))
 
 (defn register-devices!
-  "Scan for physical devices and register them in state.
-   Removes resources for devices that have been unplugged."
+  "Scan for physical devices, create host bridges and wrapper containers.
+   The wrapper containers carry smithr labels on smithr-network, so
+   Docker event subscription on all hosts discovers them automatically.
+   Bridge = adb forward + socat (Android) or iproxy (iOS) on the host."
   [host-label]
   (let [{:keys [devices]} (scan-all-devices host-label)
-        ;; Current physical resources for this host
-        current-physical (->> (state/resources)
-                              (filter #(= (:host %) host-label))
-                              (filter #(= (:substrate %) "physical")))
-        current-ids (set (map :id current-physical))
-        ;; IDs from the scan
-        scanned-ids (set (map #(device->resource-id host-label %) devices))]
+        scanned-keys (set (map device-id-key devices))
+        current-bridges @device-bridges]
     ;; Register new devices
     (doseq [device devices]
-      (let [resource (device->resource host-label device)
-            existing (state/resource (:id resource))]
-        (when-not existing
-          (log/info "Discovered physical device:" (:device-name device)
-                    "(" (:model device) ")" (:id resource))
-          (state/upsert-resource! resource)
-          (state/record-event! "device-discovered"
-            {:resource (:id resource)
-             :platform (:platform device)
-             :model (:model device)
-             :device-name (:device-name device)
-             :substrate "physical"}))))
-    ;; Remove unplugged devices (only if not currently leased)
-    (doseq [r current-physical]
-      (when-not (contains? scanned-ids (:id r))
-        (if (#{:leased :shared} (:status r))
-          (do (log/warn "Physical device" (:id r) "unplugged but has active lease!")
-              (state/update-resource-status! (:id r) :dead))
-          (do (log/info "Physical device removed:" (:id r))
-              (state/remove-resource! (:id r))
-              (state/record-event! "device-removed"
-                {:resource (:id r)})))))
+      (let [dk (device-id-key device)
+            existing (get current-bridges dk)]
+        (when (or (nil? existing) (not (bridge-alive? existing)))
+          ;; Bridge missing or dead — (re)create
+          (when existing
+            (log/info "Bridge dead for" dk "— recreating")
+            (stop-bridge! dk existing))
+          (let [bridge (case (:platform device)
+                         "android" (start-android-bridge! (:serial device))
+                         "ios"     (start-ios-bridge! (:udid device))
+                         nil)]
+            (when bridge
+              (let [cname (container-name-for device)]
+                ;; Remove stale wrapper container if bridge port changed
+                (when (and existing (wrapper-container-exists? cname))
+                  (remove-wrapper-container! cname))
+                (when (create-wrapper-container! host-label device (:bridge-port bridge))
+                  (swap! device-bridges assoc dk
+                         (assoc bridge
+                                :container-name cname
+                                :platform (:platform device))))))))))
+    ;; Remove unplugged devices
+    (doseq [[dk bridge] current-bridges]
+      (when-not (contains? scanned-keys dk)
+        (let [cname (:container-name bridge)
+              ;; Check if there's an active lease on this device
+              resource-id (str host-label ":" (:platform bridge) ":" cname)
+              leased? (some #(and (= (:resource-id %) resource-id)
+                                  (not (:ended-at %)))
+                            (state/leases))]
+          (if leased?
+            (log/warn "Physical device" dk "unplugged but has active lease!")
+            (do
+              (log/info "Physical device removed:" dk)
+              (stop-bridge! dk bridge)
+              (when cname (remove-wrapper-container! cname))
+              (swap! device-bridges dissoc dk))))))
     (count devices)))
 
 ;; ---------------------------------------------------------------------------
@@ -251,11 +383,12 @@
     (catch Exception _ false)))
 
 (defn check-device-liveness!
-  "Check liveness of all physical device resources.
+  "Check liveness of physical device resources on the local host only.
    Marks dead devices as :dead."
-  []
+  [own-host]
   (doseq [r (state/resources)]
-    (when (= (:substrate r) "physical")
+    (when (and (= (:substrate r) "physical")
+               (= (:host r) own-host))
       (let [alive? (case (:platform r)
                      :android (check-android-liveness
                                 (get-in r [:connection :serial]))
@@ -265,3 +398,13 @@
         (when (and (not alive?) (not= (:status r) :dead))
           (log/warn "Physical device" (:id r) "not responding — marking dead")
           (state/update-resource-status! (:id r) :dead))))))
+
+(defn shutdown-bridges!
+  "Stop all device bridges (called on Smithr shutdown)."
+  []
+  (doseq [[dk bridge] @device-bridges]
+    (log/info "Shutting down bridge for" dk)
+    (stop-bridge! dk bridge)
+    (when-let [cname (:container-name bridge)]
+      (remove-wrapper-container! cname)))
+  (reset! device-bridges {}))

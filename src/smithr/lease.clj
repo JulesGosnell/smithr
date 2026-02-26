@@ -345,15 +345,6 @@
           (log/info "Tunnel process killed: pid" (.pid proc)))
         (catch Exception e
           (log/warn "Error stopping tunnel process:" (.getMessage e)))))
-    ;; ADB forward: also remove the adb forward port mapping
-    (when (:adb-forward tunnel)
-      (let [fwd-port (or (:adb-forward-port tunnel) (:port tunnel))
-            {:keys [exit]} (shell/sh "adb" "-s" (:serial tunnel)
-                                     "forward" "--remove"
-                                     (str "tcp:" fwd-port))]
-        (if (zero? exit)
-          (log/info "ADB forward removed: port" fwd-port)
-          (log/warn "ADB forward --remove failed for port" fwd-port))))
     (swap! tunnels dissoc lease-id)))
 
 ;; ---------------------------------------------------------------------------
@@ -783,84 +774,10 @@
                             (if local?
                               (start-socat-bridge! lease-id resource svc-port)
                               (start-tunnel! lease-id resource)))
-                          ;; Physical Android: adb forward (USB→localhost) + socat (0.0.0.0)
-                          ;; adb forward binds localhost only, so we chain a socat bridge
-                          ;; to make it reachable from Docker containers via the gateway.
-                          (and (= (:substrate resource) "physical")
-                               (= (:platform resource) :android))
-                          (let [serial (get-in resource [:connection :serial])
-                                fwd-port (allocate-tunnel-port!)
-                                tunnel-port (allocate-tunnel-port!)
-                                device-port 5555]
-                            (log/info "Starting ADB USB forward on port" fwd-port
-                                      "→ device" serial "port" device-port
-                                      "socat bridge on port" tunnel-port)
-                            (let [{:keys [exit]} (shell/sh "adb" "-s" serial
-                                                           "forward"
-                                                           (str "tcp:" fwd-port)
-                                                           (str "tcp:" device-port))]
-                              (if (zero? exit)
-                                ;; socat bridges 0.0.0.0:tunnel-port → localhost:fwd-port
-                                (let [cmd ["socat"
-                                           (str "TCP-LISTEN:" tunnel-port ",fork,reuseaddr")
-                                           (str "TCP:localhost:" fwd-port)]
-                                      proc (-> (ProcessBuilder. ^java.util.List cmd)
-                                               (.redirectErrorStream true)
-                                               (.start))
-                                      tunnel-info {:port        tunnel-port
-                                                   :process     proc
-                                                   :adb-forward true
-                                                   :adb-forward-port fwd-port
-                                                   :serial      serial
-                                                   :resource-id (:id resource)
-                                                   :target      (str "adb-usb:" serial ":" device-port)
-                                                   :started-at  (Instant/now)}]
-                                  (swap! tunnels assoc lease-id tunnel-info)
-                                  (if (await-port-ready tunnel-port 5000)
-                                    (do (log/info "ADB USB bridge ready: port" tunnel-port
-                                                  "→ localhost:" fwd-port "→ device" serial
-                                                  "pid" (.pid proc))
-                                        tunnel-info)
-                                    (do (log/error "ADB USB bridge socat failed to start on port" tunnel-port)
-                                        (.destroyForcibly proc)
-                                        (shell/sh "adb" "-s" serial "forward" "--remove"
-                                                  (str "tcp:" fwd-port))
-                                        (swap! tunnels dissoc lease-id)
-                                        nil)))
-                                (do (log/error "ADB forward failed for device" serial)
-                                    nil))))
-                          ;; Physical iOS: iproxy bridge over USB
-                          (and (= (:substrate resource) "physical")
-                               (= (:platform resource) :ios))
-                          (let [udid (get-in resource [:connection :udid])
-                                tunnel-port (allocate-tunnel-port!)
-                                ;; Forward lockdownd (62078) — allows usbmuxd-style access over TCP
-                                device-port 62078]
-                            (log/info "Starting iproxy bridge on port" tunnel-port
-                                      "→ device" udid "port" device-port)
-                            (try
-                              (let [cmd ["iproxy" "-u" udid
-                                         (str tunnel-port ":" device-port)]
-                                    proc (-> (ProcessBuilder. ^java.util.List cmd)
-                                             (.redirectErrorStream true)
-                                             (.start))
-                                    tunnel-info {:port        tunnel-port
-                                                 :process     proc
-                                                 :resource-id (:id resource)
-                                                 :target      (str "iproxy:" udid ":" device-port)
-                                                 :started-at  (Instant/now)}]
-                                (swap! tunnels assoc lease-id tunnel-info)
-                                (if (await-port-ready tunnel-port 5000)
-                                  (do (log/info "iproxy bridge ready: port" tunnel-port
-                                                "→ device" udid "pid" (.pid proc))
-                                      tunnel-info)
-                                  (do (log/error "iproxy not ready on port" tunnel-port)
-                                      (stop-tunnel! lease-id)
-                                      nil)))
-                              (catch Exception e
-                                (log/error "Failed to start iproxy:" (.getMessage e))
-                                nil)))
-                          ;; All others: SSH tunnel
+                          ;; All others (including physical devices): SSH tunnel
+                          ;; Physical devices use wrapper containers with connect-host/port
+                          ;; labels pointing to the host bridge (adb forward + socat or
+                          ;; iproxy), so they tunnel identically to emulated devices.
                           :else
                           (start-tunnel! lease-id resource))]
           (if (and (= (:platform resource) :android)

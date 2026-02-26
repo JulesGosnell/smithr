@@ -88,11 +88,19 @@
         ;; Build connection map based on platform
         ;; For remote hosts, use host-address + host-mapped ports instead of container IPs
         remote? (some? host-address)
+        ;; Physical devices carry connection info in labels (connect-host/port)
+        ;; rather than Docker networking, since the bridge runs on the host.
+        connect-host (get labels "smithr.resource.connect-host")
+        connect-port (some-> (get labels "smithr.resource.connect-port") Integer/parseInt)
+        serial (get labels "smithr.resource.serial")
         connection (case platform
-                     :android (cond-> {:adb-host (if (and remote? (host-port-for 5555))
-                                                   host-address ip)
-                                       :adb-port (if (and remote? (host-port-for 5555))
-                                                   (host-port-for 5555) 5555)}
+                     :android (cond-> {:adb-host (or connect-host
+                                                     (if (and remote? (host-port-for 5555))
+                                                       host-address ip))
+                                       :adb-port (or connect-port
+                                                     (if (and remote? (host-port-for 5555))
+                                                       (host-port-for 5555) 5555))}
+                                serial (assoc :serial serial)
                                 (host-port-for 5900) (assoc :vnc-port (host-port-for 5900)))
                      :ios (let [;; iOS sidecar doesn't run SSH — use connect labels pointing to macOS VM
                                connect-host (get labels "smithr.resource.connect-host")
@@ -134,6 +142,7 @@
              :parent (get labels "smithr.resource.parent")
              :substrate (get labels "smithr.resource.substrate")
              :model (get labels "smithr.resource.model")
+             :device-name (get labels "smithr.resource.device-name")
              :provisioned? (= "true" (get labels "smithr.provisioned"))
              :updated-at (Instant/now)}
       (#{:macos :android-build} platform)
