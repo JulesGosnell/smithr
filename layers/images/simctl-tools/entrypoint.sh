@@ -63,6 +63,7 @@ done
 log "SSH connected."
 
 # Copy .app bundle to VM
+log "App: $APP_FILE ($(du -sh "$APP_FILE" 2>/dev/null | cut -f1))"
 log "Copying app to VM..."
 remote "mkdir -p $REMOTE_APP_DIR"
 scp $SCP_OPTS -r "$APP_FILE" "$SSH_USER@$SSH_HOST:$REMOTE_APP_DIR/"

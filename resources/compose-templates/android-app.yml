@@ -87,6 +87,7 @@ services:
         fi
 
         # ── Install APK ───────────────────────────────────────
+        log "APK: /app/$$APP_FILE ($$(du -h "/app/$$APP_FILE" 2>/dev/null | cut -f1))"
         log "Uninstalling stale app..."
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
         log "Installing /app/$$APP_FILE..."
