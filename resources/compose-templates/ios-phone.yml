@@ -21,7 +21,9 @@ services:
       SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
     networks:
       - smithr-network
+      - internal
 
 networks:
   smithr-network:
     external: true
+  internal:

@@ -46,8 +46,7 @@ services:
       - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
     networks:
-      - smithr-network
+      - internal
 
 networks:
-  smithr-network:
-    external: true
+  internal:

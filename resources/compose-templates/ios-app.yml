@@ -43,8 +43,7 @@ services:
       start_period: 120s
     stop_grace_period: 30s
     networks:
-      - smithr-network
+      - internal
 
 networks:
-  smithr-network:
-    external: true
+  internal:

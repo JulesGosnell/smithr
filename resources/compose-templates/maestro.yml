@@ -85,8 +85,7 @@ services:
       - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
       - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
     networks:
-      - smithr-network
+      - internal
 
 networks:
-  smithr-network:
-    external: true
+  internal:
