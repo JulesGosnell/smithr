@@ -84,11 +84,24 @@ services:
         fi
 
         # ── Install APK ───────────────────────────────────────
+        echo "[android-app] Device ABI: $$($$ADB shell getprop ro.product.cpu.abi 2>/dev/null)"
+        echo "[android-app] Device ABI list: $$($$ADB shell getprop ro.product.cpu.abilist 2>/dev/null)"
+        echo "[android-app] APK contents:"
+        ls -la /app/ 2>/dev/null || true
         echo "[android-app] Uninstalling stale app..."
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
         echo "[android-app] Installing /app/$$APP_FILE..."
-        if ! $$ADB install "/app/$$APP_FILE"; then
-            echo "[android-app] FATAL: APK install failed"
+        INSTALL_OK=false
+        for attempt in 1 2 3; do
+            if $$ADB install "/app/$$APP_FILE"; then
+                INSTALL_OK=true
+                break
+            fi
+            echo "[android-app] Install attempt $$attempt failed, retrying in 3s..."
+            sleep 3
+        done
+        if [ "$$INSTALL_OK" != "true" ]; then
+            echo "[android-app] FATAL: APK install failed after 3 attempts"
             exit 1
         fi
         APP_INSTALLED=true
