@@ -56,11 +56,12 @@ services:
                     maestro --device "$$ADB_TARGET" test "$$LOGOUT_FLOW" 2>&1 || true
                     log "Logout complete."
                 fi
-                log "Force-stopping $$BUNDLE_ID..."
-                $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
-                log "Uninstalling $$BUNDLE_ID..."
-                $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
             fi
+            # Always clean up the app — handles stale installs from prior runs
+            log "Force-stopping $$BUNDLE_ID..."
+            $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
+            log "Uninstalling $$BUNDLE_ID..."
+            $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
             log "Teardown complete."
             exit 0
         }
@@ -76,6 +77,14 @@ services:
         done
         $$ADB wait-for-device
         log "ADB connected."
+
+        # ── Suppress Gboard clipboard popup ───────────────────
+        # Deny Gboard clipboard access so the "Turn on clipboard" dialog
+        # doesn't appear when Maestro taps a text field. This setting can
+        # be reset by Gboard updates, so we re-apply it every run.
+        if $$ADB shell appops set com.google.android.inputmethod.latin READ_CLIPBOARD deny 2>/dev/null; then
+            log "Gboard clipboard access denied."
+        fi
 
         # ── Server bridge ──────────────────────────────────────
         if [ -n "$$SERVER_SERVICE" ]; then
@@ -98,12 +107,14 @@ services:
         $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
         sleep 1
         APK_SIZE=$$(stat -c%s "/app/$$APP_FILE")
-        log "Pushing APK to device..."
         INSTALL_OK=false
         for attempt in 1 2 3; do
+            log "Push attempt $$attempt..."
             if $$ADB push "/app/$$APP_FILE" /data/local/tmp/app.apk; then
-                log "Push complete. Installing..."
-                if $$ADB shell "cat /data/local/tmp/app.apk | pm install -S $$APK_SIZE" 2>&1 | grep -q "Success"; then
+                log "Push complete. Installing (cat|pm install -S $$APK_SIZE)..."
+                INSTALL_OUT=$$($$ADB shell "cat /data/local/tmp/app.apk | pm install -S $$APK_SIZE" 2>&1)
+                log "pm install output: $$INSTALL_OUT"
+                if echo "$$INSTALL_OUT" | grep -q "Success"; then
                     INSTALL_OK=true
                     break
                 fi
