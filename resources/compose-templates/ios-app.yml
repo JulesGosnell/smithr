@@ -13,8 +13,8 @@
 #
 # Env vars:
 #   APP_PATH        — host path to .app bundle (required)
-#   BUNDLE_ID       — iOS bundle identifier (default: care.artha.mobile)
-#   APP_BASENAME    — .app directory name (default: Artha.app)
+#   BUNDLE_ID       — iOS bundle identifier (required)
+#   APP_BASENAME    — .app directory name (required)
 #   SSH_USER        — SSH user on macOS VM (default: smithr)
 #   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_macos)
 #   API_URL         — override api-config.json in the app bundle (optional)
@@ -29,8 +29,8 @@ services:
       SSH_TARGET: ios-phone:22
       SSH_USER: ${SSH_USER:-smithr}
       SSH_KEY: /root/.ssh/id_macos
-      BUNDLE_ID: ${BUNDLE_ID:-care.artha.mobile}
-      APP_FILE: /app/${APP_BASENAME:-Artha.app}
+      BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
+      APP_FILE: /app/${APP_BASENAME:?APP_BASENAME must be set}
       API_URL: ${API_URL:-}
     volumes:
       - ${APP_PATH:?APP_PATH must be set}:/app:ro,z

@@ -25,7 +25,7 @@
 #
 services:
   maestro:
-    image: artha-maestro:latest
+    image: ${MAESTRO_IMAGE:-maestro:latest}
     depends_on:
       app:
         condition: service_healthy

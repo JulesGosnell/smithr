@@ -23,19 +23,19 @@
 # Env vars:
 #   APP_PATH        — host dir containing the APK (required, mounted at /app)
 #   APP_FILE        — APK filename inside APP_PATH (default: app-release.apk)
-#   BUNDLE_ID       — Android package name (default: care.artha.mobile)
+#   BUNDLE_ID       — Android package name (required)
 #   API_URL         — override api-config.json for test server (optional)
 #   SERVER_SERVICE  — compose service name for server bridge (optional)
 #   SERVER_PORT     — server port to bridge into device (default: 3000)
 #   LOGIN_FLOW      — Maestro flow for login (default: /flows/login.yaml)
 #   LOGOUT_FLOW     — Maestro flow for logout (default: /flows/logout.yaml)
-#   EMAIL           — login email (default: carer1@demo.artha.care)
+#   EMAIL           — login email (required)
 #   PASSWORD        — login password (default: Demo123!)
 #   FLOWS_DIR       — host path to Maestro flow files (required, mounted at /flows)
 #
 services:
   app:
-    image: artha-maestro:latest
+    image: ${MAESTRO_IMAGE:-maestro:latest}
     depends_on:
       android-phone:
         condition: service_healthy
@@ -165,14 +165,14 @@ services:
         while true; do sleep 60 & wait $$!; done
     environment:
       ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
-      BUNDLE_ID: ${BUNDLE_ID:-care.artha.mobile}
+      BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
       APP_FILE: ${APP_FILE:-app-release.apk}
       API_URL: ${API_URL:-}
       SERVER_SERVICE: ${SERVER_SERVICE:-}
       SERVER_PORT: ${SERVER_PORT:-3000}
       LOGIN_FLOW: ${LOGIN_FLOW:-/flows/login.yaml}
       LOGOUT_FLOW: ${LOGOUT_FLOW:-/flows/logout.yaml}
-      EMAIL: ${EMAIL:-carer1@demo.artha.care}
+      EMAIL: ${EMAIL:?EMAIL must be set}
       PASSWORD: ${PASSWORD:-Demo123!}
       MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
       MAESTRO_CLI_NO_ANALYTICS: "true"
