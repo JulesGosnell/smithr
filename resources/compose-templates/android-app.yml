@@ -78,12 +78,14 @@ services:
         $$ADB wait-for-device
         log "ADB connected."
 
-        # ── Suppress Gboard clipboard popup ───────────────────
-        # Deny Gboard clipboard access so the "Turn on clipboard" dialog
-        # doesn't appear when Maestro taps a text field. This setting can
-        # be reset by Gboard updates, so we re-apply it every run.
-        if $$ADB shell appops set com.google.android.inputmethod.latin READ_CLIPBOARD deny 2>/dev/null; then
-            log "Gboard clipboard access denied."
+        # ── Switch to Simple Keyboard (if installed) ─────────────
+        # Gboard's clipboard popup breaks Maestro text input on physical
+        # devices and appops deny doesn't stick on OPPO/ColorOS.
+        # Simple Keyboard has no clipboard features at all.
+        if $$ADB shell ime set rkr.simplekeyboard.inputmethod/.latin.LatinIME 2>/dev/null | grep -q "selected"; then
+            log "Switched to Simple Keyboard."
+        else
+            log "Simple Keyboard not installed, using default IME."
         fi
 
         # ── Server bridge ──────────────────────────────────────
@@ -172,6 +174,8 @@ services:
       EMAIL: ${EMAIL:-carer1@demo.artha.care}
       PASSWORD: ${PASSWORD:-Demo123!}
       MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
+      MAESTRO_CLI_NO_ANALYTICS: "true"
+      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true"
       JAVA_TOOL_OPTIONS: ""
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]

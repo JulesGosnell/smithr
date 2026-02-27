@@ -363,17 +363,15 @@
         (when (zero? exit)
           (log/debug "  lock screen disabled")))
       (catch Exception _ nil))
-    ;; Deny Gboard clipboard access — prevents the "Turn on clipboard"
-    ;; popup that blocks Maestro E2E login flows. Requires "Disable
-    ;; permission monitoring" on OPPO/ColorOS (see ANDROID-PHYSICAL-SETUP.md).
+    ;; Switch to Simple Keyboard if installed — Gboard's clipboard popup
+    ;; breaks Maestro E2E and appops deny doesn't stick on OPPO/ColorOS.
     (try
-      (let [{:keys [exit]} (shell/sh "adb" "-s" serial "shell"
-                                     "appops" "set"
-                                     "com.google.android.inputmethod.latin"
-                                     "READ_CLIPBOARD" "deny")]
-        (if (zero? exit)
-          (log/debug "  Gboard clipboard access denied")
-          (log/warn "  failed to deny Gboard clipboard (permission monitoring still enabled?)")))
+      (let [{:keys [exit out]} (shell/sh "adb" "-s" serial "shell"
+                                         "ime" "set"
+                                         "rkr.simplekeyboard.inputmethod/.latin.LatinIME")]
+        (if (and (zero? exit) (re-find #"selected" (str out)))
+          (log/debug "  switched to Simple Keyboard")
+          (log/debug "  Simple Keyboard not installed, keeping default IME")))
       (catch Exception _ nil))
     originals))
 
