@@ -103,10 +103,17 @@
           " && sudo chmod 600 \"$HOME_DIR/.ssh/authorized_keys\"; "
         "fi; "
         ;; Always sync CoreSimulator RuntimeMap (SDK-to-runtime overrides)
+        ;; Try user-level first (has iphonesimulator mapping from ios-sim-boot),
+        ;; fall back to system-level (baked in base image, has iphoneos mapping)
         "SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
-        "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ]; then "
+        "SYS_CORESIM=/Library/Developer/CoreSimulator; "
+        "RTMAP=\"\"; "
+        "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ]; then RTMAP=\"$SMITHR_CORESIM/RuntimeMap.plist\"; "
+        "elif [ -f \"$SYS_CORESIM/RuntimeMap.plist\" ]; then RTMAP=\"$SYS_CORESIM/RuntimeMap.plist\"; "
+        "fi; "
+        "if [ -n \"$RTMAP\" ]; then "
           "sudo mkdir -p \"$HOME_DIR/Library/Developer/CoreSimulator\""
-          " && sudo cp \"$SMITHR_CORESIM/RuntimeMap.plist\" \"$HOME_DIR/Library/Developer/CoreSimulator/\""
+          " && sudo cp \"$RTMAP\" \"$HOME_DIR/Library/Developer/CoreSimulator/\""
           " && sudo chown -R " username ":staff \"$HOME_DIR/Library\"; "
         "fi; "
         "echo \"$HOME_DIR\"; "
@@ -129,10 +136,16 @@
         " && sudo bash -c \"echo 'source ~/.bashrc' > " home "/.bash_profile\""
         " && sudo chown " username ":staff " home "/.bashrc " home "/.bash_profile"
         ;; Copy CoreSimulator RuntimeMap (SDK-to-runtime overrides)
+        ;; Try user-level first, fall back to system-level
         " && { SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
-        "if [ -f \\\"$SMITHR_CORESIM/RuntimeMap.plist\\\" ]; then "
+        "SYS_CORESIM=/Library/Developer/CoreSimulator; "
+        "RTMAP=\\\"\\\"; "
+        "if [ -f \\\"$SMITHR_CORESIM/RuntimeMap.plist\\\" ]; then RTMAP=\\\"$SMITHR_CORESIM/RuntimeMap.plist\\\"; "
+        "elif [ -f \\\"$SYS_CORESIM/RuntimeMap.plist\\\" ]; then RTMAP=\\\"$SYS_CORESIM/RuntimeMap.plist\\\"; "
+        "fi; "
+        "if [ -n \\\"$RTMAP\\\" ]; then "
           "sudo mkdir -p " home "/Library/Developer/CoreSimulator"
-          " && sudo cp \\\"$SMITHR_CORESIM/RuntimeMap.plist\\\" " home "/Library/Developer/CoreSimulator/"
+          " && sudo cp \\\"$RTMAP\\\" " home "/Library/Developer/CoreSimulator/"
           " && sudo chown -R " username ":staff " home "/Library; "
         "fi; }"
         " && echo " home "; "

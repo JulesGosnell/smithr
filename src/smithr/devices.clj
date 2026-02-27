@@ -363,6 +363,18 @@
         (when (zero? exit)
           (log/debug "  lock screen disabled")))
       (catch Exception _ nil))
+    ;; Deny Gboard clipboard access — prevents the "Turn on clipboard"
+    ;; popup that blocks Maestro E2E login flows. Requires "Disable
+    ;; permission monitoring" on OPPO/ColorOS (see ANDROID-PHYSICAL-SETUP.md).
+    (try
+      (let [{:keys [exit]} (shell/sh "adb" "-s" serial "shell"
+                                     "appops" "set"
+                                     "com.google.android.inputmethod.latin"
+                                     "READ_CLIPBOARD" "deny")]
+        (if (zero? exit)
+          (log/debug "  Gboard clipboard access denied")
+          (log/warn "  failed to deny Gboard clipboard (permission monitoring still enabled?)")))
+      (catch Exception _ nil))
     originals))
 
 (defn- restore-android-settings!

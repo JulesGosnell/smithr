@@ -111,6 +111,16 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
+# Disable clipboard "Allow Paste" dialog (iOS 16+)
+log "Disabling clipboard paste prompt..."
+DEVICE_UUID=$(ssh_cmd "xcrun simctl list devices booted -j 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); [print(uid) for r in d['devices'].values() for uid in [dev['udid'] for dev in r if dev['state']=='Booted']]\" 2>/dev/null | head -1" 2>/dev/null || echo "")
+if [ -n "$DEVICE_UUID" ]; then
+    ssh_cmd "xcrun simctl spawn '$DEVICE_UUID' defaults write com.apple.Pasteboard AutomaticPasteboardPromptEnabled -bool false" 2>/dev/null || true
+    log "Clipboard prompt disabled"
+else
+    log "WARNING: Could not find booted device UUID for clipboard fix"
+fi
+
 log "Simulator boot complete!"
 
 # Keep container running so healthcheck can verify

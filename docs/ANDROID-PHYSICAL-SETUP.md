@@ -91,16 +91,53 @@ You can open the Play Protect settings screen remotely via:
 adb shell am start -a com.google.android.gms.settings.VERIFY_APPS_SETTINGS
 ```
 
-### Step 5: CI-Friendly Settings
+### Step 5: Disable Permission Monitoring (OPPO/ColorOS, Xiaomi/MIUI)
+
+Some manufacturers block ADB shell from writing settings, setting app
+ops, or clearing app data — all of which Smithr needs for CI setup.
+This must be unlocked **before** Smithr can auto-configure the device.
+
+**OPPO / ColorOS (e.g. OPPO A53, CPH2127):**
+
+1. Open **Settings > Developer Options**
+2. Find **"Disable permission monitoring"** (sometimes labelled
+   "Disable Permission Monitoring" or "Authorization management")
+3. Toggle it **ON** and confirm the warning dialog
+
+**Xiaomi / MIUI:**
+
+1. Open **Settings > Additional Settings > Developer Options**
+2. Find **"Turn on MIUI optimizations"**
+3. Toggle it **OFF** (this grants ADB full settings access)
+
+**Verify** by running:
+```bash
+adb -s <serial> shell "settings put global window_animation_scale 0"
+# Should return silently. If it throws SecurityException, the toggle
+# is not enabled — go back and check Developer Options.
+```
+
+After this toggle, Smithr can also disable the Gboard clipboard popup
+that interferes with Maestro E2E tests:
+```bash
+adb -s <serial> shell "appops set com.google.android.inputmethod.latin READ_CLIPBOARD deny"
+```
+
+This is a one-time step per phone. The toggle persists across reboots,
+USB reconnects, and Smithr restarts.
+
+On stock Android, Pixel, and Samsung devices none of this is needed —
+ADB shell has full settings access by default.
+
+### Step 6: CI-Friendly Settings
 
 Smithr automatically applies CI-friendly settings when a phone is
 registered (animations off, stay awake, rotation locked, popup
 notifications suppressed, lock screen disabled). Originals are restored
 when the phone is deregistered.
 
-**OEM restriction**: Some manufacturers (OPPO/ColorOS, Xiaomi/MIUI)
-block `settings put global` from ADB, requiring `WRITE_SECURE_SETTINGS`
-which the shell user doesn't have. On these phones, configure manually:
+If Step 5 was completed, these are applied automatically. If not (e.g.
+you can't find the toggle), configure manually:
 
 1. **Stay Awake**: Developer Options > Enable **Stay Awake**
 2. **Disable Lock Screen**: Settings > Security > Screen Lock > **None**
@@ -108,9 +145,6 @@ which the shell user doesn't have. On these phones, configure manually:
    - Window animation scale: **Off**
    - Transition animation scale: **Off**
    - Animator duration scale: **Off**
-
-On stock Android, Pixel, and Samsung devices, Smithr handles these
-automatically — no manual steps needed.
 
 ## How It Works
 
