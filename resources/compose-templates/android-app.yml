@@ -23,7 +23,7 @@
 # Env vars:
 #   APP_PATH        — host dir containing the APK (required, mounted at /app)
 #   APP_FILE        — APK filename inside APP_PATH (default: app-release.apk)
-#   BUNDLE_ID       — Android package name (default: com.artha.healthcare)
+#   BUNDLE_ID       — Android package name (default: care.artha.mobile)
 #   API_URL         — override api-config.json for test server (optional)
 #   SERVER_SERVICE  — compose service name for server bridge (optional)
 #   SERVER_PORT     — server port to bridge into device (default: 3000)
@@ -53,7 +53,7 @@ services:
             if [ "$$APP_INSTALLED" = "true" ]; then
                 if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
                     log "Running logout flow: $$LOGOUT_FLOW"
-                    maestro --device "$$ADB_TARGET" test "$$LOGOUT_FLOW" 2>&1 || true
+                    maestro --device "$$ADB_TARGET" test -e APP_ID="$$BUNDLE_ID" "$$LOGOUT_FLOW" 2>&1 || true
                     log "Logout complete."
                 fi
             fi
@@ -148,6 +148,7 @@ services:
         if [ -n "$$LOGIN_FLOW" ] && [ -f "$$LOGIN_FLOW" ]; then
             log "Running login flow: $$LOGIN_FLOW"
             if ! maestro --device "$$ADB_TARGET" test \
+              -e APP_ID="$$BUNDLE_ID" \
               -e EMAIL="$$EMAIL" -e PASSWORD="$$PASSWORD" \
               "$$LOGIN_FLOW"; then
                 log "FATAL: Login flow failed"
@@ -164,7 +165,7 @@ services:
         while true; do sleep 60 & wait $$!; done
     environment:
       ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
-      BUNDLE_ID: ${BUNDLE_ID:-com.artha.healthcare}
+      BUNDLE_ID: ${BUNDLE_ID:-care.artha.mobile}
       APP_FILE: ${APP_FILE:-app-release.apk}
       API_URL: ${API_URL:-}
       SERVER_SERVICE: ${SERVER_SERVICE:-}
