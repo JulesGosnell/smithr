@@ -90,10 +90,12 @@
 
 (defn- docker-network-ip?
   "Is this a Docker network IP reachable only from the local host?
-   Matches 10.x.x.x (smithr-network) and 172.16-31.x.x (Docker default bridges)."
+   Matches all RFC 1918 private ranges used by Docker bridge networks:
+   10.x.x.x (smithr-network), 172.16-31.x.x, and 192.168.x.x."
   [host]
   (and host (or (re-matches #"10\.\d+\.\d+\.\d+" host)
-                (re-matches #"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+" host))))
+                (re-matches #"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+" host)
+                (re-matches #"192\.168\.\d+\.\d+" host))))
 
 (defn- resolve-tunnel-route
   "Given a target host:port, determine SSH -L forward and hop host.
