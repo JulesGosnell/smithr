@@ -135,6 +135,44 @@ volumes:
   - ./my-script.sh:/my-script.sh:z    # :z is required on Fedora
 ```
 
+## iOS Physical Device Support (pymobiledevice3 tunneld)
+
+Hosts with USB-connected iPhones (iOS 17+) need the `pymobiledevice3` tunnel
+daemon running as root. It creates TUN interfaces for developer service access
+(app install, XCTest, process control).
+
+### Prerequisites
+
+```bash
+pip3 install --user pymobiledevice3
+```
+
+### Install the systemd service
+
+```bash
+sudo cp layers/systemd/pymobiledevice3-tunneld.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pymobiledevice3-tunneld
+```
+
+### Verify
+
+```bash
+sudo systemctl status pymobiledevice3-tunneld
+# Should show active (running), listening on 127.0.0.1:49151
+
+# Test device connectivity
+pymobiledevice3 remote tunneld list
+```
+
+**Note:** The service runs as root because tunneld creates TUN network
+interfaces. The `PYTHONPATH` in the unit file points to the pip user
+site-packages — adjust if pymobiledevice3 is installed elsewhere.
+
+**Note:** pymobiledevice3 must run on the same host as the USB-connected
+devices. Cross-host RSD forwarding does not work (the Remote XPC protocol
+uses dynamic ports after initial handshake).
+
 ## Per-Host Notes
 
 ### megalodon (primary)
