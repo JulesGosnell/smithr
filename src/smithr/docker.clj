@@ -112,7 +112,9 @@
                                ssh-port (or connect-port
                                             (if (and remote? (host-port-for 10022))
                                               (host-port-for 10022) 10022))]
-                            {:ssh-host ssh-host :ssh-port ssh-port})
+                            (cond-> {:ssh-host ssh-host :ssh-port ssh-port}
+                            (get labels "smithr.resource.udid")
+                            (assoc :udid (get labels "smithr.resource.udid"))))
                      :macos (cond-> {:ssh-host (if (and remote? (host-port-for 10022))
                                                  host-address ip)
                                      :ssh-port (if (and remote? (host-port-for 10022))
