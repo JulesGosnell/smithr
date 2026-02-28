@@ -287,6 +287,7 @@
                         "--network" "smithr-network"
                         "--restart" "unless-stopped"
                         "-v" (str adb-dir ":/root/.android:ro,z")
+                        "-e" (str "PLATFORM=" platform)
                         "-e" (str "BRIDGE_PORT=" bridge-port)
                         "-e" (str "BRIDGE_HOST=10.21.0.1")
                         "-e" (str "SERIAL=" device-key)]
