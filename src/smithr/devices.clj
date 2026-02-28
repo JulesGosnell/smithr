@@ -282,7 +282,12 @@
           cname)
       (let [;; Mount host's ADB key so healthcheck uses the same RSA key
             ;; the phone already authorized (prevents repeated auth prompts)
-            adb-dir (str (System/getProperty "user.home") "/.android")
+            home-dir (System/getProperty "user.home")
+            adb-dir (str home-dir "/.android")
+            ;; Mount SSH pubkey for near-side access (tools run on the bridge)
+            ssh-pubkey (first (filter #(.isFile %)
+                                [(java.io.File. (str home-dir "/.ssh/id_ed25519.pub"))
+                                 (java.io.File. (str home-dir "/.ssh/id_rsa.pub"))]))
             ios? (= platform "ios")
             cmd (cond-> ["docker" "run" "-d"
                           "--name" cname
@@ -293,6 +298,9 @@
                           "-e" (str "BRIDGE_PORT=" bridge-port)
                           "-e" (str "BRIDGE_HOST=10.21.0.1")
                           "-e" (str "SERIAL=" device-key)]
+                  ;; SSH pubkey for near-side access
+                  ssh-pubkey (into ["-v" (str (.getAbsolutePath ssh-pubkey)
+                                              ":/root/.ssh/authorized_keys.mount:ro,z")])
                   ;; iOS: RSD tunnel needs usbmuxd + TUN capability + tunnel package
                   ios? (into ["--cap-add" "net_admin"
                               "--device" "/dev/net/tun"

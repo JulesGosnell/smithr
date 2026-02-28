@@ -28,6 +28,19 @@ chmod 700 /root/.ssh
 # Generate host keys if missing (Alpine ssh-keygen -A in Dockerfile should handle this)
 [ -f /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A
 
+# Write environment for SSH sessions (sshd doesn't inherit Docker ENV vars)
+JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
+cat > /etc/profile.d/smithr.sh <<ENVEOF
+export PATH="/opt/maestro/bin:${PATH}"
+export JAVA_HOME="${JAVA_HOME}"
+export MAESTRO_CLI_NO_ANALYTICS=true
+export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
+export PHONE_HOST="${PHONE_HOST}"
+export PLATFORM="${PLATFORM}"
+ENVEOF
+# Also set for non-login shells (scp, direct command)
+cp /etc/profile.d/smithr.sh /root/.bashrc
+
 # Start sshd
 /usr/sbin/sshd
 log "sshd started."
@@ -44,6 +57,9 @@ if [ "$PLATFORM" = "android" ]; then
   adb -s "${PHONE_HOST}:5555" wait-for-device
   log "ADB connected to ${PHONE_HOST}:5555"
   export ANDROID_SERIAL="${PHONE_HOST}:5555"
+  # Append ANDROID_SERIAL to SSH env so remote sessions see it
+  echo "export ANDROID_SERIAL=\"${PHONE_HOST}:5555\"" >> /etc/profile.d/smithr.sh
+  echo "export ANDROID_SERIAL=\"${PHONE_HOST}:5555\"" >> /root/.bashrc
 fi
 
 # Verify Maestro is available

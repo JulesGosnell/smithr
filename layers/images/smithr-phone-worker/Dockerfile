@@ -26,8 +26,9 @@ RUN tar xzf /tmp/maestro.tar.gz -C /opt \
 # Overlay patched smithr jars (driver-port fix for concurrent instances).
 # The 2.2.0 tarball ships vanilla jars; these smithr-patched versions must
 # replace them so selectPort() reads -Dmaestro.driver.port.
-COPY maestro-cli-smithr.jar maestro-client-smithr.jar maestro-utils-smithr.jar /tmp/
-RUN for JAR in cli client utils; do \
+# Also overlay ios-driver to fix LocalSimulatorUtils version mismatch.
+COPY maestro-cli-smithr.jar maestro-client-smithr.jar maestro-utils-smithr.jar maestro-ios-driver-smithr.jar /tmp/
+RUN for JAR in cli client utils ios-driver; do \
       ORIG=$(ls /opt/maestro/lib/maestro-${JAR}*.jar 2>/dev/null | head -1); \
       if [ -n "$ORIG" ]; then \
         cp "/tmp/maestro-${JAR}-smithr.jar" "$ORIG"; \

@@ -23,7 +23,7 @@ services:
       PLATFORM: android
     volumes:
       - ${HOME}/.android:/root/.android:ro,z
-      - ${HOME}/.ssh/id_rsa.pub:/root/.ssh/authorized_keys.mount:ro,z
+      - ${HOME}/.ssh/id_ed25519.pub:/root/.ssh/authorized_keys.mount:ro,z
     labels:
       smithr.managed: "false"
       smithr.worker-for: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_RUNE:-fe}
