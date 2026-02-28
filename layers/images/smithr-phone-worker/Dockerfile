@@ -46,6 +46,6 @@ RUN chmod +x /entrypoint.sh
 
 EXPOSE 22
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-  CMD ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=no localhost echo ok 2>/dev/null || exit 1
+  CMD nc -z localhost 22 || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
