@@ -1,0 +1,86 @@
+#
+# Unified Maestro test runner sidecar (near-side architecture)
+#
+# SSHes into the phone worker container and runs Maestro tests there.
+# Works for both Android and iOS — Maestro is pre-installed on the worker.
+#
+# Compose with the unified phone proxy:
+#   curl -s http://localhost:7070/api/compose/phone > phone.yml
+#   curl -s http://localhost:7070/api/compose/unified-maestro > maestro.yml
+#   SMITHR_PLATFORM=android FLOWS_DIR=./flows \
+#     docker compose -f phone.yml -f maestro.yml -p test up -d
+#
+# Run tests:
+#   docker exec test-maestro-1 /run-test.sh login.yaml
+#
+# Env vars:
+#   FLOWS_DIR       — host path to Maestro flow files (default: current dir)
+#   SSH_USER        — SSH user on worker (default: root)
+#   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_rsa)
+#   MAESTRO_EXTRA   — extra args to pass to Maestro (optional)
+#
+services:
+  maestro:
+    image: alpine:3.19
+    depends_on:
+      phone:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache openssh-client rsync >/dev/null 2>&1
+
+        SSH_USER="$${SSH_USER:-root}"
+        SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
+        if [ -f /root/.ssh/id_key ]; then
+          SSH_OPTS="$$SSH_OPTS -i /root/.ssh/id_key"
+        fi
+
+        # Create the run-test.sh script
+        cat > /run-test.sh << 'SCRIPT'
+        #!/bin/sh
+        set -e
+        FLOW="$1"
+        shift
+        SSH_USER="${SSH_USER:-root}"
+        SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
+        [ -f /root/.ssh/id_key ] && SSH_OPTS="$SSH_OPTS -i /root/.ssh/id_key"
+        SSH="ssh $SSH_OPTS $SSH_USER@phone"
+
+        # SCP flow files to worker
+        echo "[maestro] Copying flows to worker..."
+        $SSH "mkdir -p /tmp/flows" 2>/dev/null
+        scp $SSH_OPTS -r /flows/* $SSH_USER@phone:/tmp/flows/
+
+        # Run Maestro on worker
+        echo "[maestro] Running: maestro test /tmp/flows/$FLOW $@"
+        $SSH "maestro test /tmp/flows/$FLOW $*"
+        EXIT=$?
+
+        # Copy artifacts back
+        scp $SSH_OPTS -r $SSH_USER@phone:/tmp/maestro-results/* /results/ 2>/dev/null || true
+
+        exit $EXIT
+        SCRIPT
+        chmod +x /run-test.sh
+
+        touch /tmp/maestro-ready
+        echo "[maestro] Sidecar ready. Run tests via: docker exec <container> /run-test.sh <flow>.yaml"
+        exec sleep infinity
+    environment:
+      SSH_USER: ${SSH_USER:-root}
+      MAESTRO_EXTRA: ${MAESTRO_EXTRA:-}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/maestro-ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    volumes:
+      - ${FLOWS_DIR:-.}:/flows:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_key:ro,z
+    networks:
+      - internal
+
+networks:
+  internal:

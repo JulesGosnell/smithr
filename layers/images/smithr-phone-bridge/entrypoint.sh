@@ -28,6 +28,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Set up SSH authorized_keys for near-side access
+if [ -f /root/.ssh/authorized_keys.mount ]; then
+  cp /root/.ssh/authorized_keys.mount /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+fi
+chmod 700 /root/.ssh 2>/dev/null || true
+
+# Start sshd (for near-side access — tools run here, not on the client)
+/usr/sbin/sshd 2>/dev/null && log "sshd started" || log "sshd not available, skipping"
+
 case "$PLATFORM" in
   ios)
     LISTEN_PORT=62078

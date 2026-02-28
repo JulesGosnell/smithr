@@ -8,18 +8,22 @@
 1. [Methodology](#methodology)
 2. [Vision](#vision)
 3. [Design Principles](#design-principles)
-4. [The Skald Workflow](#the-skald-workflow)
-5. [System Overview](#system-overview)
-6. [Layer Architecture](#layer-architecture)
-7. [Phone as a Service](#phone-as-a-service)
-8. [Shared Server Environment](#shared-server-environment)
-9. [Sandbox Mode](#sandbox-mode)
-10. [CI Mode](#ci-mode)
-11. [Configuration System](#configuration-system)
-12. [Directory Structure](#directory-structure)
-13. [Naming Conventions](#naming-conventions)
-14. [Demo Application](#demo-application)
-15. [Migration Path for Artha](#migration-path-for-artha)
+4. [Resource Abstraction Layer](#resource-abstraction-layer)
+5. [Near-Side vs Far-Side Execution](#near-side-vs-far-side-execution)
+6. [Lease + Tunnel Infrastructure](#lease--tunnel-infrastructure)
+7. [The Skald Workflow](#the-skald-workflow)
+8. [System Overview](#system-overview)
+9. [Layer Architecture](#layer-architecture)
+10. [Phone as a Service](#phone-as-a-service)
+11. [Adding Resources — Setup Guides](#adding-resources--setup-guides)
+12. [Shared Server Environment](#shared-server-environment)
+13. [Sandbox Mode](#sandbox-mode)
+14. [CI Mode](#ci-mode)
+15. [Configuration System](#configuration-system)
+16. [Directory Structure](#directory-structure)
+17. [Naming Conventions](#naming-conventions)
+18. [Demo Application](#demo-application)
+19. [Migration Path for Artha](#migration-path-for-artha)
 
 ---
 
@@ -89,6 +93,109 @@ All of this is **project-agnostic**. Smithr doesn't know or care what app it's t
 5. **Symmetrical lifecycle** — startup and shutdown are mirror images. Containers come up in dependency order gated by health checks; they come down in reverse order, each level cleaning its resources before the next shuts down. No orphaned containers, no dangling networks, no leaked volumes.
 6. **Script simplicity** — a thin Bash script layer, not Kubernetes. Designed for 2-10 nodes.
 7. **Document everything** — if it's not documented, it doesn't exist.
+
+## Resource Abstraction Layer
+
+Every phone resource — regardless of backing technology — appears as a Docker container on `smithr-network` with `smithr.managed=true` labels. Resource-specific details are encapsulated inside the container; the outside sees only a standard Docker service with labels.
+
+```
+Raw Resource                Container Abstraction
+─────────────               ──────────────────────
+Android emulator     →  Docker container (budtmo/docker-android)
+                         IP: 10.21.0.30, ADB: 5555
+                         Labels: type=phone, platform=android, substrate=emulated
+
+Physical Android     →  Phone-bridge container (smithr-phone-bridge)
+                         Wraps USB device via socat: container:5555 → host ADB forward
+                         Labels: type=phone, platform=android, substrate=physical
+
+iOS Simulator        →  macOS VM container (sickcodes/docker-osx) + sidecar
+                         SSH: 10022, Simulator inside VM
+                         Labels: type=phone, platform=ios, substrate=simulated
+
+Physical iPhone      →  Phone-bridge container (smithr-phone-bridge)
+                         Wraps USB via lockdown socat + RSD tunnel + iptables relay
+                         Labels: type=phone, platform=ios, substrate=physical
+
+macOS build VM       →  Docker container (sickcodes/docker-osx)
+                         SSH: 10022, Xcode inside VM
+                         Labels: type=vm, platform=macos
+```
+
+**Key principle**: No resource-specific details leak to the client. The client sees a resource ID, connection map, and lease API. Whether the phone is emulated, simulated, or physical is transparent — the proxy handles routing.
+
+## Near-Side vs Far-Side Execution
+
+Smithr supports two execution models for running tools (Maestro, ADB, etc.) against phone resources:
+
+| Aspect | Far-Side (legacy) | Near-Side (target) |
+|--------|----------|-----------|
+| Tool location | Client host | Resource host (worker container) |
+| Data path | Raw protocol over tunnel | SSH exec + file transfer |
+| Cross-host | All traffic through tunnel | Only results cross wire |
+| Fragility | Protocol-sensitive (ADB streaming fails cross-host) | SSH is robust |
+| Container stack | Different per platform | Unified |
+
+**Far-side** (current Android model): The ADB port is tunneled to the client. Maestro runs on the client host, sending commands over the tunnel. APK install streams through SSH. This is fragile for cross-host scenarios — streaming install fails, requiring a push-then-pm-install workaround.
+
+**Near-side** (current iOS model, target for all): SSH is tunneled to the macOS VM or worker container. Maestro runs INSIDE the VM/worker, colocated with the device. Sidecars SCP files in and SSH to execute commands. Only results come back over the wire.
+
+**Smithr's direction**: Near-side for all platforms. The SSH-through-proxy pattern proven for iOS simulated becomes the universal pattern. Each phone resource gets a companion **worker container** (`smithr-phone-worker`) that provides SSH + Maestro + ADB, colocated on the same Docker network as the phone.
+
+### Worker Container Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│  smithr-network                                  │
+│                                                  │
+│  ┌──────────────────┐    ┌────────────────────┐ │
+│  │ Phone Resource    │    │ Worker Container    │ │
+│  │ (emulator/bridge) │◄───│ (smithr-phone-     │ │
+│  │                   │ADB │  worker)            │ │
+│  │ IP: 10.21.0.30   │    │                     │ │
+│  │ ADB: 5555        │    │ SSH: 22             │ │
+│  └──────────────────┘    │ Maestro installed   │ │
+│                          │ ADB connected       │ │
+│                          └──────────┬──────────┘ │
+│                                     │ SSH tunnel │
+└─────────────────────────────────────┼────────────┘
+                                      │
+                              ┌───────▼────────┐
+                              │ Client / Proxy │
+                              │ ssh root@...   │
+                              │ scp flows...   │
+                              │ ssh maestro... │
+                              └────────────────┘
+```
+
+For **physical devices**, the phone-bridge container itself serves as the worker (SSH + Maestro are installed directly in the bridge image).
+
+## Lease + Tunnel Infrastructure
+
+Smithr provides cross-host access through a layered tunneling infrastructure:
+
+### Local Resources (same host as Smithr)
+- **Socat bridges**: `socat TCP-LISTEN:port,fork TCP:container-ip:port`
+- Direct TCP forwarding, no SSH overhead
+- Used for server containers and local phone resources
+
+### Remote Resources (different host)
+- **SSH tunnels**: `ssh -N -L 0.0.0.0:local-port:target-host:target-port hop-host`
+- Encrypted, multiplexed, robust across network boundaries
+- One SSH process per lease, killed on unlease/GC
+
+### Proxy Sidecar Pattern
+- Lightweight Alpine container that acquires a lease via Smithr API
+- Sets up socat port forwarding from compose service name to tunnel port
+- Monitors backend health; exits after 3 failures (~15s)
+- Clients interact with the proxy container, never with Smithr API directly
+
+### Cross-Host Exclusivity
+- NFS-backed `mkdir` locks at `/srv/shared/smithr/leases/<resource-id>/`
+- Both Smithr instances see the same NFS mount
+- Atomic mkdir = cross-host coordination primitive (no shared database needed)
+
+---
 
 ## The Skald Workflow
 
@@ -366,6 +473,71 @@ Resources carry a `substrate` label indicating their backing technology:
 - ~22GB RAM per macOS VM → 2 VMs per 64GB host
 - Multiple phone models per VM (iPhone 16 + iPhone 15 + iPad Pro)
 - For duplicate models, schedule across different VMs
+
+## Adding Resources — Setup Guides
+
+### Adding an Android Emulator
+
+1. **Choose a rune**: Pick an unused Younger Futhark rune suffix (fe, ur, thurs, oss, reid, kaun, hagall, naud, iss, ar, sol, tyr, bjarkan, madhr, logr, yr)
+2. **Allocate network**: Assign unique IP (10.21.0.30+), ADB port (5555+), VNC port (5900+)
+3. **Start the container**:
+   ```bash
+   SMITHR_ANDROID_RUNE=ur SMITHR_ANDROID_ADB_PORT=5556 \
+     SMITHR_ANDROID_VNC_PORT=5901 SMITHR_ANDROID_IP=10.21.0.31 \
+     docker compose -f layers/network.yml -f layers/android.yml \
+     -p smithr-phone-ur up -d
+   ```
+4. **Verify**: Smithr auto-discovers via `smithr.managed=true` label on Docker event subscription
+5. **Requirements**: KVM (`/dev/kvm`), GPU (`/dev/dri`), ~4 cores + 4GB RAM per emulator
+
+### Adding a Physical Android Phone
+
+1. **Enable Developer Options**: Settings > About Phone > tap Build Number 7 times
+2. **Enable USB Debugging**: Settings > Developer Options > USB Debugging > On
+3. **Enable ADB over TCP**: `adb tcpip 5555`
+4. **Disable screen lock**: `adb shell locksettings set-disabled true`
+5. **Disable animations** (Smithr does this automatically via CI settings)
+6. **Install Simple Keyboard** (prevents Gboard clipboard popup breaking Maestro):
+   ```bash
+   adb install simple-keyboard.apk
+   adb shell ime set rkr.simplekeyboard.inputmethod/.latin.LatinIME
+   ```
+7. **Connect USB**, verify `adb devices` shows the device
+8. **Deploy phone-bridge**: Use `layers/physical-phone.yml` with the device's ADB forward port
+9. Smithr auto-discovers via `register-devices!` and Docker event subscription
+
+### Adding a Physical iPhone
+
+1. **Enable Developer Mode**: Settings > Privacy & Security > Developer Mode > On (restart required)
+2. **Trust the host computer** when prompted on first USB connection
+3. **Verify detection**: `idevice_id -l` should show the device UDID
+4. **Install py_ios_rsd_tunnel**: Clone JulesGosnell/py_ios_rsd_tunnel (branch `linux-support`)
+5. **Build smithr-tunnel SUID binary**: Compile `bin/smithr-tunnel.c`, set SUID root, drops to real user + ambient `CAP_NET_ADMIN`
+6. **Deploy phone-bridge**: Use `layers/physical-iphone.yml` — handles lockdown + RSD tunnel
+7. Smithr auto-discovers via `register-devices!`
+
+### Adding a macOS Build VM
+
+1. **Prepare QCOW2 base image**: Start from Docker-OSX (sickcodes/docker-osx) base
+2. **Install Xcode + iOS runtime** in persistent mode (`PERSISTENT=1`)
+3. **SSH key setup**: Copy smithr admin key to `/Users/smithr/.ssh/authorized_keys`
+4. **Create smithr user**: `dscl . create /Users/smithr`, add to `com.apple.access_ssh` group
+5. **Configure RuntimeMap.plist**: Must have BOTH `iphoneos` AND `iphonesimulator` entries (use PlistBuddy for simulator SDK entry)
+6. **Warm simulator**: `xcrun simctl boot <device-udid>` to verify it boots
+7. **Compact image** (mandatory after persistent mode): `qemu-img convert -O qcow2 -c old.qcow2 new.qcow2`
+8. **Set LANG/LC_ALL**: Add `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8` to shell profile (CocoaPods requires it)
+9. **Set path_helper**: Add `eval $(/usr/libexec/path_helper -s)` to `.bashrc` (SSH sessions lack full PATH)
+10. **Deploy**: Use `layers/xcode.yml` with appropriate labels, IP, and port allocations
+
+### Adding an iOS Simulator Phone
+
+1. **Requires parent macOS VM** (already set up above)
+2. **Deploy sidecar**: `layers/ios.yml` compose layer references parent via `smithr.resource.parent` label
+3. **Sidecar boots simulator** via SSH into VM: `xcrun simctl boot <device-udid>`
+4. **Health check**: Verifies Simulator.app + target device booted
+5. **Label**: `smithr.resource.substrate: "simulated"`, `smithr.resource.parent: smithr-xcode-<rune>`
+
+---
 
 ### macOS VM Lease Types
 

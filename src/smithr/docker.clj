@@ -242,6 +242,35 @@
 ;; Initial container scan
 ;; ---------------------------------------------------------------------------
 
+(defn- attach-workers!
+  "Look up worker containers (labelled smithr.worker-for=<phone-container>)
+   and attach their SSH endpoint to the corresponding phone resource's connection map.
+   Workers provide near-side SSH access for colocated tool execution."
+  [client network-name]
+  (try
+    (let [workers (-> client
+                      (.listContainersCmd)
+                      (.withLabelFilter {"smithr.worker-for" ""})
+                      (.exec))]
+      (doseq [w workers]
+        (let [labels   (into {} (.getLabels w))
+              worker-for (get labels "smithr.worker-for")
+              worker-ip  (some-> (.getNetworkSettings w)
+                                 (.getNetworks)
+                                 (get network-name)
+                                 (.getIpAddress))
+              running?   (= "running" (.getState w))]
+          (when (and worker-for worker-ip running?)
+            (when-let [resource (first (filter #(= (:container %) worker-for)
+                                               (state/resources)))]
+              (log/info "Attaching worker" worker-for "→" worker-ip ":22 to" (:id resource))
+              (state/upsert-resource!
+                (update resource :connection assoc
+                        :worker-ssh-host worker-ip
+                        :worker-ssh-port 22)))))))
+    (catch Exception e
+      (log/warn "Failed to discover workers:" (.getMessage e)))))
+
 (defn scan-containers!
   "Scan running containers for smithr.managed=true and register them."
   [client host-label network-name host-address]
@@ -256,6 +285,7 @@
         (when-let [resource (safe-inspect client id host-label network-name host-address)]
           (log/info "Discovered resource:" (:id resource) "status:" (:status resource))
           (state/upsert-resource! resource))))
+    (attach-workers! client network-name)
     (log/info "Scan complete on" host-label "- found" (count containers) "managed containers")))
 
 ;; ---------------------------------------------------------------------------
@@ -286,6 +316,22 @@
           ((requiring-resolve 'smithr.lease/unadopt!) (:id adopt))
           (catch Exception e
             (log/error e "Error cleaning up adopted container" (:id adopt))))))
+    ;; Handle worker container events (not smithr.managed, but smithr.worker-for)
+    (when (and (not managed?) container-id
+               (= action "start")
+               (get attrs "smithr.worker-for"))
+      (let [worker-for (get attrs "smithr.worker-for")]
+        (log/info "Worker container started for" worker-for "- attaching SSH endpoint")
+        ;; Small delay to let networking initialize
+        (future
+          (Thread/sleep 2000)
+          (try
+            (let [[_ {:keys [client network-name]}]
+                  (first (filter (fn [[k _]] (= k host-label)) @docker-clients))]
+              (when client
+                (attach-workers! client network-name)))
+            (catch Exception e
+              (log/warn "Failed to attach worker on start:" (.getMessage e)))))))
     (when (and managed?
                ;; Skip exec events (healthchecks etc) — too noisy
                (not (.startsWith (or action "") "exec_"))

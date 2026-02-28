@@ -769,6 +769,24 @@
             (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
             (unlease! lease-id)
             nil)
+        ;; Near-side detection: worker container provides SSH access colocated with phone.
+        ;; When present, tunnel SSH to the worker instead of raw protocol to the phone.
+        (let [worker-ssh-host (get-in resource [:connection :worker-ssh-host])
+              worker-ssh-port (get-in resource [:connection :worker-ssh-port] 22)
+              near-side?      (some? worker-ssh-host)
+              ;; For near-side: create a synthetic resource pointing at the worker SSH
+              tunnel-resource (if near-side?
+                                (do (log/info "Near-side lease: routing to worker at"
+                                              worker-ssh-host ":" worker-ssh-port
+                                              "for" (:id resource))
+                                    (assoc resource
+                                           :connection (assoc (:connection resource)
+                                                              :ssh-host worker-ssh-host
+                                                              :ssh-port worker-ssh-port)
+                                           ;; Override platform to :android-build so start-tunnel!
+                                           ;; uses ssh-host/ssh-port (port 22) routing, not ADB
+                                           :platform :android-build))
+                                resource)]
         (if-let [tunnel (cond
                           ;; Server resources: socat if local, SSH tunnel if remote
                           ;; Local = ssh-host is "localhost" (same host as Smithr)
@@ -780,15 +798,19 @@
                             (if local?
                               (start-socat-bridge! lease-id resource svc-port)
                               (start-tunnel! lease-id resource)))
-                          ;; All others (including physical devices): SSH tunnel
+                          ;; Near-side: tunnel SSH to worker container
+                          near-side?
+                          (start-tunnel! lease-id tunnel-resource)
+                          ;; Legacy far-side (including physical devices): SSH tunnel
                           ;; Physical devices use wrapper containers with connect-host/port
                           ;; labels pointing to the host bridge (adb forward + socat or
                           ;; iproxy), so they tunnel identically to emulated devices.
                           :else
                           (start-tunnel! lease-id resource))]
-          (if (and (= (:platform resource) :android)
+          (if (and (not near-side?)
+                   (= (:platform resource) :android)
                    (not (await-adb-ready! (:port tunnel) 15000)))
-            ;; ADB not ready through tunnel — rollback
+            ;; ADB not ready through tunnel — rollback (far-side only)
             (do
               (log/error "ADB not responsive through tunnel port" (:port tunnel)
                          "for lease" lease-id "- rolling back")
@@ -813,6 +835,9 @@
           (let [port-results (when (seq server-ports)
                                (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
                 connection (cond-> {:tunnel-port (:port tunnel)}
+                             ;; Near-side: tell clients the tunnel carries SSH, not raw protocol
+                             near-side? (assoc :tunnel-protocol "ssh"
+                                               :worker-ssh-host worker-ssh-host)
                              (seq server-ports) (assoc :server-ports server-ports)
                              ;; Include UDID for physical iOS devices
                              (get-in resource [:connection :udid])
@@ -840,6 +865,7 @@
                         (when (:device-name resource) (str "\"" (:device-name resource) "\""))
                         "lessee:" lessee "ttl:" ttl-seconds "s"
                         "tunnel-port:" (:port tunnel)
+                        (when near-side? "(near-side/SSH)")
                         (when (seq server-ports) (str "server-ports:" server-ports))
                         (when parent-lease-id (str "parent-hold:" parent-lease-id)))
               (state/record-event! "lease"
@@ -855,7 +881,7 @@
           (do
             (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
             (unlease! lease-id)
-            nil))))))))  ;; extra paren closes the if-provisioning branch
+            nil)))))))))  ;; extra paren closes the if-provisioning + near-side let branch
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease

@@ -1,0 +1,54 @@
+#
+# Unified phone proxy template (near-side architecture)
+#
+# Works for both Android and iOS — the proxy leases a phone resource
+# and tunnels SSH to the colocated worker container. Tools (Maestro,
+# ADB, etc.) run on the worker, not on the client.
+#
+# Usage:
+#   curl -s http://localhost:7070/api/compose/phone > phone.yml
+#   SMITHR_PLATFORM=android SMITHR_LESSEE="ci-123" \
+#     docker compose -f phone.yml -p test up -d
+#
+#   # SSH into the worker (Maestro + ADB are already connected)
+#   ssh -p <tunnel-port> root@localhost "adb devices"
+#   ssh -p <tunnel-port> root@localhost "maestro test /flows/login.yaml"
+#
+# Env vars:
+#   SMITHR_PLATFORM   — android | ios (required)
+#   SMITHR_LESSEE     — who owns this lease (default: anonymous)
+#   SMITHR_TTL        — lease duration in seconds (default: 3600)
+#   SMITHR_SUBSTRATE  — emulated | simulated | physical (optional filter)
+#   SMITHR_MODEL      — specific device model (optional filter)
+#   SMITHR_PREFER_HOST — prefer a specific host (optional)
+#
+services:
+  phone:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    pull_policy: always
+    stop_grace_period: 120s
+    healthcheck:
+      test: /usr/local/bin/healthcheck.sh
+      interval: 5s
+      timeout: 5s
+      retries: 200
+      start_period: 15s
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_RESOURCE_TYPE: phone
+      SMITHR_PLATFORM: ${SMITHR_PLATFORM:?SMITHR_PLATFORM required (android or ios)}
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "22"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
+      SMITHR_MODEL: ${SMITHR_MODEL:-}
+      SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
+    networks:
+      - smithr-network
+      - internal
+
+networks:
+  smithr-network:
+    external: true
+  internal:

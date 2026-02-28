@@ -1,0 +1,130 @@
+#
+# Unified app lifecycle sidecar (near-side architecture)
+#
+# Manages app install/uninstall on the phone resource via SSH into the
+# worker container (or macOS VM for iOS). Platform-aware: uses ADB for
+# Android, xcrun simctl for iOS.
+#
+# Compose with the unified phone proxy:
+#   curl -s http://localhost:7070/api/compose/phone > phone.yml
+#   curl -s http://localhost:7070/api/compose/unified-app > app.yml
+#   SMITHR_PLATFORM=android APP_PATH=/path/to/apk BUNDLE_ID=com.example.app \
+#     docker compose -f phone.yml -f app.yml -p test up -d
+#
+# Env vars:
+#   SMITHR_PLATFORM — android | ios (required, must match phone template)
+#   APP_PATH        — host path to app bundle or APK dir (required)
+#   APP_FILE        — filename inside APP_PATH (default: app-release.apk for Android)
+#   BUNDLE_ID       — app package/bundle ID (required)
+#   API_URL         — override api-config.json (optional)
+#   SSH_USER        — SSH user on worker (default: root for Android, smithr for iOS)
+#   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_rsa)
+#   LOGIN_FLOW      — Maestro flow for login (optional)
+#   LOGOUT_FLOW     — Maestro flow for logout (optional)
+#   EMAIL           — login email (optional, for login flow)
+#   PASSWORD        — login password (optional, for login flow)
+#   FLOWS_DIR       — host path to Maestro flow files (optional)
+#
+services:
+  app:
+    image: alpine:3.19
+    depends_on:
+      phone:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache openssh-client rsync >/dev/null 2>&1
+        log() { echo "[unified-app] $$*" >&2; }
+
+        SSH_TARGET="phone:22"
+        SSH_USER="$${SSH_USER:-root}"
+        SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
+        if [ -f /root/.ssh/id_key ]; then
+          SSH_OPTS="$$SSH_OPTS -i /root/.ssh/id_key"
+        fi
+        SSH="ssh $$SSH_OPTS $$SSH_USER@phone"
+
+        # Wait for SSH to be available
+        log "Waiting for SSH on $$SSH_TARGET..."
+        for i in $$(seq 1 60); do
+          if $$SSH echo ok 2>/dev/null | grep -q ok; then break; fi
+          sleep 2
+        done
+
+        PLATFORM="$${SMITHR_PLATFORM:-android}"
+        log "Platform: $$PLATFORM"
+
+        # ── Teardown ──────────────────────────────────────
+        teardown() {
+          log "Teardown starting..."
+          case "$$PLATFORM" in
+            android)
+              $$SSH "adb shell am force-stop $$BUNDLE_ID 2>/dev/null; adb uninstall $$BUNDLE_ID 2>/dev/null" || true
+              ;;
+            ios)
+              $$SSH "xcrun simctl uninstall booted $$BUNDLE_ID 2>/dev/null" || true
+              ;;
+          esac
+          log "Teardown complete."
+          exit 0
+        }
+        trap teardown TERM INT
+
+        # ── Install app ──────────────────────────────────
+        case "$$PLATFORM" in
+          android)
+            log "SCPing APK to worker..."
+            scp $$SSH_OPTS /app/$${APP_FILE:-app-release.apk} $$SSH_USER@phone:/tmp/app.apk
+            log "Installing APK on device..."
+            $$SSH "adb shell am force-stop $$BUNDLE_ID 2>/dev/null; adb uninstall $$BUNDLE_ID 2>/dev/null; APK_SIZE=\$$(stat -c%s /tmp/app.apk); cat /tmp/app.apk | adb shell pm install -S \$$APK_SIZE && rm /tmp/app.apk"
+            log "APK installed."
+            ;;
+          ios)
+            log "SCPing app bundle to worker..."
+            scp $$SSH_OPTS -r /app/* $$SSH_USER@phone:/tmp/app-bundle/
+            log "Installing app on Simulator..."
+            $$SSH "xcrun simctl install booted /tmp/app-bundle/$${APP_FILE:-*.app} && rm -rf /tmp/app-bundle"
+            log "App installed."
+            ;;
+        esac
+
+        # ── Inject config ────────────────────────────────
+        if [ -n "$$API_URL" ]; then
+          log "Injecting api-config.json: $$API_URL"
+          case "$$PLATFORM" in
+            android)
+              $$SSH "echo '{\"apiUrl\": \"$$API_URL\"}' > /tmp/api-config.json && adb push /tmp/api-config.json /sdcard/Android/data/$$BUNDLE_ID/files/api-config.json && rm /tmp/api-config.json"
+              ;;
+            ios)
+              $$SSH "echo '{\"apiUrl\": \"$$API_URL\"}' | xcrun simctl launch booted $$BUNDLE_ID --config-json /dev/stdin" || true
+              ;;
+          esac
+        fi
+
+        touch /tmp/app-installed
+        log "Ready."
+
+        while true; do sleep 60 & wait $$!; done
+    environment:
+      SMITHR_PLATFORM: ${SMITHR_PLATFORM:?SMITHR_PLATFORM required}
+      BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
+      APP_FILE: ${APP_FILE:-}
+      API_URL: ${API_URL:-}
+      SSH_USER: ${SSH_USER:-root}
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/app-installed"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 120s
+    stop_grace_period: 30s
+    volumes:
+      - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_key:ro,z
+      - ${FLOWS_DIR:-.}:/flows:ro,z
+    networks:
+      - internal
+
+networks:
+  internal:
