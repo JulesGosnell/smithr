@@ -46,5 +46,12 @@ if [ "$PLATFORM" = "android" ]; then
   export ANDROID_SERIAL="${PHONE_HOST}:5555"
 fi
 
+# Verify Maestro is available
+if command -v maestro >/dev/null 2>&1; then
+  log "Maestro: $(maestro --version 2>/dev/null || echo 'installed')"
+else
+  log "WARNING: Maestro not found in PATH"
+fi
+
 log "Ready. Platform: $PLATFORM, Phone: $PHONE_HOST"
 exec sleep infinity

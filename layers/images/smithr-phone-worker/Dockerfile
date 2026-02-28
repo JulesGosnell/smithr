@@ -7,9 +7,35 @@ RUN apk add --no-cache \
   && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
   && echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config
 
-# Maestro CLI (pre-installed from shared image or built separately)
-# Mount or COPY maestro into /root/.maestro at build time
-ENV PATH="/root/.maestro/bin:${PATH}"
+# Maestro CLI — baked from /srv/shared/images at build time.
+# The tarball contains maestro/bin/maestro + maestro/lib/*.jar.
+# Patched smithr jars are overlaid on top (driver-port fix for concurrent instances).
+#
+# Build via the build script (copies jars into context automatically):
+#   layers/images/smithr-phone-worker/build.sh
+#
+# Or manually:
+#   cp /srv/shared/images/maestro-2.2.0-smithr.tar.gz layers/images/smithr-phone-worker/maestro.tar.gz
+#   cp /srv/shared/images/maestro-cli-2.1.0-smithr.jar layers/images/smithr-phone-worker/maestro-cli-smithr.jar
+#   docker build -t smithr-phone-worker:latest layers/images/smithr-phone-worker/
+COPY maestro.tar.gz /tmp/maestro.tar.gz
+RUN tar xzf /tmp/maestro.tar.gz -C /opt \
+  && rm /tmp/maestro.tar.gz \
+  && chmod +x /opt/maestro/bin/maestro
+
+# Overlay patched CLI jar (selectPort driver-port fix for concurrent instances)
+COPY maestro-cli-smithr.jar /tmp/maestro-cli-smithr.jar
+RUN ORIG=$(ls /opt/maestro/lib/maestro-cli-*.jar 2>/dev/null | head -1) \
+  && if [ -n "$ORIG" ]; then \
+       cp /tmp/maestro-cli-smithr.jar "$ORIG"; \
+     else \
+       cp /tmp/maestro-cli-smithr.jar /opt/maestro/lib/maestro-cli-smithr.jar; \
+     fi \
+  && rm /tmp/maestro-cli-smithr.jar
+
+ENV PATH="/opt/maestro/bin:${PATH}"
+ENV MAESTRO_CLI_NO_ANALYTICS=true
+ENV MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

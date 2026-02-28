@@ -140,6 +140,39 @@ Smithr supports two execution models for running tools (Maestro, ADB, etc.) agai
 
 **Near-side** (current iOS model, target for all): SSH is tunneled to the macOS VM or worker container. Maestro runs INSIDE the VM/worker, colocated with the device. Sidecars SCP files in and SSH to execute commands. Only results come back over the wire.
 
+### Why Near-Side Is Better: Maestro as an Example
+
+Consider what happens during a single Maestro test flow like `login.yaml`:
+
+**Far-side (Maestro on client, phone across the wire):**
+1. Maestro launches on the CI runner
+2. Every UI command (`tap`, `assertVisible`, `inputText`) becomes an ADB
+   shell round-trip through the SSH tunnel — each one waits for a response
+3. Screenshots for assertions are pulled back over the tunnel (~500KB each)
+4. APK install streams the entire binary through SSH (~80MB for a typical app)
+5. If the tunnel hiccups, ADB's stateful TCP connection breaks mid-flow
+6. Cross-host: the ADB streaming install protocol fails entirely (requires
+   the push-then-pm-install workaround — push file, then `cat | pm install`)
+
+A single `maestro test` run generates **hundreds of ADB round-trips**, each
+adding tunnel latency. On a cross-host lease, that's hundreds of SSH-encrypted
+hops for what should be local loopback calls.
+
+**Near-side (Maestro on worker, next to the phone):**
+1. Client SCPs the flow YAML files to the worker (~10KB, one transfer)
+2. Client runs `ssh worker maestro test /tmp/flows/login.yaml`
+3. Maestro talks to ADB over Docker network loopback — sub-millisecond,
+   no tunnel, no encryption overhead
+4. All ADB round-trips (tap, assert, screenshot, install) happen locally
+5. Only the exit code and test report come back over SSH
+6. If the SSH session drops, Maestro finishes anyway (nohup) — results
+   are collected on reconnect
+
+The difference: **hundreds of tunnel round-trips** vs **two SSH calls** (scp
+flows in, ssh run test). The phone protocol never leaves the Docker network.
+This is why iOS simulated (which already runs Maestro inside the macOS VM)
+has always been more reliable than Android far-side for cross-host leases.
+
 **Smithr's direction**: Near-side for all platforms. The SSH-through-proxy pattern proven for iOS simulated becomes the universal pattern. Each phone resource gets a companion **worker container** (`smithr-phone-worker`) that provides SSH + Maestro + ADB, colocated on the same Docker network as the phone.
 
 ### Worker Container Architecture
