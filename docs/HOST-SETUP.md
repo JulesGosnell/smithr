@@ -135,43 +135,66 @@ volumes:
   - ./my-script.sh:/my-script.sh:z    # :z is required on Fedora
 ```
 
-## iOS Physical Device Support (pymobiledevice3 tunneld)
+## iOS Physical Device Support (RSD tunnels)
 
-Hosts with USB-connected iPhones (iOS 17+) need the `pymobiledevice3` tunnel
-daemon running as root. It creates TUN interfaces for developer service access
-(app install, XCTest, process control).
+Hosts with USB-connected iPhones (iOS 17+) need RSD tunnels for developer
+service access (app install, XCTest, process control). Smithr uses
+[py_ios_rsd_tunnel](https://github.com/dryark/py_ios_rsd_tunnel) to create
+tunnels **on demand** — no always-on daemon needed.
 
 ### Prerequisites
 
 ```bash
-pip3 install --user pymobiledevice3
+pip3 install --user pymobiledevice3    # for developer service clients
+cd /tmp && git clone https://github.com/JulesGosnell/py_ios_rsd_tunnel.git
+pip3 install --user -r /tmp/py_ios_rsd_tunnel/requirements.txt
 ```
 
-### Install the systemd service
+### Build the SUID tunnel helper
+
+The tunnel needs `CAP_NET_ADMIN` to create TUN interfaces. The
+`smithr-tunnel` wrapper grants just that one capability — Python runs
+as your user, not root.
 
 ```bash
-sudo cp layers/systemd/pymobiledevice3-tunneld.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now pymobiledevice3-tunneld
+cd ~/src/smithr
+gcc -Wall -O2 -o bin/smithr-tunnel bin/smithr-tunnel.c
+sudo chown root:root bin/smithr-tunnel
+sudo chmod u+s bin/smithr-tunnel
 ```
 
 ### Verify
 
 ```bash
-sudo systemctl status pymobiledevice3-tunneld
-# Should show active (running), listening on 127.0.0.1:49151
+# Start a tunnel (no sudo needed)
+cd /tmp/py_ios_rsd_tunnel
+~/src/smithr/bin/smithr-tunnel tunnel -u <UDID>
+# Should print: { "ipv6": "<addr>", "port": <port> }
 
-# Test device connectivity
-pymobiledevice3 remote tunneld list
+# In another terminal, test developer services through the tunnel
+python3 -m pymobiledevice3 developer dvt ls --rsd <addr> <port> /
 ```
 
-**Note:** The service runs as root because tunneld creates TUN network
-interfaces. The `PYTHONPATH` in the unit file points to the pip user
-site-packages — adjust if pymobiledevice3 is installed elsewhere.
+Type `stop` or Ctrl+C to close the tunnel.
 
-**Note:** pymobiledevice3 must run on the same host as the USB-connected
-devices. Cross-host RSD forwarding does not work (the Remote XPC protocol
-uses dynamic ports after initial handshake).
+### Migrating from pymobiledevice3 tunneld
+
+If you previously ran the always-on tunneld daemon:
+
+```bash
+# Stop the daemon
+sudo systemctl disable --now pymobiledevice3-tunneld 2>/dev/null
+# Or if started manually:
+sudo kill $(pgrep -f 'pymobiledevice3 remote tunneld')
+```
+
+### Notes
+
+- Tunnels must run on the same host as the USB-connected devices. Cross-host
+  RSD forwarding does not work (Remote XPC uses dynamic ports after handshake).
+- The `smithr-tunnel` binary uses SUID + ambient capabilities: it starts as
+  root, immediately drops to your real user, and grants only `CAP_NET_ADMIN`.
+  Python runs as you, not root.
 
 ## Per-Host Notes
 

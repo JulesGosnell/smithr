@@ -24,3 +24,6 @@ resources/smithr.edn
 tls/*.pem
 layers/scripts/ios/ssh/macos-ssh-key
 smithr.pid
+
+# Compiled SUID binary (only track .c source)
+bin/smithr-tunnel
