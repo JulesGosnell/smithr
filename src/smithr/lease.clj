@@ -545,7 +545,7 @@
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
   [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports
-           prefer-host reverse-ports substrate model retried?]
+           prefer-host reverse-ports substrate model retried? tunnel-protocol]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -769,11 +769,12 @@
             (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
             (unlease! lease-id)
             nil)
-        ;; Near-side detection: worker container provides SSH access colocated with phone.
-        ;; When present, tunnel SSH to the worker instead of raw protocol to the phone.
+        ;; Near-side: worker container provides SSH access colocated with phone.
+        ;; Only engaged when client explicitly requests tunnel-protocol "ssh".
+        ;; Default remains far-side (raw ADB/protocol tunneling) for backwards compat.
         (let [worker-ssh-host (get-in resource [:connection :worker-ssh-host])
               worker-ssh-port (get-in resource [:connection :worker-ssh-port] 22)
-              near-side?      (some? worker-ssh-host)
+              near-side?      (and (= tunnel-protocol "ssh") (some? worker-ssh-host))
               ;; For near-side: create a synthetic resource pointing at the worker SSH
               tunnel-resource (if near-side?
                                 (do (log/info "Near-side lease: routing to worker at"

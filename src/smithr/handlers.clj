@@ -141,6 +141,7 @@
         reverse-ports (or (:reverse_ports body) (get body "reverse_ports"))
         substrate (or (:substrate body) (get body "substrate"))
         model (or (:model body) (get body "model"))
+        tunnel-protocol (or (:tunnel_protocol body) (get body "tunnel_protocol"))
         params    (cond-> {:type        (or (:type body) (get body "type"))
                            :platform    (or (:platform body) (get body "platform"))
                            :ttl-seconds (or (:ttl_seconds body) (get body "ttl_seconds") 1800)
@@ -150,6 +151,7 @@
                     prefer-host (assoc :prefer-host prefer-host)
                     substrate (assoc :substrate substrate)
                     model (assoc :model model)
+                    tunnel-protocol (assoc :tunnel-protocol tunnel-protocol)
                     (seq server-ports) (assoc :server-ports (vec server-ports))
                     (seq reverse-ports) (assoc :reverse-ports (vec reverse-ports)))]
     (log/info "Lease request:" params)
