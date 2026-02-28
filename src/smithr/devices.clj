@@ -275,24 +275,31 @@
                  (= platform "android")
                  (into ["--label" (str "smithr.resource.serial=" (:serial device))])
                  (= platform "ios")
-                 (into ["--label" (str "smithr.resource.udid=" (:udid device))]))]
+                 (into ["--label" (str "smithr.resource.udid=" (:udid device))
+                         "--label" "smithr.resource.rsd-port=65000"]))]
     (if (wrapper-container-exists? cname)
       (do (log/debug "Wrapper container already exists:" cname)
           cname)
       (let [;; Mount host's ADB key so healthcheck uses the same RSA key
             ;; the phone already authorized (prevents repeated auth prompts)
             adb-dir (str (System/getProperty "user.home") "/.android")
-            cmd (into ["docker" "run" "-d"
-                        "--name" cname
-                        "--network" "smithr-network"
-                        "--restart" "unless-stopped"
-                        "-v" (str adb-dir ":/root/.android:ro,z")
-                        "-e" (str "PLATFORM=" platform)
-                        "-e" (str "BRIDGE_PORT=" bridge-port)
-                        "-e" (str "BRIDGE_HOST=10.21.0.1")
-                        "-e" (str "SERIAL=" device-key)]
-                      (into labels
-                            ["smithr-phone-bridge:latest"]))
+            ios? (= platform "ios")
+            cmd (cond-> ["docker" "run" "-d"
+                          "--name" cname
+                          "--network" "smithr-network"
+                          "--restart" "unless-stopped"
+                          "-v" (str adb-dir ":/root/.android:ro,z")
+                          "-e" (str "PLATFORM=" platform)
+                          "-e" (str "BRIDGE_PORT=" bridge-port)
+                          "-e" (str "BRIDGE_HOST=10.21.0.1")
+                          "-e" (str "SERIAL=" device-key)]
+                  ;; iOS: RSD tunnel needs usbmuxd + TUN capability + tunnel package
+                  ios? (into ["--cap-add" "net_admin"
+                              "--device" "/dev/net/tun"
+                              "-v" "/var/run/usbmuxd:/var/run/usbmuxd:z"
+                              "-v" "/tmp/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z"])
+                  true (into labels)
+                  true (conj "smithr-phone-bridge:latest"))
             {:keys [exit err]} (apply shell/sh cmd)]
         (if (zero? exit)
           (do (log/info "Created wrapper container:" cname "for" device-key

@@ -5,7 +5,6 @@
   (:require [clojure.string]
             [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
-            [clojure.data.json :as json]
             [smithr.state :as state]
             [smithr.docker :as docker]
             [smithr.macos :as macos]
@@ -37,79 +36,6 @@
 (defonce ^:private next-tunnel-port
   (atom 17000))
 
-;; ---------------------------------------------------------------------------
-;; RSD tunnel management (physical iOS 17+ developer services)
-;; ---------------------------------------------------------------------------
-
-(defonce ^:private rsd-tunnels
-  (atom {}))  ;; lease-id -> {:process Process :ipv6 String :port int}
-
-(def ^:private rsd-tunnel-binary
-  "Path to smithr-tunnel SUID binary (relative to project root)."
-  (str (System/getProperty "user.dir") "/bin/smithr-tunnel"))
-
-(def ^:private rsd-tunnel-workdir
-  "Working directory for py_ios_rsd_tunnel (python3 -m needs the package)."
-  "/tmp/py_ios_rsd_tunnel")
-
-(defn- start-rsd-tunnel!
-  "Start an RSD tunnel for a physical iOS device.
-   Returns {:ipv6 String :port int} or nil on failure."
-  [lease-id udid]
-  (log/info "Starting RSD tunnel for lease" lease-id "UDID:" udid)
-  (try
-    (let [cmd  [rsd-tunnel-binary "tunnel" "-u" udid]
-          pb   (doto (ProcessBuilder. ^java.util.List cmd)
-                 (.directory (java.io.File. rsd-tunnel-workdir)))
-          _    (.put (.environment pb) "PYTHONUNBUFFERED" "1")
-          proc (.start pb)
-          stdout (java.io.BufferedReader.
-                   (java.io.InputStreamReader. (.getInputStream proc)))
-          ;; Read first line with timeout (tunnel prints JSON on success)
-          json-future (future (.readLine stdout))
-          line (deref json-future 30000 nil)]
-      (if (and line (not (.isEmpty line)))
-        (let [parsed (json/read-str line :key-fn keyword)
-              info   {:process proc
-                      :ipv6    (:ipv6 parsed)
-                      :port    (:port parsed)}]
-          (swap! rsd-tunnels assoc lease-id info)
-          (log/info "RSD tunnel ready for lease" lease-id
-                    "→" (:ipv6 parsed) ":" (:port parsed)
-                    "pid" (.pid proc))
-          info)
-        (do (log/error "RSD tunnel failed to produce output for lease" lease-id
-                       (if (.isAlive proc) "(process alive)" "(process dead)"))
-            (.destroyForcibly proc)
-            nil)))
-    (catch Exception e
-      (log/error "Failed to start RSD tunnel for" udid ":" (.getMessage e))
-      nil)))
-
-(defn- stop-rsd-tunnel!
-  "Stop an RSD tunnel for a lease. Sends 'stop' to stdin for graceful
-   shutdown, then force-kills after 3 seconds if still alive."
-  [lease-id]
-  (when-let [{:keys [^Process process ipv6 port]} (get @rsd-tunnels lease-id)]
-    (log/info "Stopping RSD tunnel for lease" lease-id ipv6 ":" port)
-    (try
-      (when (.isAlive process)
-        ;; Graceful: write "stop\n" to stdin
-        (try
-          (let [stdin (.getOutputStream process)]
-            (.write stdin (.getBytes "stop\n"))
-            (.flush stdin))
-          (catch Exception _ nil))
-        ;; Wait up to 3s for graceful exit
-        (.waitFor process 3 java.util.concurrent.TimeUnit/SECONDS)
-        ;; Force kill if still alive
-        (when (.isAlive process)
-          (.destroyForcibly process)))
-      (log/info "RSD tunnel stopped for lease" lease-id "pid" (.pid process))
-      (catch Exception e
-        (log/warn "Error stopping RSD tunnel:" (.getMessage e))))
-    (swap! rsd-tunnels dissoc lease-id)))
-
 (defn cleanup-stale-tunnels!
   "Kill orphaned SSH tunnel processes from previous Smithr sessions.
    Called on startup before accepting new leases.
@@ -132,12 +58,6 @@
         (Thread/sleep 500)))
     (catch Exception e
       (log/debug "Port-based cleanup skipped:" (.getMessage e))))
-  ;; Third pass: kill orphaned RSD tunnel processes
-  (try
-    (let [{:keys [exit]} (shell/sh "pkill" "-f" "ios_rsd_tunnel tunnel")]
-      (when (zero? exit)
-        (log/info "Killed stale RSD tunnel processes")))
-    (catch Exception _ nil))
   (log/info "Stale tunnel cleanup complete"))
 
 (defn- port-in-use?
@@ -889,23 +809,17 @@
                                                           :lease-type :build})]
                                       (when parent-lease
                                         (:id parent-lease))))))]
-          ;; Start RSD tunnel for physical iOS devices (developer services)
-          (let [rsd-info (when (and (= (:platform resource) :ios)
-                                    (= (:substrate resource) "physical")
-                                    (get-in resource [:connection :udid]))
-                           (start-rsd-tunnel! lease-id
-                                              (get-in resource [:connection :udid])))
-                ;; Set up reverse port forwarding for server_ports
-                port-results (when (seq server-ports)
+          ;; Set up reverse port forwarding for server_ports
+          (let [port-results (when (seq server-ports)
                                (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
                 connection (cond-> {:tunnel-port (:port tunnel)}
                              (seq server-ports) (assoc :server-ports server-ports)
-                             ;; Include RSD tunnel address for physical iOS
-                             rsd-info (assoc :rsd-address (:ipv6 rsd-info)
-                                             :rsd-port    (:port rsd-info))
                              ;; Include UDID for physical iOS devices
                              (get-in resource [:connection :udid])
                              (assoc :udid (get-in resource [:connection :udid]))
+                             ;; Include RSD port for physical iOS devices
+                             (get-in resource [:connection :rsd-port])
+                             (assoc :rsd-port (get-in resource [:connection :rsd-port]))
                              ;; Include device name for physical devices
                              (:device-name resource)
                              (assoc :device-name (:device-name resource)))]
@@ -1006,7 +920,6 @@
           (when (and resource tunnel)
             (teardown-server-ports! resource (:port tunnel) server-ports))))
       (stop-tunnel! lease-id)
-      (stop-rsd-tunnel! lease-id)
       ;; Release shared filesystem lock for phone leases
       (when (not= (:lease-type lease) :build)
         (release-shared-lock! (:resource-id lease)))
@@ -1226,21 +1139,7 @@
            :resource  (:resource-id (state/lease lease-id))
            :reason    "tunnel-dead"})
         (unlease! lease-id)))
-    ;; Also reap leases with dead RSD tunnel processes
-    (let [dead-rsd (->> @rsd-tunnels
-                        (filter (fn [[_ t]]
-                                  (when-let [^Process proc (:process t)]
-                                    (not (.isAlive proc)))))
-                        (map first))]
-      (doseq [lease-id dead-rsd]
-        (when (state/lease lease-id)
-          (log/info "GC: RSD tunnel dead for lease" lease-id "- unleasing")
-          (state/record-event! "gc"
-            {:lease-id  lease-id
-             :resource  (:resource-id (state/lease lease-id))
-             :reason    "rsd-tunnel-dead"})
-          (unlease! lease-id)))
-      (+ (count dead-ids) (count dead-rsd)))))
+    (count dead-ids)))
 
 (defn gc-expired-leases!
   "Reap expired leases and adopts. Only GCs resources on own-host if specified.

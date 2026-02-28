@@ -4,6 +4,7 @@
    filtered by smithr.managed=true label."
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
+            [clojure.data.json :as json]
             [smithr.state :as state])
   (:import [com.github.dockerjava.core DockerClientImpl DefaultDockerClientConfig]
            [com.github.dockerjava.core.command EventsResultCallback]
@@ -55,94 +56,69 @@
           (get network-name)
           (.getIpAddress)))
 
-(defn container->resource
-  "Convert a Docker container inspect result to a Resource map.
-   host-address is the reachable hostname/IP for remote hosts (nil for local)."
-  [container host-label network-name host-address]
-  (let [labels (.getLabels (.getConfig container))
-        res-type (keyword (get labels "smithr.resource.type"))
-        platform (keyword (get labels "smithr.resource.platform"))
-        name (-> (.getName container) (subs 1)) ;; strip leading /
-        ip (some-> (.getNetworkSettings container)
-                   (.getNetworks)
-                   (get network-name)
-                   (.getIpAddress))
-        id (str host-label ":" (clojure.core/name platform) ":" name)
-        state-obj (.getState container)
-        running? (.getRunning state-obj)
-        health (some-> (.getHealth state-obj) (.getStatus))
-        status (cond
-                 (not running?) :dead
-                 (= health "healthy") :warm
-                 :else :booting)
-        ;; Extract host port bindings for VNC
-        port-bindings (some-> (.getNetworkSettings container)
-                              (.getPorts)
-                              (.getBindings))
-        host-port-for (fn [container-port]
-                        (some-> port-bindings
-                                (get (com.github.dockerjava.api.model.ExposedPort/tcp container-port))
-                                first
-                                (.getHostPortSpec)
-                                (Integer/parseInt)))
-        ;; Build connection map based on platform
-        ;; For remote hosts, use host-address + host-mapped ports instead of container IPs
-        remote? (some? host-address)
-        ;; Physical devices carry connection info in labels (connect-host/port)
-        ;; rather than Docker networking, since the bridge runs on the host.
-        connect-host (get labels "smithr.resource.connect-host")
+(defn- build-connection
+  "Build the connection map for a resource based on its platform and labels.
+   host-port-fn: (container-port) → mapped host port or nil."
+  [platform labels host-address ip remote? host-port-fn]
+  (let [connect-host (get labels "smithr.resource.connect-host")
         connect-port (some-> (get labels "smithr.resource.connect-port") Integer/parseInt)
-        serial (get labels "smithr.resource.serial")
-        connection (case platform
-                     :android (cond-> {:adb-host (or connect-host
-                                                     (if (and remote? (host-port-for 5555))
-                                                       host-address ip))
-                                       :adb-port (or connect-port
-                                                     (if (and remote? (host-port-for 5555))
-                                                       (host-port-for 5555) 5555))}
-                                serial (assoc :serial serial)
-                                (host-port-for 5900) (assoc :vnc-port (host-port-for 5900)))
-                     :ios (let [;; iOS sidecar doesn't run SSH — use connect labels pointing to macOS VM
-                               connect-host (get labels "smithr.resource.connect-host")
-                               connect-port (some-> (get labels "smithr.resource.connect-port")
-                                                    Integer/parseInt)
-                               ssh-host (or connect-host
-                                            (if (and remote? (host-port-for 10022))
-                                              host-address ip))
-                               ssh-port (or connect-port
-                                            (if (and remote? (host-port-for 10022))
-                                              (host-port-for 10022) 10022))]
-                            (cond-> {:ssh-host ssh-host :ssh-port ssh-port}
-                            (get labels "smithr.resource.udid")
-                            (assoc :udid (get labels "smithr.resource.udid"))))
-                     :macos (cond-> {:ssh-host (if (and remote? (host-port-for 10022))
-                                                 host-address ip)
-                                     :ssh-port (if (and remote? (host-port-for 10022))
-                                                 (host-port-for 10022) 10022)}
-                              (host-port-for 5999) (assoc :vnc-port (host-port-for 5999)))
-                     :android-build {:ssh-host (if (and remote? (host-port-for 22))
-                                                 host-address ip)
-                                     :ssh-port (if (and remote? (host-port-for 22))
-                                                 (host-port-for 22) 22)}
-                     ;; Default: store container IP for direct-access resources (e.g. servers)
-                     ;; Include ssh-host for remote resources so cross-host tunneling works.
-                     (cond-> {:container-ip ip}
-                       remote? (assoc :ssh-host host-address)
-                       (get labels "smithr.resource.service-port")
-                       (assoc :service-port (Integer/parseInt (get labels "smithr.resource.service-port")))))]
+        serial (get labels "smithr.resource.serial")]
+    (case platform
+      :android (cond-> {:adb-host (or connect-host
+                                      (if (and remote? (host-port-fn 5555))
+                                        host-address ip))
+                        :adb-port (or connect-port
+                                      (if (and remote? (host-port-fn 5555))
+                                        (host-port-fn 5555) 5555))}
+                 serial (assoc :serial serial)
+                 (host-port-fn 5900) (assoc :vnc-port (host-port-fn 5900)))
+      :ios (let [ssh-host (or connect-host
+                              (if (and remote? (host-port-fn 10022))
+                                host-address ip))
+                 ssh-port (or connect-port
+                              (if (and remote? (host-port-fn 10022))
+                                (host-port-fn 10022) 10022))]
+              (cond-> {:ssh-host ssh-host :ssh-port ssh-port}
+                (get labels "smithr.resource.udid")
+                (assoc :udid (get labels "smithr.resource.udid"))
+                (get labels "smithr.resource.rsd-port")
+                (assoc :rsd-port (Integer/parseInt
+                                   (get labels "smithr.resource.rsd-port")))))
+      :macos (cond-> {:ssh-host (if (and remote? (host-port-fn 10022))
+                                   host-address ip)
+                       :ssh-port (if (and remote? (host-port-fn 10022))
+                                   (host-port-fn 10022) 10022)}
+                (host-port-fn 5999) (assoc :vnc-port (host-port-fn 5999)))
+      :android-build {:ssh-host (if (and remote? (host-port-fn 22))
+                                   host-address ip)
+                       :ssh-port (if (and remote? (host-port-fn 22))
+                                   (host-port-fn 22) 22)}
+      ;; Default: direct-access resources (e.g. servers)
+      (cond-> {:container-ip ip}
+        remote? (assoc :ssh-host host-address)
+        (get labels "smithr.resource.service-port")
+        (assoc :service-port (Integer/parseInt (get labels "smithr.resource.service-port")))))))
+
+(defn- build-resource
+  "Build a resource map from extracted container metadata."
+  [{:keys [labels container-name host-label host-address ip
+           running? health host-port-fn]}]
+  (let [res-type (keyword (get labels "smithr.resource.type"))
+        platform (keyword (get labels "smithr.resource.platform"))
+        id (str host-label ":" (clojure.core/name platform) ":" container-name)
+        status (cond (not running?) :dead (= health "healthy") :warm :else :booting)
+        remote? (some? host-address)
+        connection (build-connection platform labels host-address ip remote? host-port-fn)]
     (cond-> {:id id
              :type res-type
              :platform platform
              :host host-label
              :status status
-             :container name
-             :connection (cond-> connection
-                           true (assoc :metrics-port
-                                       (if-let [mp (get labels "smithr.resource.metrics-port")]
-                                         (Integer/parseInt mp)
-                                         (case platform
-                                           :macos 10100
-                                           9100))))
+             :container container-name
+             :connection (assoc connection :metrics-port
+                                (if-let [mp (get labels "smithr.resource.metrics-port")]
+                                  (Integer/parseInt mp)
+                                  (case platform :macos 10100 9100)))
              :parent (get labels "smithr.resource.parent")
              :substrate (get labels "smithr.resource.substrate")
              :model (get labels "smithr.resource.model")
@@ -154,6 +130,80 @@
                           (Integer/parseInt s)
                           10)
              :active-leases #{}))))
+
+(defn container->resource
+  "Convert a Docker container inspect result to a Resource map.
+   host-address is the reachable hostname/IP for remote hosts (nil for local)."
+  [container host-label network-name host-address]
+  (let [labels (.getLabels (.getConfig container))
+        name (-> (.getName container) (subs 1))
+        ip (some-> (.getNetworkSettings container)
+                   (.getNetworks)
+                   (get network-name)
+                   (.getIpAddress))
+        state-obj (.getState container)
+        port-bindings (some-> (.getNetworkSettings container)
+                              (.getPorts)
+                              (.getBindings))
+        host-port-fn (fn [container-port]
+                       (some-> port-bindings
+                               (get (com.github.dockerjava.api.model.ExposedPort/tcp container-port))
+                               first
+                               (.getHostPortSpec)
+                               (Integer/parseInt)))]
+    (build-resource {:labels labels
+                     :container-name name
+                     :host-label host-label
+                     :host-address host-address
+                     :ip ip
+                     :running? (.getRunning state-obj)
+                     :health (some-> (.getHealth state-obj) (.getStatus))
+                     :host-port-fn host-port-fn})))
+
+(defn- inspect-via-cli
+  "Fallback: inspect a container via Docker CLI and build a resource map.
+   Used when docker-java inspect fails (e.g. unrecognized CAP_ enum values)."
+  [container-id host-label network-name host-address]
+  (try
+    (let [{:keys [exit out]} (shell/sh "docker" "inspect" container-id)]
+      (when (zero? exit)
+        (let [data (first (json/read-str out))
+              labels (get-in data ["Config" "Labels"])
+              name (let [n (get data "Name")] (if (.startsWith ^String n "/") (subs n 1) n))
+              ip (get-in data ["NetworkSettings" "Networks" network-name "IPAddress"])
+              state-map (get data "State")
+              ports (get-in data ["NetworkSettings" "Ports"])
+              host-port-fn (fn [cp]
+                             (some-> (get ports (str cp "/tcp"))
+                                     first
+                                     (get "HostPort")
+                                     Integer/parseInt))]
+          (build-resource {:labels labels
+                           :container-name name
+                           :host-label host-label
+                           :host-address host-address
+                           :ip ip
+                           :running? (get state-map "Running")
+                           :health (get-in state-map ["Health" "Status"])
+                           :host-port-fn host-port-fn}))))
+    (catch Exception e
+      (log/warn "CLI fallback inspect failed for" container-id ":" (.getMessage e))
+      nil)))
+
+(defn- safe-inspect
+  "Inspect a container via docker-java, falling back to CLI on failure.
+   docker-java 3.4.x can't deserialize CAP_ prefixed capabilities — CLI
+   fallback handles any container configuration that docker-java chokes on."
+  [client container-id host-label network-name host-address]
+  (try
+    (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))]
+      (container->resource inspected host-label network-name host-address))
+    (catch Exception e
+      (log/debug "docker-java inspect failed for" container-id "- trying CLI fallback")
+      (or (inspect-via-cli container-id host-label network-name host-address)
+          (do (log/warn "Both docker-java and CLI inspect failed for" container-id
+                        ":" (.getMessage e))
+              nil)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Container lookup (for adopt protocol)
@@ -202,11 +252,10 @@
                        (.withShowAll true)
                        (.exec))]
     (doseq [c containers]
-      (let [id (.getId c)
-            inspected (-> client (.inspectContainerCmd id) (.exec))
-            resource (container->resource inspected host-label network-name host-address)]
-        (log/info "Discovered resource:" (:id resource) "status:" (:status resource))
-        (state/upsert-resource! resource)))
+      (let [id (.getId c)]
+        (when-let [resource (safe-inspect client id host-label network-name host-address)]
+          (log/info "Discovered resource:" (:id resource) "status:" (:status resource))
+          (state/upsert-resource! resource))))
     (log/info "Scan complete on" host-label "- found" (count containers) "managed containers")))
 
 ;; ---------------------------------------------------------------------------
@@ -246,19 +295,14 @@
         (case action
           ;; Container started — inspect and register
           "start"
-          (try
-            (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
-                  resource (container->resource inspected host-label network-name host-address)]
-              ;; Invalidate cached workspace users — VM rebooted, overlay is fresh
-              (state/invalidate-workspaces-for-resource! (:id resource))
-              (state/upsert-resource! resource))
-            (catch Exception e
-              (log/warn "Failed to inspect container on start:" (.getMessage e))))
+          (when-let [resource (safe-inspect client container-id host-label network-name host-address)]
+            ;; Invalidate cached workspace users — VM rebooted, overlay is fresh
+            (state/invalidate-workspaces-for-resource! (:id resource))
+            (state/upsert-resource! resource))
 
           ;; Health status changed
           "health_status: healthy"
-          (let [inspected (-> client (.inspectContainerCmd container-id) (.exec))
-                resource (container->resource inspected host-label network-name host-address)]
+          (when-let [resource (safe-inspect client container-id host-label network-name host-address)]
             ;; Only mark warm if not currently leased
             (if (#{:leased :shared} (:status (state/resource (:id resource))))
               (log/debug "Container healthy but leased/shared, keeping current status")
