@@ -1,7 +1,7 @@
 FROM eclipse-temurin:21-jre-alpine
 
 RUN apk add --no-cache \
-    openssh-server bash socat android-tools rsync python3 \
+    openssh-server openssh-client bash socat android-tools rsync python3 \
   && ssh-keygen -A \
   && mkdir -p /root/.ssh \
   && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# smithr bridge — Manage phone-bridge containers for physical devices.
+#
+# Bridge containers proxy USB device protocols into smithr-network so
+# physical phones look identical to emulated ones from the outside.
+#
+# Usage:
+#   smithr bridge list                     List running bridges
+#   smithr bridge rebuild                  Rebuild bridge image
+#   smithr bridge restart [name]           Restart bridge container(s) on new image
+#   smithr bridge restart --all            Restart all bridge containers
+set -euo pipefail
+
+SMITHR_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${SMITHR_ROOT}/bin/lib/common.sh"
+
+IMAGE="smithr-phone-bridge:latest"
+NETWORK="${SMITHR_NETWORK_NAME:-smithr-network}"
+
+usage() {
+  cat <<EOF
+smithr bridge — Manage phone-bridge containers
+
+Usage:
+  smithr bridge list                  List running bridge containers
+  smithr bridge rebuild               Rebuild the bridge Docker image
+  smithr bridge restart [name]        Restart a bridge on the new image
+  smithr bridge restart --all         Restart all bridge containers
+
+The restart command preserves all env vars, labels, volumes, and network
+settings from the original container. It stops the old container, removes
+it, and starts a fresh one from the current image.
+
+Options:
+  --help    Show this help
+EOF
+}
+
+cmd_list() {
+  docker ps --filter "name=physical-" \
+    --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null
+}
+
+cmd_rebuild() {
+  log_info "Building ${IMAGE}..."
+  docker build -t "${IMAGE}" "${SMITHR_ROOT}/layers/images/smithr-phone-bridge/"
+  log_ok "Built ${IMAGE}"
+}
+
+# Restart a single bridge container, preserving its configuration.
+restart_one() {
+  local name="$1"
+
+  # Verify the container exists
+  if ! docker inspect "$name" >/dev/null 2>&1; then
+    log_error "Container not found: $name"
+    return 1
+  fi
+
+  log_info "Restarting bridge: $name"
+
+  # Extract env vars
+  local envs
+  envs=$(docker inspect "$name" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep -v '^$' | grep -v '^PATH=' | grep -v '^LANG=' \
+    | grep -v '^GPG_KEY=' | grep -v '^PYTHON_' | grep -v '^PYTHON_SHA')
+
+  # Extract labels
+  local labels
+  labels=$(docker inspect "$name" --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}}{{println ""}}{{end}}' \
+    | grep -v '^$')
+
+  # Extract volumes/binds
+  local binds
+  binds=$(docker inspect "$name" --format '{{range .HostConfig.Binds}}{{println .}}{{end}}' \
+    | grep -v '^$')
+
+  # Check for special capabilities (iOS needs NET_ADMIN + TUN)
+  local cap_add
+  cap_add=$(docker inspect "$name" --format '{{range .HostConfig.CapAdd}}{{println .}}{{end}}' \
+    | grep -v '^$')
+
+  # Check for device mappings
+  local devices
+  devices=$(docker inspect "$name" --format '{{range .HostConfig.Devices}}{{.PathOnHost}}:{{.PathInContainer}}{{println ""}}{{end}}' \
+    | grep -v '^$')
+
+  # Build docker run command
+  local cmd=(docker run -d
+    --name "$name"
+    --network "$NETWORK"
+    --restart unless-stopped)
+
+  # Add env vars
+  while IFS= read -r env; do
+    [ -n "$env" ] && cmd+=(-e "$env")
+  done <<< "$envs"
+
+  # Add labels
+  while IFS= read -r label; do
+    [ -n "$label" ] && cmd+=(-l "$label")
+  done <<< "$labels"
+
+  # Add volumes
+  while IFS= read -r bind; do
+    [ -n "$bind" ] && cmd+=(-v "$bind")
+  done <<< "$binds"
+
+  # Add capabilities
+  while IFS= read -r cap; do
+    [ -n "$cap" ] && cmd+=(--cap-add "$cap")
+  done <<< "$cap_add"
+
+  # Add devices
+  while IFS= read -r dev; do
+    [ -n "$dev" ] && cmd+=(--device "$dev")
+  done <<< "$devices"
+
+  cmd+=("$IMAGE")
+
+  # Stop and remove the old container
+  docker stop "$name" >/dev/null 2>&1 || true
+  docker rm "$name" >/dev/null 2>&1 || true
+
+  # Start the new container
+  "${cmd[@]}" >/dev/null
+  log_ok "Restarted: $name"
+}
+
+cmd_restart() {
+  local targets=()
+
+  if [ "${1:-}" = "--all" ]; then
+    while IFS= read -r name; do
+      [ -n "$name" ] && targets+=("$name")
+    done < <(docker ps --filter "name=physical-" --format '{{.Names}}' 2>/dev/null)
+  elif [ -n "${1:-}" ]; then
+    targets+=("$1")
+  else
+    log_error "Usage: smithr bridge restart <name> | --all"
+    return 1
+  fi
+
+  if [ ${#targets[@]} -eq 0 ]; then
+    log_info "No bridge containers to restart."
+    return 0
+  fi
+
+  for name in "${targets[@]}"; do
+    restart_one "$name" || true
+  done
+}
+
+# Dispatch
+case "${1:-}" in
+  list)     cmd_list ;;
+  rebuild)  cmd_rebuild ;;
+  restart)  shift; cmd_restart "$@" ;;
+  help|--help|-h) usage ;;
+  *) usage; exit 1 ;;
+esac

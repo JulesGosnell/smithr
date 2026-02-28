@@ -13,8 +13,7 @@ case "$PLATFORM" in
     fi
     ;;
   *)
-    # ADB connectivity through bridge
-    adb connect localhost:5555 >/dev/null 2>&1
-    adb -s localhost:5555 shell echo ok 2>/dev/null | grep -q ok
+    # TCP connectivity to ADB bridge port
+    bash -c 'exec 3<>/dev/tcp/localhost/5555 && exec 3>&-' || exit 1
     ;;
 esac
