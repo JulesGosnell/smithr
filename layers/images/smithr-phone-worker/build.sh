@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the smithr-phone-worker Docker image.
 #
-# Copies Maestro tarball and patched CLI jar from /srv/shared/images
+# Copies Maestro tarball and patched smithr jars from /srv/shared/images
 # into the build context, builds the image, then cleans up.
 #
 # Usage:
@@ -19,15 +19,18 @@ log() { echo "[build] $*" >&2; }
 log "Copying Maestro tarball..."
 cp "${SHARED}/maestro-2.2.0-smithr.tar.gz" "${SCRIPT_DIR}/maestro.tar.gz"
 
-log "Copying patched CLI jar..."
+log "Copying patched smithr jars..."
 cp "${SHARED}/maestro-cli-2.1.0-smithr.jar" "${SCRIPT_DIR}/maestro-cli-smithr.jar"
+cp "${SHARED}/maestro-client-smithr.jar" "${SCRIPT_DIR}/maestro-client-smithr.jar"
+cp "${SHARED}/maestro-utils-smithr.jar" "${SCRIPT_DIR}/maestro-utils-smithr.jar"
 
 # Build
 log "Building ${IMAGE}..."
 docker build -t "${IMAGE}" "${SCRIPT_DIR}"
 
 # Clean up build context artifacts (large, shouldn't persist)
-rm -f "${SCRIPT_DIR}/maestro.tar.gz" "${SCRIPT_DIR}/maestro-cli-smithr.jar"
+rm -f "${SCRIPT_DIR}/maestro.tar.gz" "${SCRIPT_DIR}/maestro-cli-smithr.jar" \
+      "${SCRIPT_DIR}/maestro-client-smithr.jar" "${SCRIPT_DIR}/maestro-utils-smithr.jar"
 log "Cleaned up build context."
 
 # Optional push

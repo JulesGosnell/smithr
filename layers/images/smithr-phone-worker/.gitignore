@@ -1,4 +1,4 @@
 # Temporary build context artifacts — copied in by build.sh, cleaned up after docker build.
 # These are large binaries from /srv/shared/images and should never be committed.
 maestro.tar.gz
-maestro-cli-smithr.jar
+maestro-*-smithr.jar

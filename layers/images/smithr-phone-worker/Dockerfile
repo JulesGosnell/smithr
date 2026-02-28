@@ -23,15 +23,19 @@ RUN tar xzf /tmp/maestro.tar.gz -C /opt \
   && rm /tmp/maestro.tar.gz \
   && chmod +x /opt/maestro/bin/maestro
 
-# Overlay patched CLI jar (selectPort driver-port fix for concurrent instances)
-COPY maestro-cli-smithr.jar /tmp/maestro-cli-smithr.jar
-RUN ORIG=$(ls /opt/maestro/lib/maestro-cli-*.jar 2>/dev/null | head -1) \
-  && if [ -n "$ORIG" ]; then \
-       cp /tmp/maestro-cli-smithr.jar "$ORIG"; \
-     else \
-       cp /tmp/maestro-cli-smithr.jar /opt/maestro/lib/maestro-cli-smithr.jar; \
-     fi \
-  && rm /tmp/maestro-cli-smithr.jar
+# Overlay patched smithr jars (driver-port fix for concurrent instances).
+# The 2.2.0 tarball ships vanilla jars; these smithr-patched versions must
+# replace them so selectPort() reads -Dmaestro.driver.port.
+COPY maestro-cli-smithr.jar maestro-client-smithr.jar maestro-utils-smithr.jar /tmp/
+RUN for JAR in cli client utils; do \
+      ORIG=$(ls /opt/maestro/lib/maestro-${JAR}*.jar 2>/dev/null | head -1); \
+      if [ -n "$ORIG" ]; then \
+        cp "/tmp/maestro-${JAR}-smithr.jar" "$ORIG"; \
+      else \
+        cp "/tmp/maestro-${JAR}-smithr.jar" "/opt/maestro/lib/maestro-${JAR}-smithr.jar"; \
+      fi; \
+    done \
+  && rm /tmp/maestro-*-smithr.jar
 
 ENV PATH="/opt/maestro/bin:${PATH}"
 ENV MAESTRO_CLI_NO_ANALYTICS=true
