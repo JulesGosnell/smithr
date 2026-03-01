@@ -125,7 +125,7 @@ case "$SMITHR_SUBSTRATE" in
     # Start iproxy on bridge (forwards device:22087 → bridge:22087)
     if ! remote "pgrep -f 'iproxy.*22087'" >/dev/null 2>&1; then
       log "Starting iproxy (device:22087 → bridge:22087)..."
-      remote "nohup iproxy -u $DEVICE_UDID 22087 22087 </dev/null >/dev/null 2>&1 &"
+      remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/dev/null 2>&1 &"
       sleep 1
     else
       log "iproxy already running on bridge"

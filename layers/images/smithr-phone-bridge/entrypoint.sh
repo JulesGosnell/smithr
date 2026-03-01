@@ -113,7 +113,7 @@ case "$PLATFORM" in
         # Start iproxy to forward XCTest HTTP server (port 22087) from
         # device to bridge localhost. Maestro sidecar connects here.
         log "Starting iproxy: device:22087 → localhost:22087"
-        iproxy -u "$SERIAL" 22087 22087 &
+        iproxy -u "$SERIAL" 22087:22087 &
         IPROXY_PID=$!
         log "iproxy started (pid $IPROXY_PID)"
       fi
