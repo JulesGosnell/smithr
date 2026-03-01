@@ -309,10 +309,13 @@
                   sidecar-pubkey (into ["-v" (str (.getAbsolutePath sidecar-pubkey)
                                                   ":/root/.ssh/sidecar_key.pub:ro,z")])
                   ;; iOS: RSD tunnel needs usbmuxd + TUN capability + tunnel package
+                  ;; Maestro distribution + signed driver apps for physical iOS E2E
                   ios? (into ["--cap-add" "net_admin"
                               "--device" "/dev/net/tun"
                               "-v" "/var/run/usbmuxd:/var/run/usbmuxd:z"
-                              "-v" "/tmp/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z"])
+                              "-v" "/tmp/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z"
+                              "-v" "/srv/shared/images/maestro:/opt/maestro:ro,z"
+                              "-v" "/srv/shared/images/maestro-driver-signed:/opt/driver-apps:ro,z"])
                   true (into labels)
                   true (conj "smithr-phone-bridge:latest"))
             {:keys [exit err]} (apply shell/sh cmd)]
