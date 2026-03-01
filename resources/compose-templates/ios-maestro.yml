@@ -24,16 +24,11 @@
 #   SSH_USER         — SSH user (default: smithr for simulated, root for physical)
 #   SSH_KEY_PATH     — host path to SSH private key (default: ~/.ssh/id_macos)
 #   MAESTRO_EXTRA    — extra args to pass to Maestro (optional)
-#   MAESTRO_DIR      — host path to extracted Maestro distribution (physical only)
-#   DRIVER_DIR       — host path to signed XCTest driver apps (physical only)
+#
+# Physical substrate: Maestro + driver-apps are mounted on the bridge container
+# by Smithr's register-devices (devices.clj), not by this compose template.
 #
 services:
-  # Mount Maestro distribution + driver apps on the bridge for physical substrate.
-  # Maestro runs on the bridge where the XCTest HTTP server is directly accessible.
-  ios-phone:
-    volumes:
-      - ${MAESTRO_DIR:-/dev/null}:/opt/maestro:ro,z
-      - ${DRIVER_DIR:-/dev/null}:/opt/driver-apps:ro,z
   maestro:
     image: smithr-simctl-tools:latest
     entrypoint: ["/maestro-sidecar.sh"]
