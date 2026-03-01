@@ -131,6 +131,16 @@ case "$SMITHR_SUBSTRATE" in
       log "iproxy already running on bridge"
     fi
 
+    # Maestro hardcodes port 7001 for the XCTest driver connection.
+    # Bridge socat: 7001 → 22087 so Maestro finds the XCTest HTTP server.
+    if ! remote "pgrep -f 'socat.*7001'" >/dev/null 2>&1; then
+      log "Starting socat (bridge:7001 → bridge:22087)..."
+      remote "nohup socat TCP-LISTEN:7001,fork,reuseaddr TCP:localhost:22087 </dev/null >/dev/null 2>&1 &"
+      sleep 1
+    else
+      log "socat 7001→22087 already running on bridge"
+    fi
+
     # Wait for XCTest HTTP server to be reachable on bridge:22087
     log "Waiting for XCTest HTTP server on bridge:22087..."
     for i in $(seq 1 30); do
