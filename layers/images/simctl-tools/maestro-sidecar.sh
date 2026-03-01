@@ -78,8 +78,9 @@ case "$SMITHR_SUBSTRATE" in
       sleep 2
     done
 
-    # Query device UDID from bridge
-    DEVICE_UDID=$(remote 'echo $SERIAL' 2>/dev/null | tr -d '[:space:]')
+    # Query device UDID from bridge.
+    # SSH sessions don't inherit Docker ENV vars, so read from PID 1's environ.
+    DEVICE_UDID=$(remote "tr '\0' '\n' < /proc/1/environ | grep '^SERIAL=' | cut -d= -f2" 2>/dev/null | tr -d '[:space:]')
     log "Device UDID: $DEVICE_UDID"
     echo "$DEVICE_UDID" > /tmp/device-udid
 
@@ -162,7 +163,9 @@ FAKE_XCRUN
     # validateAndUpdateDriver() skips xcodebuild (which doesn't exist on Linux).
     # It checks: version.properties (must match CLI version) + *.xctestrun file.
     MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
-    MAESTRO_VER=$("$MAESTRO_HOME/bin/maestro" --version 2>/dev/null || echo "2.2.0")
+    # Extract version from jar filename (maestro-cli-2.2.0.jar) — avoids analytics noise
+    MAESTRO_VER=$(ls "$MAESTRO_HOME/lib/maestro-cli-"*.jar 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    : "${MAESTRO_VER:=2.2.0}"
     DRIVER_BUILD_DIR="/root/.maestro/maestro-iphoneos-driver-build"
     mkdir -p "$DRIVER_BUILD_DIR/driver-iphoneos/Build/Products"
     echo "version=$MAESTRO_VER" > "$DRIVER_BUILD_DIR/version.properties"
