@@ -107,15 +107,16 @@ case "$SMITHR_SUBSTRATE" in
       RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
       log "RSD tunnel: [$RSD_IPV6]:$RSD_PORT_VAL"
 
-      # Uninstall stale copies (ignore errors — may not be installed)
-      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL $DRIVER_HOST_BUNDLE" 2>/dev/null || true
-      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL $DRIVER_RUNNER_BUNDLE" 2>/dev/null || true
-      log "Stale driver apps removed (if any)"
-
-      # Install fresh copies
-      remote "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-ios.app"
+      # Install (or upgrade) driver apps — do NOT uninstall first.
+      # Removing all apps from a developer cert revokes iOS trust.
+      # Timeout: 60s per install to avoid hanging the build.
+      timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
+        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-ios.app" \
+        || { log "ERROR: Host app install timed out or failed"; exit 1; }
       log "Host app installed: $DRIVER_HOST_BUNDLE"
-      remote "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-iosUITests-Runner.app"
+      timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
+        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-iosUITests-Runner.app" \
+        || { log "ERROR: Runner app install timed out or failed"; exit 1; }
       log "Runner app installed: $DRIVER_RUNNER_BUNDLE"
     else
       log "WARNING: No driver apps at $DRIVER_APPS — assuming pre-installed on device"
