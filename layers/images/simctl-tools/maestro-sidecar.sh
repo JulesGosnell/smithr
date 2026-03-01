@@ -84,8 +84,44 @@ case "$SMITHR_SUBSTRATE" in
     log "Device UDID: $DEVICE_UDID"
     echo "$DEVICE_UDID" > /tmp/device-udid
 
-    # Start XCTest runner on bridge (if not already running)
+    # Install XCTest driver apps on the physical device (via bridge).
+    # The signed .app bundles are mounted at /opt/driver-apps/ from the host.
+    # pymobiledevice3 on the bridge installs them via the RSD tunnel.
+    DRIVER_APPS="${DRIVER_APPS:-/opt/driver-apps}"
+    DRIVER_HOST_BUNDLE="care.artha.maestro-driver"
+    DRIVER_RUNNER_BUNDLE="care.artha.maestro-driver-tests.xctrunner"
     XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}"
+    SCP_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT -P $SSH_PORT"
+
+    if [ -d "$DRIVER_APPS/maestro-driver-ios.app" ]; then
+      log "Installing XCTest driver apps on device..."
+      # Copy signed apps to bridge
+      scp $SCP_OPTS -r \
+        "$DRIVER_APPS/maestro-driver-ios.app" \
+        "$DRIVER_APPS/maestro-driver-iosUITests-Runner.app" \
+        "$SSH_USER@$SSH_HOST:/tmp/"
+
+      # Read RSD tunnel address from bridge
+      RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+      RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+      log "RSD tunnel: [$RSD_IPV6]:$RSD_PORT_VAL"
+
+      # Uninstall stale copies (ignore errors — may not be installed)
+      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL $DRIVER_HOST_BUNDLE" 2>/dev/null || true
+      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL $DRIVER_RUNNER_BUNDLE" 2>/dev/null || true
+      log "Stale driver apps removed (if any)"
+
+      # Install fresh copies
+      remote "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-ios.app"
+      log "Host app installed: $DRIVER_HOST_BUNDLE"
+      remote "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-iosUITests-Runner.app"
+      log "Runner app installed: $DRIVER_RUNNER_BUNDLE"
+    else
+      log "WARNING: No driver apps at $DRIVER_APPS — assuming pre-installed on device"
+    fi
+
+    # Start XCTest runner on bridge (if not already running)
     if ! remote "pgrep -f 'pymobiledevice3.*xcuitest'" >/dev/null 2>&1; then
       log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
       remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
@@ -199,12 +235,24 @@ FAKE_XCRUN
     ;;
 esac
 
-# Teardown handler — clean up XCTest runner on bridge when sidecar stops
+# Teardown handler — clean up XCTest runner + driver apps on bridge
 teardown() {
   log "Teardown starting..."
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
     log "XCTest runner stopped on bridge"
+
+    # Uninstall driver apps from device
+    if [ -f /tmp/device-udid ]; then
+      RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null) || true
+      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+      RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+      if [ -n "$RSD_IPV6" ]; then
+        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver" 2>/dev/null || true
+        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver-tests.xctrunner" 2>/dev/null || true
+        log "Driver apps uninstalled from device"
+      fi
+    fi
   fi
   kill $(jobs -p) 2>/dev/null
   wait 2>/dev/null
