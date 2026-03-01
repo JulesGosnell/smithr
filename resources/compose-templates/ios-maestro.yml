@@ -24,7 +24,7 @@
 #   SSH_USER         — SSH user (default: smithr for simulated, root for physical)
 #   SSH_KEY_PATH     — host path to SSH private key (default: ~/.ssh/id_macos)
 #   MAESTRO_EXTRA    — extra args to pass to Maestro (optional)
-#   MAESTRO_JAR_PATH — host path to patched Maestro jar (physical only)
+#   MAESTRO_DIR      — host path to extracted Maestro distribution (physical only)
 #
 services:
   maestro:
@@ -39,7 +39,7 @@ services:
       SSH_USER: ${SSH_USER:-}
       SSH_KEY: /root/.ssh/id_macos
       MAESTRO_EXTRA: ${MAESTRO_EXTRA:-}
-      MAESTRO_JAR: /opt/maestro/maestro-cli.jar
+      MAESTRO_HOME: /opt/maestro
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/maestro-ready"]
       interval: 5s
@@ -49,7 +49,7 @@ services:
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
-      - ${MAESTRO_JAR_PATH:-/dev/null}:/opt/maestro/maestro-cli.jar:ro,z
+      - ${MAESTRO_DIR:-/dev/null}:/opt/maestro:ro,z
     networks:
       - internal
 

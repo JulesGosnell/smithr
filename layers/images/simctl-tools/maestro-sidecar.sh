@@ -90,12 +90,18 @@ case "$SMITHR_SUBSTRATE" in
       exit 1
     fi
 
-    # Verify Maestro (JDK) is available locally
-    if command -v java >/dev/null 2>&1; then
-      JAVA_VERSION=$(java -version 2>&1 | head -1)
-      log "Java: $JAVA_VERSION"
+    # Verify Maestro distribution is available locally
+    MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
+    if [ -x "$MAESTRO_HOME/bin/maestro" ]; then
+      log "Maestro distribution found at $MAESTRO_HOME"
+      if command -v java >/dev/null 2>&1; then
+        JAVA_VERSION=$(java -version 2>&1 | head -1)
+        log "Java: $JAVA_VERSION"
+      else
+        log "WARNING: Java not found — physical Maestro tests will fail"
+      fi
     else
-      log "WARNING: Java not found — physical Maestro tests will fail"
+      log "WARNING: Maestro not found at $MAESTRO_HOME/bin/maestro — physical tests will fail"
     fi
     ;;
 

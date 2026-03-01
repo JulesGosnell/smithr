@@ -284,10 +284,14 @@
             ;; the phone already authorized (prevents repeated auth prompts)
             home-dir (System/getProperty "user.home")
             adb-dir (str home-dir "/.android")
-            ;; Mount SSH pubkey for near-side access (tools run on the bridge)
+            ;; Mount SSH pubkeys for near-side access (tools run on the bridge)
+            ;; Primary key: host's default SSH key (for direct access)
             ssh-pubkey (first (filter #(.isFile %)
                                 [(java.io.File. (str home-dir "/.ssh/id_ed25519.pub"))
                                  (java.io.File. (str home-dir "/.ssh/id_rsa.pub"))]))
+            ;; Sidecar key: id_macos / sandbox-macos-access (used by app/maestro sidecars)
+            sidecar-pubkey (let [f (java.io.File. (str home-dir "/.ssh/id_ed25519_sandbox_macos.pub"))]
+                             (when (.isFile f) f))
             ios? (= platform "ios")
             cmd (cond-> ["docker" "run" "-d"
                           "--name" cname
@@ -301,6 +305,9 @@
                   ;; SSH pubkey for near-side access
                   ssh-pubkey (into ["-v" (str (.getAbsolutePath ssh-pubkey)
                                               ":/root/.ssh/authorized_keys.mount:ro,z")])
+                  ;; Sidecar SSH pubkey (app/maestro containers use id_macos)
+                  sidecar-pubkey (into ["-v" (str (.getAbsolutePath sidecar-pubkey)
+                                                  ":/root/.ssh/sidecar_key.pub:ro,z")])
                   ;; iOS: RSD tunnel needs usbmuxd + TUN capability + tunnel package
                   ios? (into ["--cap-add" "net_admin"
                               "--device" "/dev/net/tun"

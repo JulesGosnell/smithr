@@ -20,8 +20,8 @@ SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
 SSH_KEY="${SSH_KEY:-}"
 REMOTE_FLOWS_DIR="${REMOTE_FLOWS_DIR:-/tmp/e2e-flows}"
 
-# Maestro jar for physical substrate (volume-mounted at runtime)
-MAESTRO_JAR="${MAESTRO_JAR:-/opt/maestro/maestro-cli.jar}"
+# Maestro home for physical substrate (volume-mounted at runtime)
+MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
 
 # Default SSH_USER based on substrate
 if [ -z "$SSH_USER" ]; then
@@ -67,8 +67,9 @@ case "$SMITHR_SUBSTRATE" in
 
     LOCAL_FLOW="$LOCAL_FLOWS_DIR/$FLOW_BASENAME"
 
-    echo "[ios-maestro] Running (physical): java -jar $MAESTRO_JAR test --platform ios --host 127.0.0.1 --port 22087 $MAESTRO_EXTRA $LOCAL_FLOW"
-    java -jar "$MAESTRO_JAR" test \
+    MAESTRO_BIN="$MAESTRO_HOME/bin/maestro"
+    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --host 127.0.0.1 --port 22087 $MAESTRO_EXTRA $LOCAL_FLOW"
+    "$MAESTRO_BIN" test \
       --platform ios --host 127.0.0.1 --port 22087 \
       $MAESTRO_EXTRA "$LOCAL_FLOW"
     EXIT_CODE=$?
