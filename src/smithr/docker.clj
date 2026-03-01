@@ -72,12 +72,19 @@
                                         (host-port-fn 5555) 5555))}
                  serial (assoc :serial serial)
                  (host-port-fn 5900) (assoc :vnc-port (host-port-fn 5900)))
-      :ios (let [ssh-host (or connect-host
-                              (if (and remote? (host-port-fn 10022))
-                                host-address ip))
-                 ssh-port (or connect-port
-                              (if (and remote? (host-port-fn 10022))
-                                (host-port-fn 10022) 10022))]
+      :ios (let [physical? (= "physical" (get labels "smithr.resource.substrate"))
+                 ;; Physical iOS: bridge container's sshd on Docker IP, port 22.
+                 ;; Simulated iOS: parent macOS VM via QEMU port 10022.
+                 ssh-host (if physical?
+                            ip
+                            (or connect-host
+                                (if (and remote? (host-port-fn 10022))
+                                  host-address ip)))
+                 ssh-port (if physical?
+                            22
+                            (or connect-port
+                                (if (and remote? (host-port-fn 10022))
+                                  (host-port-fn 10022) 10022)))]
               (cond-> {:ssh-host ssh-host :ssh-port ssh-port}
                 (get labels "smithr.resource.udid")
                 (assoc :udid (get labels "smithr.resource.udid"))
