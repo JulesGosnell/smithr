@@ -3,6 +3,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       socat bash iproute2 iptables openssh-server \
       libusbmuxd-tools \
+      openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir \
        asn1crypto==1.5.1 certbuilder==0.14.2 construct==2.10.70 \

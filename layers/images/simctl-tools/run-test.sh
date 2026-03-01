@@ -5,8 +5,8 @@
 #
 # Substrate dispatch:
 #   simulated (default) — copy flows to VM, run Maestro there via SSH
-#   physical            — copy flows locally, run Maestro here (connects
-#                         to XCTest via SSH tunnel on localhost:22087)
+#   physical            — copy flows to bridge, run Maestro there via SSH
+#                         (bridge has iproxy → device:22087 → XCTest)
 #
 set -e
 
@@ -50,46 +50,43 @@ remote() {
 
 case "$SMITHR_SUBSTRATE" in
   physical)
-    # Physical: run Maestro locally — it connects to the XCTest HTTP
-    # server via the SSH tunnel (localhost:7001 → bridge:22087) set up by maestro-sidecar.sh
-    FLOW_BASENAME=$(basename "$FLOW_FILE")
-    LOCAL_FLOWS_DIR="/tmp/maestro-flows"
-    mkdir -p "$LOCAL_FLOWS_DIR"
+    # Physical: copy flows to bridge, run Maestro there via SSH.
+    # Same pattern as simulated (Maestro on VM via SSH).
+    # Maestro on the bridge connects directly to localhost:22087 (via iproxy).
+    echo "[ios-maestro] Copying flows to bridge..."
+    remote "mkdir -p $REMOTE_FLOWS_DIR"
 
-    # Copy flow files locally
     if [ -d "$(dirname "$FLOW_FILE")" ]; then
       FLOWS_DIR=$(dirname "$FLOW_FILE")
-      cp -r "$FLOWS_DIR"/* "$LOCAL_FLOWS_DIR/" 2>/dev/null || \
-      cp "$FLOW_FILE" "$LOCAL_FLOWS_DIR/"
+      scp $SCP_OPTS -r "$FLOWS_DIR"/* "$SSH_USER@$SSH_HOST:$REMOTE_FLOWS_DIR/" 2>/dev/null || \
+      scp $SCP_OPTS "$FLOW_FILE" "$SSH_USER@$SSH_HOST:$REMOTE_FLOWS_DIR/"
     else
-      cp "$FLOW_FILE" "$LOCAL_FLOWS_DIR/"
+      scp $SCP_OPTS "$FLOW_FILE" "$SSH_USER@$SSH_HOST:$REMOTE_FLOWS_DIR/"
     fi
 
-    LOCAL_FLOW="$LOCAL_FLOWS_DIR/$FLOW_BASENAME"
-
-    MAESTRO_BIN="$MAESTRO_HOME/bin/maestro"
+    FLOW_BASENAME=$(basename "$FLOW_FILE")
+    REMOTE_FLOW="$REMOTE_FLOWS_DIR/$FLOW_BASENAME"
 
     # Tell Maestro to use the externally-managed XCTest runner.
-    # The sidecar starts the runner on the bridge; Maestro just connects.
-    # SSH tunnel maps: sidecar:7001 (Maestro default) → bridge:22087 (XCTest)
+    # The sidecar starts the runner on the bridge; Maestro just connects
+    # to localhost:22087 (iproxy → device:22087 → XCTest HTTP server).
     #
     # Flags:
     #   --apple-team-id    — required by 2.2.0 for physical devices (any non-null value)
     #   --no-reinstall-driver — skip xcodebuild (we start XCTest externally)
     #   USE_XCODE_TEST_RUNNER — wait for externally-started XCTest server
-    export USE_XCODE_TEST_RUNNER=1
-    export MAESTRO_CLI_NO_ANALYTICS=1
-    export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
-
-    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $LOCAL_FLOW"
-    "$MAESTRO_BIN" test \
-      --platform ios \
-      --apple-team-id SMITHR \
-      --no-reinstall-driver \
-      $MAESTRO_EXTRA "$LOCAL_FLOW"
+    echo "[ios-maestro] Running (physical on bridge): maestro test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $REMOTE_FLOW"
+    remote "export USE_XCODE_TEST_RUNNER=1 && \
+            export MAESTRO_CLI_NO_ANALYTICS=1 && \
+            export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true && \
+            /opt/maestro/bin/maestro test \
+              --platform ios \
+              --apple-team-id SMITHR \
+              --no-reinstall-driver \
+              $MAESTRO_EXTRA $REMOTE_FLOW"
     EXIT_CODE=$?
 
-    rm -rf "$LOCAL_FLOWS_DIR"
+    remote "rm -rf $REMOTE_FLOWS_DIR" 2>/dev/null || true
     ;;
 
   *)

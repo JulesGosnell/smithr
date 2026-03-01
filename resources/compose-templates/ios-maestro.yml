@@ -7,7 +7,7 @@
 #
 # Substrate dispatch:
 #   simulated (default) — SSHes into macOS VM, runs Maestro there
-#   physical            — SSH tunnel to bridge:22087 (XCTest), runs Maestro locally
+#   physical            — SSHes into bridge container, runs Maestro there
 #
 # Compose with the ios-phone proxy and app sidecar:
 #
@@ -28,6 +28,12 @@
 #   DRIVER_DIR       — host path to signed XCTest driver apps (physical only)
 #
 services:
+  # Mount Maestro distribution + driver apps on the bridge for physical substrate.
+  # Maestro runs on the bridge where the XCTest HTTP server is directly accessible.
+  ios-phone:
+    volumes:
+      - ${MAESTRO_DIR:-/dev/null}:/opt/maestro:ro,z
+      - ${DRIVER_DIR:-/dev/null}:/opt/driver-apps:ro,z
   maestro:
     image: smithr-simctl-tools:latest
     entrypoint: ["/maestro-sidecar.sh"]
@@ -52,8 +58,6 @@ services:
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
-      - ${MAESTRO_DIR:-/dev/null}:/opt/maestro:ro,z
-      - ${DRIVER_DIR:-/dev/null}:/opt/driver-apps:ro,z
     networks:
       - internal
 

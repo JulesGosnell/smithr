@@ -55,14 +55,12 @@ log "SSH connected."
 
 case "$SMITHR_SUBSTRATE" in
   physical)
-    # Physical: manage XCTest runner lifecycle on the bridge, then set up
-    # SSH port-forward so Maestro in this sidecar can reach the XCTest HTTP
-    # server via the standard driver port (7001).
+    # Physical: set up XCTest runner + Maestro on the bridge container.
+    # Same pattern as simulated (Maestro on macOS VM) — Maestro runs where
+    # the device is directly accessible:
     #
-    # Architecture:
-    #   sidecar:7001 → (SSH tunnel) → bridge:22087 → (iproxy) → device:22087
-    #   Maestro connects to localhost:7001 (its default) and reaches the
-    #   XCTest HTTP server running on the physical device.
+    #   bridge:22087 → (iproxy) → device:22087 → XCTest HTTP server
+    #   Maestro on bridge connects to localhost:22087 directly.
 
     # Wait for RSD tunnel on bridge (needed for XCTest + pymobiledevice3)
     log "Waiting for RSD tunnel on bridge..."
@@ -85,21 +83,14 @@ case "$SMITHR_SUBSTRATE" in
     echo "$DEVICE_UDID" > /tmp/device-udid
 
     # Install XCTest driver apps on the physical device (via bridge).
-    # The signed .app bundles are mounted at /opt/driver-apps/ from the host.
+    # The signed .app bundles are mounted at /opt/driver-apps/ on the bridge.
     # pymobiledevice3 on the bridge installs them via the RSD tunnel.
-    DRIVER_APPS="${DRIVER_APPS:-/opt/driver-apps}"
     DRIVER_HOST_BUNDLE="care.artha.maestro-driver"
     DRIVER_RUNNER_BUNDLE="care.artha.maestro-driver-tests"
     XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}"
-    SCP_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT -P $SSH_PORT"
 
-    if [ -d "$DRIVER_APPS/maestro-driver-ios.app" ]; then
+    if remote "test -d /opt/driver-apps/maestro-driver-ios.app" 2>/dev/null; then
       log "Installing XCTest driver apps on device..."
-      # Copy signed apps to bridge
-      scp $SCP_OPTS -r \
-        "$DRIVER_APPS/maestro-driver-ios.app" \
-        "$DRIVER_APPS/maestro-driver-iosUITests-Runner.app" \
-        "$SSH_USER@$SSH_HOST:/tmp/"
 
       # Read RSD tunnel address from bridge
       RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
@@ -111,15 +102,15 @@ case "$SMITHR_SUBSTRATE" in
       # Removing all apps from a developer cert revokes iOS trust.
       # Timeout: 60s per install to avoid hanging the build.
       timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
-        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-ios.app" \
+        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-ios.app" \
         || { log "ERROR: Host app install timed out or failed"; exit 1; }
       log "Host app installed: $DRIVER_HOST_BUNDLE"
       timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
-        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /tmp/maestro-driver-iosUITests-Runner.app" \
+        "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-iosUITests-Runner.app" \
         || { log "ERROR: Runner app install timed out or failed"; exit 1; }
       log "Runner app installed: $DRIVER_RUNNER_BUNDLE"
     else
-      log "WARNING: No driver apps at $DRIVER_APPS — assuming pre-installed on device"
+      log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
 
     # Start XCTest runner on bridge (if not already running)
@@ -153,89 +144,53 @@ case "$SMITHR_SUBSTRATE" in
       sleep 2
     done
 
-    # Set up SSH local port-forward: sidecar → bridge:22087
-    # Forward BOTH port 7001 (Maestro's default driver port) and port 22087
-    # (XCTest HTTP server default). Maestro may connect on either depending
-    # on whether it's using its driver port or the XCTest default.
-    log "Starting SSH tunnel: localhost:{7001,22087} → bridge:22087"
-    ssh $SSH_OPTS -N \
-      -L 7001:localhost:22087 \
-      -L 22087:localhost:22087 \
-      "$SSH_USER@$SSH_HOST" &
-    TUNNEL_PID=$!
-    sleep 1
-    if kill -0 $TUNNEL_PID 2>/dev/null; then
-      log "SSH tunnel established (pid $TUNNEL_PID)"
-    else
-      log "ERROR: SSH tunnel failed to start"
-      exit 1
-    fi
-
-    # Verify XCTest HTTP server is reachable through the tunnel
-    log "Verifying tunnel connectivity..."
-    for port in 7001 22087; do
-      if bash -c "exec 3<>/dev/tcp/localhost/$port && exec 3>&-" 2>/dev/null; then
-        log "  localhost:$port → XCTest OK"
-      else
-        log "  localhost:$port → NOT reachable"
-      fi
-    done
-
-    # Create fake xcrun for Maestro device discovery.
+    # Install fake xcrun on the bridge for Maestro device discovery.
     # Maestro uses xcrun simctl/devicectl (macOS-only) to find iOS devices.
     # We provide synthetic responses so Maestro sees our physical device.
-    cat > /usr/local/bin/xcrun <<FAKE_XCRUN
+    remote "cat > /usr/local/bin/xcrun << 'FAKE_XCRUN'
 #!/bin/bash
-case "\$1" in
+case \"\$1\" in
   simctl)
-    echo '{"devicetypes":[],"runtimes":[],"devices":{},"pairs":{}}'
+    echo '{\"devicetypes\":[],\"runtimes\":[],\"devices\":{},\"pairs\":{}}'
     ;;
   devicectl)
     shift
-    OUTPUT_FILE=""
+    OUTPUT_FILE=\"\"
     while [ \$# -gt 0 ]; do
-      case "\$1" in
-        --json-output) OUTPUT_FILE="\$2"; shift 2 ;;
+      case \"\$1\" in
+        --json-output) OUTPUT_FILE=\"\$2\"; shift 2 ;;
         *) shift ;;
       esac
     done
-    if [ -n "\$OUTPUT_FILE" ]; then
-      cat > "\$OUTPUT_FILE" <<DEVICEJSON
-{"result":{"devices":[{"identifier":"$DEVICE_UDID","hardwareProperties":{"udid":"$DEVICE_UDID","platform":"iOS","productType":"iPhone"},"connectionProperties":{"transportType":"wired","tunnelState":"connected"},"deviceProperties":{"name":"iPhone"}}]}}
+    if [ -n \"\$OUTPUT_FILE\" ]; then
+      cat > \"\$OUTPUT_FILE\" << DEVICEJSON
+{\"result\":{\"devices\":[{\"identifier\":\"$DEVICE_UDID\",\"hardwareProperties\":{\"udid\":\"$DEVICE_UDID\",\"platform\":\"iOS\",\"productType\":\"iPhone\"},\"connectionProperties\":{\"transportType\":\"wired\",\"tunnelState\":\"connected\"},\"deviceProperties\":{\"name\":\"iPhone\"}}]}}
 DEVICEJSON
     fi
     ;;
 esac
 exit 0
 FAKE_XCRUN
-    chmod +x /usr/local/bin/xcrun
-    log "Fake xcrun installed (UDID: $DEVICE_UDID)"
+chmod +x /usr/local/bin/xcrun"
+    log "Fake xcrun installed on bridge (UDID: $DEVICE_UDID)"
 
-    # Pre-populate fake driver build artifacts so Maestro's
+    # Pre-populate fake driver build artifacts on the bridge so Maestro's
     # validateAndUpdateDriver() skips xcodebuild (which doesn't exist on Linux).
-    # It checks: version.properties (must match CLI version) + *.xctestrun file.
     MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
-    # Extract version from jar filename (maestro-cli-2.2.0.jar) — avoids analytics noise
-    MAESTRO_VER=$(ls "$MAESTRO_HOME/lib/maestro-cli-"*.jar 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    MAESTRO_VER=$(remote "ls /opt/maestro/lib/maestro-cli-*.jar 2>/dev/null" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     : "${MAESTRO_VER:=2.2.0}"
-    DRIVER_BUILD_DIR="/root/.maestro/maestro-iphoneos-driver-build"
-    mkdir -p "$DRIVER_BUILD_DIR/driver-iphoneos/Build/Products"
-    echo "version=$MAESTRO_VER" > "$DRIVER_BUILD_DIR/version.properties"
-    touch "$DRIVER_BUILD_DIR/driver-iphoneos/Build/Products/maestro-driver.xctestrun"
-    log "Fake driver build artifacts created (version=$MAESTRO_VER)"
+    remote "mkdir -p /root/.maestro/maestro-iphoneos-driver-build/driver-iphoneos/Build/Products && \
+            echo 'version=$MAESTRO_VER' > /root/.maestro/maestro-iphoneos-driver-build/version.properties && \
+            touch /root/.maestro/maestro-iphoneos-driver-build/driver-iphoneos/Build/Products/maestro-driver.xctestrun"
+    log "Fake driver build artifacts created on bridge (version=$MAESTRO_VER)"
 
-    # Verify Maestro distribution is available locally
-    MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
-    if [ -x "$MAESTRO_HOME/bin/maestro" ]; then
-      log "Maestro distribution found at $MAESTRO_HOME"
-      if command -v java >/dev/null 2>&1; then
-        JAVA_VERSION=$(java -version 2>&1 | head -1)
-        log "Java: $JAVA_VERSION"
-      else
-        log "WARNING: Java not found — physical Maestro tests will fail"
-      fi
+    # Verify Maestro + Java on bridge
+    if remote "test -x /opt/maestro/bin/maestro" 2>/dev/null; then
+      log "Maestro distribution found on bridge at /opt/maestro"
+      JAVA_VERSION=$(remote "java -version 2>&1 | head -1" 2>/dev/null || echo "unknown")
+      log "Java on bridge: $JAVA_VERSION"
     else
-      log "WARNING: Maestro not found at $MAESTRO_HOME/bin/maestro — physical tests will fail"
+      log "WARNING: Maestro not found on bridge — physical tests will fail"
     fi
     ;;
 
