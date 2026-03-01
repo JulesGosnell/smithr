@@ -22,8 +22,18 @@ do_inject_config() {
 }
 
 do_launch() {
-  # Physical devices: Maestro/XCTest handles app launch
-  log "Skipping launch (physical — Maestro/XCTest will launch)"
+  # Explicit launch via DVT protocol — Maestro's launchApp may not work
+  # reliably through the external XCTest runner on physical devices.
+  RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+  if [ -n "$RSD_ADDR" ]; then
+    RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+    RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+    log "Launching $BUNDLE_ID via DVT (RSD: [$RSD_IPV6]:$RSD_PORT_VAL)..."
+    remote "pymobiledevice3 developer dvt launch --rsd $RSD_IPV6 $RSD_PORT_VAL $BUNDLE_ID" \
+      || log "WARNING: DVT launch failed (Maestro will retry via XCTest)"
+  else
+    log "WARNING: RSD tunnel not available, skipping explicit launch"
+  fi
 }
 
 do_uninstall() {
