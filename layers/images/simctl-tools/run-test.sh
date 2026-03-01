@@ -68,9 +68,12 @@ case "$SMITHR_SUBSTRATE" in
     LOCAL_FLOW="$LOCAL_FLOWS_DIR/$FLOW_BASENAME"
 
     MAESTRO_BIN="$MAESTRO_HOME/bin/maestro"
-    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --host 127.0.0.1 --port 22087 $MAESTRO_EXTRA $LOCAL_FLOW"
+    # Maestro connects to XCTest at localhost:22087 by default (SSH tunnel provides this)
+    export MAESTRO_CLI_NO_ANALYTICS=1
+    export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
+    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --no-reinstall-driver $MAESTRO_EXTRA $LOCAL_FLOW"
     "$MAESTRO_BIN" test \
-      --platform ios --host 127.0.0.1 --port 22087 \
+      --platform ios --no-reinstall-driver \
       $MAESTRO_EXTRA "$LOCAL_FLOW"
     EXIT_CODE=$?
 
