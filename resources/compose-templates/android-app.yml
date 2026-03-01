@@ -39,6 +39,8 @@ services:
     depends_on:
       android-phone:
         condition: service_healthy
+      server:
+        condition: service_healthy
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
