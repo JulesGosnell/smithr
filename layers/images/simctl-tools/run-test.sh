@@ -51,7 +51,7 @@ remote() {
 case "$SMITHR_SUBSTRATE" in
   physical)
     # Physical: run Maestro locally — it connects to the XCTest HTTP
-    # server via the SSH tunnel (localhost:22087) set up by maestro-sidecar.sh
+    # server via the SSH tunnel (localhost:7001 → bridge:22087) set up by maestro-sidecar.sh
     FLOW_BASENAME=$(basename "$FLOW_FILE")
     LOCAL_FLOWS_DIR="/tmp/maestro-flows"
     mkdir -p "$LOCAL_FLOWS_DIR"
@@ -68,12 +68,24 @@ case "$SMITHR_SUBSTRATE" in
     LOCAL_FLOW="$LOCAL_FLOWS_DIR/$FLOW_BASENAME"
 
     MAESTRO_BIN="$MAESTRO_HOME/bin/maestro"
-    # Maestro connects to XCTest at localhost:22087 by default (SSH tunnel provides this)
+
+    # Tell Maestro to use the externally-managed XCTest runner.
+    # The sidecar starts the runner on the bridge; Maestro just connects.
+    # SSH tunnel maps: sidecar:7001 (Maestro default) → bridge:22087 (XCTest)
+    #
+    # Flags:
+    #   --apple-team-id    — required by 2.2.0 for physical devices (any non-null value)
+    #   --no-reinstall-driver — skip xcodebuild (we start XCTest externally)
+    #   USE_XCODE_TEST_RUNNER — wait for externally-started XCTest server
+    export USE_XCODE_TEST_RUNNER=1
     export MAESTRO_CLI_NO_ANALYTICS=1
     export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
-    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --no-reinstall-driver $MAESTRO_EXTRA $LOCAL_FLOW"
+
+    echo "[ios-maestro] Running (physical): $MAESTRO_BIN test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $LOCAL_FLOW"
     "$MAESTRO_BIN" test \
-      --platform ios --no-reinstall-driver \
+      --platform ios \
+      --apple-team-id SMITHR \
+      --no-reinstall-driver \
       $MAESTRO_EXTRA "$LOCAL_FLOW"
     EXIT_CODE=$?
 

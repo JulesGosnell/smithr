@@ -55,33 +55,71 @@ log "SSH connected."
 
 case "$SMITHR_SUBSTRATE" in
   physical)
-    # Physical: verify XCTest is running on the bridge, then set up SSH
-    # port-forward so Maestro in this sidecar can reach the XCTest HTTP
-    # server at localhost:22087.
-    log "Waiting for XCTest runner on bridge..."
+    # Physical: manage XCTest runner lifecycle on the bridge, then set up
+    # SSH port-forward so Maestro in this sidecar can reach the XCTest HTTP
+    # server via the standard driver port (7001).
+    #
+    # Architecture:
+    #   sidecar:7001 → (SSH tunnel) → bridge:22087 → (iproxy) → device:22087
+    #   Maestro connects to localhost:7001 (its default) and reaches the
+    #   XCTest HTTP server running on the physical device.
+
+    # Wait for RSD tunnel on bridge (needed for XCTest + pymobiledevice3)
+    log "Waiting for RSD tunnel on bridge..."
     for i in $(seq 1 60); do
       if remote "test -f /tmp/rsd-ready" 2>/dev/null; then
+        log "RSD tunnel ready on bridge"
         break
+      fi
+      if [ "$i" -eq 60 ]; then
+        log "ERROR: RSD tunnel not ready after 120s"
+        exit 1
       fi
       sleep 2
     done
 
-    # Verify iproxy is forwarding port 22087 on the bridge
-    log "Verifying XCTest HTTP port (22087) on bridge..."
+    # Query device UDID from bridge
+    DEVICE_UDID=$(remote 'echo $SERIAL' 2>/dev/null | tr -d '[:space:]')
+    log "Device UDID: $DEVICE_UDID"
+    echo "$DEVICE_UDID" > /tmp/device-udid
+
+    # Start XCTest runner on bridge (if not already running)
+    XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}"
+    if ! remote "pgrep -f 'pymobiledevice3.*xcuitest'" >/dev/null 2>&1; then
+      log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
+      remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
+      sleep 2
+    else
+      log "XCTest runner already running on bridge"
+    fi
+
+    # Start iproxy on bridge (forwards device:22087 → bridge:22087)
+    if ! remote "pgrep -f 'iproxy.*22087'" >/dev/null 2>&1; then
+      log "Starting iproxy (device:22087 → bridge:22087)..."
+      remote "nohup iproxy -u $DEVICE_UDID 22087 22087 </dev/null >/dev/null 2>&1 &"
+      sleep 1
+    else
+      log "iproxy already running on bridge"
+    fi
+
+    # Wait for XCTest HTTP server to be reachable on bridge:22087
+    log "Waiting for XCTest HTTP server on bridge:22087..."
     for i in $(seq 1 30); do
       if remote "bash -c 'exec 3<>/dev/tcp/localhost/22087 && exec 3>&-'" 2>/dev/null; then
         log "XCTest HTTP server reachable on bridge:22087"
         break
       fi
+      if [ "$i" -eq 30 ]; then
+        log "WARNING: XCTest HTTP server not reachable after 60s"
+      fi
       sleep 2
     done
 
-    # Set up SSH local port-forward: sidecar:22087 → bridge:22087
-    log "Starting SSH tunnel: localhost:22087 → bridge:22087"
-    ssh $SSH_OPTS -N -L 22087:localhost:22087 "$SSH_USER@$SSH_HOST" &
+    # Set up SSH local port-forward: sidecar:7001 → bridge:22087
+    # Maestro's default driver port is 7001; XCTest runner is on 22087
+    log "Starting SSH tunnel: localhost:7001 → bridge:22087"
+    ssh $SSH_OPTS -N -L 7001:localhost:22087 "$SSH_USER@$SSH_HOST" &
     TUNNEL_PID=$!
-
-    # Wait briefly and verify the tunnel is alive
     sleep 1
     if kill -0 $TUNNEL_PID 2>/dev/null; then
       log "SSH tunnel established (pid $TUNNEL_PID)"
@@ -89,6 +127,36 @@ case "$SMITHR_SUBSTRATE" in
       log "ERROR: SSH tunnel failed to start"
       exit 1
     fi
+
+    # Create fake xcrun for Maestro device discovery.
+    # Maestro uses xcrun simctl/devicectl (macOS-only) to find iOS devices.
+    # We provide synthetic responses so Maestro sees our physical device.
+    cat > /usr/local/bin/xcrun <<FAKE_XCRUN
+#!/bin/bash
+case "\$1" in
+  simctl)
+    echo '{"devicetypes":[],"runtimes":[],"devices":{},"pairs":{}}'
+    ;;
+  devicectl)
+    shift
+    OUTPUT_FILE=""
+    while [ \$# -gt 0 ]; do
+      case "\$1" in
+        --json-output) OUTPUT_FILE="\$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    if [ -n "\$OUTPUT_FILE" ]; then
+      cat > "\$OUTPUT_FILE" <<DEVICEJSON
+{"result":{"devices":[{"identifier":"$DEVICE_UDID","hardwareProperties":{"udid":"$DEVICE_UDID","platform":"iOS","productType":"iPhone"},"connectionProperties":{"transportType":"wired","tunnelState":"connected"},"deviceProperties":{"name":"iPhone"}}]}}
+DEVICEJSON
+    fi
+    ;;
+esac
+exit 0
+FAKE_XCRUN
+    chmod +x /usr/local/bin/xcrun
+    log "Fake xcrun installed (UDID: $DEVICE_UDID)"
 
     # Verify Maestro distribution is available locally
     MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
@@ -116,6 +184,20 @@ case "$SMITHR_SUBSTRATE" in
     fi
     ;;
 esac
+
+# Teardown handler — clean up XCTest runner on bridge when sidecar stops
+teardown() {
+  log "Teardown starting..."
+  if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
+    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+    log "XCTest runner stopped on bridge"
+  fi
+  kill $(jobs -p) 2>/dev/null
+  wait 2>/dev/null
+  log "Teardown complete."
+  exit 0
+}
+trap teardown TERM INT
 
 # Signal healthy
 touch /tmp/maestro-ready
