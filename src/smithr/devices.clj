@@ -315,7 +315,7 @@
                               "-v" "/var/run/usbmuxd:/var/run/usbmuxd:z"
                               "-v" "/tmp/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z"
                               "-v" "/srv/shared/images/maestro:/opt/maestro:ro,z"
-                              "-v" "/srv/shared/images/maestro-driver-signed:/opt/driver-apps:ro,z"])
+                              "-v" "/srv/shared/images/maestro-driver-signed:/opt/driver-apps:z"])
                   true (into labels)
                   true (conj "smithr-phone-bridge:latest"))
             {:keys [exit err]} (apply shell/sh cmd)]
