@@ -1,9 +1,13 @@
 #
-# iOS app install/uninstall sidecar
+# iOS app install/uninstall sidecar (substrate-aware)
 #
-# SSHes into the macOS VM (via ios-phone proxy), installs the .app
-# bundle on the iOS Simulator, launches it, and stays alive.
+# SSHes into the target (via ios-phone proxy), installs the app,
+# launches it, and stays alive.
 # On shutdown: uninstalls the app before the phone lease is released.
+#
+# Substrate dispatch:
+#   simulated (default) — target is macOS VM (xcrun simctl)
+#   physical            — target is bridge container (pymobiledevice3)
 #
 # Compose with the ios-phone proxy template:
 #
@@ -12,12 +16,13 @@
 #   APP_PATH=/path/to/MyApp.app docker compose -f /tmp/ios.yml -f /tmp/ios-app.yml -p test up -d
 #
 # Env vars:
-#   APP_PATH        — host path to .app bundle (required)
-#   BUNDLE_ID       — iOS bundle identifier (required)
-#   APP_BASENAME    — .app directory name (required)
-#   SSH_USER        — SSH user on macOS VM (default: smithr)
-#   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_macos)
-#   API_URL         — override api-config.json in the app bundle (optional)
+#   SMITHR_SUBSTRATE — simulated (default) | physical
+#   APP_PATH         — host path to .app/.ipa bundle (required)
+#   BUNDLE_ID        — iOS bundle identifier (required)
+#   APP_BASENAME     — .app/.ipa filename (required)
+#   SSH_USER         — SSH user (default: smithr for simulated, root for physical)
+#   SSH_KEY_PATH     — host path to SSH private key (default: ~/.ssh/id_macos)
+#   API_URL          — override api-config.json in the app bundle (optional)
 #
 services:
   app:
@@ -26,8 +31,9 @@ services:
       ios-phone:
         condition: service_healthy
     environment:
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-simulated}
       SSH_TARGET: ios-phone:22
-      SSH_USER: ${SSH_USER:-smithr}
+      SSH_USER: ${SSH_USER:-}
       SSH_KEY: /root/.ssh/id_macos
       BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
       APP_FILE: /app/${APP_BASENAME:?APP_BASENAME must be set}

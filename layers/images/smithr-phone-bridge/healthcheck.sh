@@ -7,9 +7,9 @@ case "$PLATFORM" in
   ios)
     # Lockdown bridge reachable
     bash -c 'exec 3<>/dev/tcp/localhost/62078 && exec 3>&-' || exit 1
-    # RSD relay alive (only if tunnel started)
-    if [ -f /tmp/rsd-relay.pid ]; then
-      kill -0 "$(cat /tmp/rsd-relay.pid)" 2>/dev/null || exit 1
+    # RSD tunnel alive (if started)
+    if [ -f /tmp/rsd-ready ]; then
+      ip link show tun0 >/dev/null 2>&1 || exit 1
     fi
     ;;
   *)

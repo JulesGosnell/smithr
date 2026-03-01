@@ -3,13 +3,15 @@
 #
 # Android: socat container:5555 → host:BRIDGE_PORT (ADB)
 # iOS:     socat container:62078 → host:BRIDGE_PORT (lockdown)
-#          + RSD tunnel → iptables REDIRECT + rsd-relay.py (all service ports)
+#          + RSD tunnel → tun0 direct access for DVT/pymobiledevice3
+#          + optional: iptables REDIRECT + rsd-relay.py (for host-side RSD access)
 #
 # Env vars:
-#   BRIDGE_HOST  — Host address to reach the bridge (default: 10.21.0.1)
-#   BRIDGE_PORT  — Host port where the bridge is listening (required)
-#   SERIAL       — Device serial/UDID (informational)
-#   PLATFORM     — android | ios (default: android)
+#   BRIDGE_HOST       — Host address to reach the bridge (default: 10.21.0.1)
+#   BRIDGE_PORT       — Host port where the bridge is listening (required)
+#   SERIAL            — Device serial/UDID (informational)
+#   PLATFORM          — android | ios (default: android)
+#   XCTEST_BUNDLE_ID  — If set, auto-start XCTest runner via DVT (iOS only)
 set -e
 
 : "${BRIDGE_PORT:?BRIDGE_PORT is required}"
@@ -54,7 +56,9 @@ case "$PLATFORM" in
     if [ -S /var/run/usbmuxd ] && [ -n "$SERIAL" ]; then
       log "Starting RSD tunnel for UDID: $SERIAL"
       cd /opt/py_ios_rsd_tunnel
+      # ios_rsd_tunnel reads stdin and exits on EOF — keep stdin open
       PYTHONUNBUFFERED=1 python3 -m ios_rsd_tunnel tunnel -u "$SERIAL" \
+        < <(while true; do sleep 3600; done) \
         > /tmp/rsd-tunnel.json &
       RSD_PID=$!
 
@@ -83,6 +87,22 @@ case "$PLATFORM" in
 
       if [ ! -f /tmp/rsd-ready ]; then
         log "WARNING: RSD tunnel failed to start (lockdown bridge still works)"
+      fi
+
+      # Auto-start XCTest runner if XCTEST_BUNDLE_ID is set.
+      # pymobiledevice3 connects directly through tun0 — no relay needed.
+      if [ -n "${XCTEST_BUNDLE_ID:-}" ] && [ -f /tmp/rsd-ready ]; then
+        log "Auto-starting XCTest runner: $XCTEST_BUNDLE_ID"
+        /start-xctest.sh "$XCTEST_BUNDLE_ID" &
+        XCTEST_PID=$!
+        log "XCTest runner started (pid $XCTEST_PID)"
+
+        # Start iproxy to forward XCTest HTTP server (port 22087) from
+        # device to bridge localhost. Maestro sidecar connects here.
+        log "Starting iproxy: device:22087 → localhost:22087"
+        iproxy -u "$SERIAL" 22087 22087 &
+        IPROXY_PID=$!
+        log "iproxy started (pid $IPROXY_PID)"
       fi
     else
       log "RSD tunnel skipped (no usbmuxd socket or SERIAL not set)"

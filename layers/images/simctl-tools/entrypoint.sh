@@ -1,29 +1,45 @@
-#!/bin/sh
+#!/bin/bash
 #
-# iOS app install/uninstall sidecar.
-# SSHes into the macOS VM, installs the .app via xcrun simctl,
-# launches the app, stays alive.
+# iOS app install/uninstall sidecar (substrate-aware).
+#
+# SSHes into the target and installs the iOS app. The target depends on
+# the substrate:
+#   - simulated (default): macOS VM — uses xcrun simctl
+#   - physical:            bridge container — uses pymobiledevice3
+#
+# The ios-phone proxy tunnels SSH from the target, so this sidecar
+# doesn't know or care whether the target is local or cross-host.
+#
 # On SIGTERM: uninstalls the app before exiting.
 #
-# The ios-phone proxy tunnels port 22 (SSH) from the macOS VM,
-# giving this sidecar direct xcrun simctl access.
-#
-# Optional server connectivity:
-#   API_URL=http://host:port — overwrite api-config.json in the app bundle
-#                               so the app connects to the specified server
+# Env vars:
+#   SMITHR_SUBSTRATE  — simulated (default) | physical
+#   SSH_TARGET        — host:port for SSH (default: ios-phone:22)
+#   SSH_USER          — SSH user (default: smithr for simulated, root for physical)
+#   BUNDLE_ID         — iOS bundle identifier
+#   APP_FILE          — path to .app/.ipa inside the container
+#   API_URL           — if set, inject api-config.json into the app
 #
 set -e
 
 T0=$(date +%s)
 log() { echo "[ios-app] [$(( $(date +%s) - T0 ))s] $*"; }
 
+SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
-SSH_USER="${SSH_USER:-smithr}"
 SSH_KEY="${SSH_KEY:-}"
 BUNDLE_ID="${BUNDLE_ID:-com.artha.healthcare}"
 APP_FILE="${APP_FILE:-/app/Artha.app}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/tmp/e2e-apps}"
 API_URL="${API_URL:-}"
+
+# Default SSH_USER based on substrate (simulated → macOS VM user, physical → bridge root)
+if [ -z "$SSH_USER" ]; then
+  case "$SMITHR_SUBSTRATE" in
+    physical) SSH_USER="root" ;;
+    *)        SSH_USER="smithr" ;;
+  esac
+fi
 
 # Extract host:port
 SSH_HOST="${SSH_TARGET%%:*}"
@@ -42,18 +58,27 @@ remote() {
     ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "$@"
 }
 
+APP_BASENAME=$(basename "$APP_FILE")
+
+# Source substrate-specific functions: do_install, do_inject_config, do_launch, do_uninstall
+log "Substrate: $SMITHR_SUBSTRATE"
+case "$SMITHR_SUBSTRATE" in
+  physical) . /opt/scripts/physical-install.sh ;;
+  *)        . /opt/scripts/simulated-install.sh ;;
+esac
+
+# Teardown handler
 teardown() {
     log "Teardown starting..."
-    log "Uninstalling $BUNDLE_ID..."
-    remote "xcrun simctl uninstall booted $BUNDLE_ID" 2>/dev/null || true
+    do_uninstall
     remote "rm -rf $REMOTE_APP_DIR" 2>/dev/null || true
     log "Teardown complete."
     exit 0
 }
 trap teardown TERM INT
 
-# Wait for SSH to be reachable
-log "Waiting for SSH at $SSH_TARGET..."
+# Wait for SSH
+log "Waiting for SSH at $SSH_TARGET (user: $SSH_USER)..."
 for i in $(seq 1 60); do
     if remote "echo ok" >/dev/null 2>&1; then
         break
@@ -62,33 +87,23 @@ for i in $(seq 1 60); do
 done
 log "SSH connected."
 
-# Copy .app bundle to VM
+# Copy app to target
 log "App: $APP_FILE ($(du -sh "$APP_FILE" 2>/dev/null | cut -f1))"
-log "Copying app to VM..."
+log "Copying app to target..."
 remote "mkdir -p $REMOTE_APP_DIR"
 scp $SCP_OPTS -r "$APP_FILE" "$SSH_USER@$SSH_HOST:$REMOTE_APP_DIR/"
 log "App copied."
 
-APP_BASENAME=$(basename "$APP_FILE")
-
-# Install on Simulator
-log "Installing $APP_BASENAME on Simulator..."
-remote "xcrun simctl install booted $REMOTE_APP_DIR/$APP_BASENAME"
+# Install
+log "Installing $APP_BASENAME..."
+do_install
 log "Installed."
 
-# Inject API config if specified (must be after install, before launch)
-if [ -n "$API_URL" ]; then
-    log "Injecting api-config.json: $API_URL"
-    DATA_CONTAINER=$(remote "xcrun simctl get_app_container booted $BUNDLE_ID data")
-    DOCS_DIR="$DATA_CONTAINER/Documents"
-    remote "mkdir -p $DOCS_DIR && echo '{\"apiUrl\": \"$API_URL\"}' > $DOCS_DIR/api-config.json"
-    log "Config injected."
-fi
+# Inject config
+do_inject_config
 
 # Launch
-log "Launching $BUNDLE_ID..."
-remote "xcrun simctl launch booted $BUNDLE_ID"
-log "Launched."
+do_launch
 
 # Signal healthy
 touch /tmp/app-installed

@@ -1,13 +1,13 @@
 #
-# iOS Maestro sidecar
+# iOS Maestro sidecar (substrate-aware)
 #
 # Stays alive as a sidecar — run tests via docker exec:
 #
 #   docker exec <project>-maestro-1 /run-test.sh /flows/login.yaml
 #
-# Maestro for iOS uses XCTest which requires running on the same host
-# as the Simulator. This sidecar SSHes into the macOS VM to execute
-# Maestro remotely. Flow files are SCP'd to the VM before each test.
+# Substrate dispatch:
+#   simulated (default) — SSHes into macOS VM, runs Maestro there
+#   physical            — SSH tunnel to bridge:22087 (XCTest), runs Maestro locally
 #
 # Compose with the ios-phone proxy and app sidecar:
 #
@@ -19,10 +19,12 @@
 #     -p test up -d
 #
 # Env vars:
-#   FLOWS_DIR       — host path to Maestro flow files (default: current dir)
-#   SSH_USER        — SSH user on macOS VM (default: smithr)
-#   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_macos)
-#   MAESTRO_EXTRA   — extra args to pass to Maestro (optional)
+#   SMITHR_SUBSTRATE — simulated (default) | physical
+#   FLOWS_DIR        — host path to Maestro flow files (default: current dir)
+#   SSH_USER         — SSH user (default: smithr for simulated, root for physical)
+#   SSH_KEY_PATH     — host path to SSH private key (default: ~/.ssh/id_macos)
+#   MAESTRO_EXTRA    — extra args to pass to Maestro (optional)
+#   MAESTRO_JAR_PATH — host path to patched Maestro jar (physical only)
 #
 services:
   maestro:
@@ -32,10 +34,12 @@ services:
       ios-phone:
         condition: service_healthy
     environment:
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-simulated}
       SSH_TARGET: ios-phone:22
-      SSH_USER: ${SSH_USER:-smithr}
+      SSH_USER: ${SSH_USER:-}
       SSH_KEY: /root/.ssh/id_macos
       MAESTRO_EXTRA: ${MAESTRO_EXTRA:-}
+      MAESTRO_JAR: /opt/maestro/maestro-cli.jar
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/maestro-ready"]
       interval: 5s
@@ -45,6 +49,7 @@ services:
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
+      - ${MAESTRO_JAR_PATH:-/dev/null}:/opt/maestro/maestro-cli.jar:ro,z
     networks:
       - internal
 

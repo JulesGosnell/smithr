@@ -1,18 +1,30 @@
-#!/bin/sh
+#!/bin/bash
 #
 # iOS Maestro sidecar — persistent container for running Maestro tests.
 # Stays alive as a sidecar; run tests via:
 #
 #   docker exec <container> /run-test.sh <flow-file>
 #
-# Maestro for iOS uses XCTest which requires running on the same host
-# as the Simulator. This sidecar SSHes into the macOS VM to execute tests.
+# Substrate dispatch:
+#   simulated (default) — SSH into macOS VM, verify Maestro is installed there
+#   physical            — SSH into bridge, set up port-forward for XCTest (22087)
 #
 set -e
 
+T0=$(date +%s)
+log() { echo "[ios-maestro] [$(( $(date +%s) - T0 ))s] $*"; }
+
+SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
-SSH_USER="${SSH_USER:-smithr}"
 SSH_KEY="${SSH_KEY:-}"
+
+# Default SSH_USER based on substrate
+if [ -z "$SSH_USER" ]; then
+  case "$SMITHR_SUBSTRATE" in
+    physical) SSH_USER="root" ;;
+    *)        SSH_USER="smithr" ;;
+  esac
+fi
 
 # Extract host:port
 SSH_HOST="${SSH_TARGET%%:*}"
@@ -30,29 +42,84 @@ remote() {
     ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "$@"
 }
 
-# Wait for SSH to be reachable
-echo "[ios-maestro] Waiting for SSH at $SSH_TARGET..."
+# Wait for SSH
+log "Substrate: $SMITHR_SUBSTRATE"
+log "Waiting for SSH at $SSH_TARGET (user: $SSH_USER)..."
 for i in $(seq 1 60); do
     if remote "echo ok" >/dev/null 2>&1; then
         break
     fi
     sleep 2
 done
-echo "[ios-maestro] SSH connected."
+log "SSH connected."
 
-# Verify Maestro is available on the VM
-echo "[ios-maestro] Checking Maestro installation..."
-if remote "eval \$(/usr/libexec/path_helper -s) && which maestro" >/dev/null 2>&1; then
-    MAESTRO_VERSION=$(remote "eval \$(/usr/libexec/path_helper -s) && maestro --version" 2>/dev/null || echo "unknown")
-    echo "[ios-maestro] Maestro $MAESTRO_VERSION found on VM."
-else
-    echo "[ios-maestro] WARNING: Maestro not found on macOS VM. Tests will fail."
-fi
+case "$SMITHR_SUBSTRATE" in
+  physical)
+    # Physical: verify XCTest is running on the bridge, then set up SSH
+    # port-forward so Maestro in this sidecar can reach the XCTest HTTP
+    # server at localhost:22087.
+    log "Waiting for XCTest runner on bridge..."
+    for i in $(seq 1 60); do
+      if remote "test -f /tmp/rsd-ready" 2>/dev/null; then
+        break
+      fi
+      sleep 2
+    done
+
+    # Verify iproxy is forwarding port 22087 on the bridge
+    log "Verifying XCTest HTTP port (22087) on bridge..."
+    for i in $(seq 1 30); do
+      if remote "bash -c 'exec 3<>/dev/tcp/localhost/22087 && exec 3>&-'" 2>/dev/null; then
+        log "XCTest HTTP server reachable on bridge:22087"
+        break
+      fi
+      sleep 2
+    done
+
+    # Set up SSH local port-forward: sidecar:22087 → bridge:22087
+    log "Starting SSH tunnel: localhost:22087 → bridge:22087"
+    ssh $SSH_OPTS -N -L 22087:localhost:22087 "$SSH_USER@$SSH_HOST" &
+    TUNNEL_PID=$!
+
+    # Wait briefly and verify the tunnel is alive
+    sleep 1
+    if kill -0 $TUNNEL_PID 2>/dev/null; then
+      log "SSH tunnel established (pid $TUNNEL_PID)"
+    else
+      log "ERROR: SSH tunnel failed to start"
+      exit 1
+    fi
+
+    # Verify Maestro (JDK) is available locally
+    if command -v java >/dev/null 2>&1; then
+      JAVA_VERSION=$(java -version 2>&1 | head -1)
+      log "Java: $JAVA_VERSION"
+    else
+      log "WARNING: Java not found — physical Maestro tests will fail"
+    fi
+    ;;
+
+  *)
+    # Simulated: verify Maestro is installed on the macOS VM
+    log "Checking Maestro on VM..."
+    if remote "eval \$(/usr/libexec/path_helper -s) && which maestro" >/dev/null 2>&1; then
+      MAESTRO_VERSION=$(remote "eval \$(/usr/libexec/path_helper -s) && maestro --version" 2>/dev/null || echo "unknown")
+      log "Maestro $MAESTRO_VERSION found on VM."
+    else
+      log "WARNING: Maestro not found on macOS VM. Tests will fail."
+    fi
+    ;;
+esac
 
 # Signal healthy
 touch /tmp/maestro-ready
-echo "[ios-maestro] Sidecar ready."
-echo "[ios-maestro] Run tests via: docker exec <container> /run-test.sh <flow-file>"
+log "Sidecar ready."
+log "Run tests via: docker exec <container> /run-test.sh <flow-file>"
 
-# Stay alive
-exec sleep infinity
+# Stay alive — if we have a tunnel PID, wait on it; otherwise sleep
+if [ -n "${TUNNEL_PID:-}" ]; then
+  # Tunnel dying = container exits (forces restart/investigation)
+  wait $TUNNEL_PID
+else
+  exec sleep infinity
+fi
