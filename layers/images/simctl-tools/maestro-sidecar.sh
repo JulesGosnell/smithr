@@ -89,7 +89,7 @@ case "$SMITHR_SUBSTRATE" in
     # pymobiledevice3 on the bridge installs them via the RSD tunnel.
     DRIVER_APPS="${DRIVER_APPS:-/opt/driver-apps}"
     DRIVER_HOST_BUNDLE="care.artha.maestro-driver"
-    DRIVER_RUNNER_BUNDLE="care.artha.maestro-driver-tests.xctrunner"
+    DRIVER_RUNNER_BUNDLE="care.artha.maestro-driver-tests"
     XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}"
     SCP_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT -P $SSH_PORT"
 
@@ -249,7 +249,7 @@ teardown() {
       RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
       if [ -n "$RSD_IPV6" ]; then
         remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver" 2>/dev/null || true
-        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver-tests.xctrunner" 2>/dev/null || true
+        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver-tests" 2>/dev/null || true
         log "Driver apps uninstalled from device"
       fi
     fi
