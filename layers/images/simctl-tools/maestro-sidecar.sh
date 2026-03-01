@@ -235,24 +235,15 @@ FAKE_XCRUN
     ;;
 esac
 
-# Teardown handler — clean up XCTest runner + driver apps on bridge
+# Teardown handler — clean up XCTest runner on bridge
+# NOTE: Driver apps are NOT uninstalled — they stay on the device permanently.
+# Removing all apps from a developer certificate causes iOS to revoke the trust,
+# requiring manual re-trust in Settings > General > Device Management each time.
 teardown() {
   log "Teardown starting..."
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
     log "XCTest runner stopped on bridge"
-
-    # Uninstall driver apps from device
-    if [ -f /tmp/device-udid ]; then
-      RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null) || true
-      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
-      RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
-      if [ -n "$RSD_IPV6" ]; then
-        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver" 2>/dev/null || true
-        remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL care.artha.maestro-driver-tests" 2>/dev/null || true
-        log "Driver apps uninstalled from device"
-      fi
-    fi
   fi
   kill $(jobs -p) 2>/dev/null
   wait 2>/dev/null
