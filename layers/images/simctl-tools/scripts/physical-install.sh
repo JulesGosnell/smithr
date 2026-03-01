@@ -14,9 +14,10 @@ do_inject_config() {
   if [ -n "$API_URL" ]; then
     log "Injecting api-config.json: $API_URL"
     remote "echo '{\"apiUrl\": \"$API_URL\"}' > /tmp/api-config.json"
-    # Push config into app's Documents directory on device
-    remote "pymobiledevice3 afc push /tmp/api-config.json Documents/api-config.json"
-    log "Config injected."
+    # Push config into app's Documents directory via app-specific AFC
+    remote "pymobiledevice3 apps push $BUNDLE_ID /tmp/api-config.json Documents/api-config.json" \
+      && log "Config injected." \
+      || log "WARNING: Config injection failed (app may use default URL)"
   fi
 }
 
