@@ -153,10 +153,15 @@ case "$SMITHR_SUBSTRATE" in
       sleep 2
     done
 
-    # Set up SSH local port-forward: sidecar:7001 → bridge:22087
-    # Maestro's default driver port is 7001; XCTest runner is on 22087
-    log "Starting SSH tunnel: localhost:7001 → bridge:22087"
-    ssh $SSH_OPTS -N -L 7001:localhost:22087 "$SSH_USER@$SSH_HOST" &
+    # Set up SSH local port-forward: sidecar → bridge:22087
+    # Forward BOTH port 7001 (Maestro's default driver port) and port 22087
+    # (XCTest HTTP server default). Maestro may connect on either depending
+    # on whether it's using its driver port or the XCTest default.
+    log "Starting SSH tunnel: localhost:{7001,22087} → bridge:22087"
+    ssh $SSH_OPTS -N \
+      -L 7001:localhost:22087 \
+      -L 22087:localhost:22087 \
+      "$SSH_USER@$SSH_HOST" &
     TUNNEL_PID=$!
     sleep 1
     if kill -0 $TUNNEL_PID 2>/dev/null; then
@@ -165,6 +170,16 @@ case "$SMITHR_SUBSTRATE" in
       log "ERROR: SSH tunnel failed to start"
       exit 1
     fi
+
+    # Verify XCTest HTTP server is reachable through the tunnel
+    log "Verifying tunnel connectivity..."
+    for port in 7001 22087; do
+      if bash -c "exec 3<>/dev/tcp/localhost/$port && exec 3>&-" 2>/dev/null; then
+        log "  localhost:$port → XCTest OK"
+      else
+        log "  localhost:$port → NOT reachable"
+      fi
+    done
 
     # Create fake xcrun for Maestro device discovery.
     # Maestro uses xcrun simctl/devicectl (macOS-only) to find iOS devices.
