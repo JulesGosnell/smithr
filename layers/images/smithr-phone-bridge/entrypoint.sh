@@ -41,6 +41,15 @@ fi
 chmod 700 /root/.ssh 2>/dev/null || true
 chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 
+# Export env vars for SSH sessions (sshd doesn't inherit Docker ENV vars)
+cat > /etc/profile.d/smithr.sh <<ENVEOF
+export SERIAL="${SERIAL:-}"
+export PLATFORM="${PLATFORM:-android}"
+export BRIDGE_PORT="${BRIDGE_PORT:-}"
+export BRIDGE_HOST="${BRIDGE_HOST:-10.21.0.1}"
+ENVEOF
+cp /etc/profile.d/smithr.sh /root/.bashrc
+
 # Start sshd (for near-side access — tools run here, not on the client)
 /usr/sbin/sshd 2>/dev/null && log "sshd started" || log "sshd not available, skipping"
 

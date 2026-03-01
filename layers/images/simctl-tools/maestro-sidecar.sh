@@ -158,6 +158,17 @@ FAKE_XCRUN
     chmod +x /usr/local/bin/xcrun
     log "Fake xcrun installed (UDID: $DEVICE_UDID)"
 
+    # Pre-populate fake driver build artifacts so Maestro's
+    # validateAndUpdateDriver() skips xcodebuild (which doesn't exist on Linux).
+    # It checks: version.properties (must match CLI version) + *.xctestrun file.
+    MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
+    MAESTRO_VER=$("$MAESTRO_HOME/bin/maestro" --version 2>/dev/null || echo "2.2.0")
+    DRIVER_BUILD_DIR="/root/.maestro/maestro-iphoneos-driver-build"
+    mkdir -p "$DRIVER_BUILD_DIR/driver-iphoneos/Build/Products"
+    echo "version=$MAESTRO_VER" > "$DRIVER_BUILD_DIR/version.properties"
+    touch "$DRIVER_BUILD_DIR/driver-iphoneos/Build/Products/maestro-driver.xctestrun"
+    log "Fake driver build artifacts created (version=$MAESTRO_VER)"
+
     # Verify Maestro distribution is available locally
     MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
     if [ -x "$MAESTRO_HOME/bin/maestro" ]; then
