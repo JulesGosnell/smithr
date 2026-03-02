@@ -7,35 +7,37 @@
 # Expects: remote(), log(), BUNDLE_ID, REMOTE_APP_DIR, APP_BASENAME, API_URL
 
 do_install() {
-  remote "pymobiledevice3 apps install $REMOTE_APP_DIR/$APP_BASENAME"
+  RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+  RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+  RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+  remote "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL $REMOTE_APP_DIR/$APP_BASENAME"
 }
 
 do_inject_config() {
   if [ -n "$API_URL" ]; then
     log "Injecting api-config.json: $API_URL"
     remote "echo '{\"apiUrl\": \"$API_URL\"}' > /tmp/api-config.json"
-    # Push config into app's Documents directory via app-specific AFC
-    remote "pymobiledevice3 apps push $BUNDLE_ID /tmp/api-config.json Documents/api-config.json" \
+    RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+    RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+    RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+    remote "pymobiledevice3 apps push --rsd $RSD_IPV6 $RSD_PORT_VAL $BUNDLE_ID /tmp/api-config.json Documents/api-config.json" \
       && log "Config injected." \
       || log "WARNING: Config injection failed (app may use default URL)"
   fi
 }
 
 do_launch() {
-  # Explicit launch via DVT protocol — Maestro's launchApp may not work
-  # reliably through the external XCTest runner on physical devices.
+  # Don't launch the app here — let Maestro handle it.
+  # Launching triggers the iOS "Local Network" permission dialog which
+  # can only be dismissed by tapping the UI (Maestro's login flow does this).
+  log "Skipping launch (Maestro will launch and dismiss network dialog)"
+}
+
+do_uninstall() {
   RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
   if [ -n "$RSD_ADDR" ]; then
     RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
     RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
-    log "Launching $BUNDLE_ID via DVT (RSD: [$RSD_IPV6]:$RSD_PORT_VAL)..."
-    remote "pymobiledevice3 developer dvt launch --rsd $RSD_IPV6 $RSD_PORT_VAL $BUNDLE_ID" \
-      || log "WARNING: DVT launch failed (Maestro will retry via XCTest)"
-  else
-    log "WARNING: RSD tunnel not available, skipping explicit launch"
+    remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT_VAL $BUNDLE_ID" 2>/dev/null || true
   fi
-}
-
-do_uninstall() {
-  remote "pymobiledevice3 apps uninstall $BUNDLE_ID" 2>/dev/null || true
 }
