@@ -32,6 +32,8 @@ BUNDLE_ID="${BUNDLE_ID:-com.artha.healthcare}"
 APP_FILE="${APP_FILE:-/app/Artha.app}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/tmp/e2e-apps}"
 API_URL="${API_URL:-}"
+SERVER_SERVICE="${SERVER_SERVICE:-}"
+SERVER_PORT="${SERVER_PORT:-3000}"
 
 # Default SSH_USER based on substrate (simulated → macOS VM user, physical → bridge root)
 if [ -z "$SSH_USER" ]; then
@@ -68,8 +70,13 @@ case "$SMITHR_SUBSTRATE" in
 esac
 
 # Teardown handler
+SERVER_BRIDGE_PID=""
 teardown() {
     log "Teardown starting..."
+    if [ -n "$SERVER_BRIDGE_PID" ]; then
+        kill "$SERVER_BRIDGE_PID" 2>/dev/null || true
+        log "Server bridge stopped."
+    fi
     do_uninstall
     remote "rm -rf $REMOTE_APP_DIR" 2>/dev/null || true
     log "Teardown complete."
@@ -101,6 +108,22 @@ log "Installed."
 
 # Inject config
 do_inject_config
+
+# Server bridge (simulated only — physical uses host LAN via WiFi)
+if [ "$SMITHR_SUBSTRATE" != "physical" ] && [ -n "$SERVER_SERVICE" ]; then
+    log "Setting up server bridge: VM:$SERVER_PORT → $SERVER_SERVICE:$SERVER_PORT"
+    ssh $SSH_OPTS \
+        -R "$SERVER_PORT:$SERVER_SERVICE:$SERVER_PORT" \
+        "$SSH_USER@$SSH_HOST" -N &
+    SERVER_BRIDGE_PID=$!
+    sleep 2
+    if kill -0 "$SERVER_BRIDGE_PID" 2>/dev/null; then
+        log "Server bridge ready (PID: $SERVER_BRIDGE_PID)."
+    else
+        log "FATAL: Server bridge SSH process died"
+        exit 1
+    fi
+fi
 
 # Launch
 do_launch

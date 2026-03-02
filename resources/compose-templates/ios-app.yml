@@ -38,6 +38,8 @@ services:
       BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
       APP_FILE: /app/${APP_BASENAME:?APP_BASENAME must be set}
       API_URL: ${API_URL:-}
+      SERVER_SERVICE: ${SERVER_SERVICE:-}
+      SERVER_PORT: ${SERVER_PORT:-3000}
     volumes:
       - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
