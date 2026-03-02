@@ -120,7 +120,11 @@ case "$SMITHR_SUBSTRATE" in
     fi
 
     # The sidecar owns XCTest + iproxy lifecycle on the bridge.
-    # Teardown kills them; startup always starts fresh.
+    # Kill any stale processes from previous runs before starting fresh.
+    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+    sleep 1
+
     log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
     remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
     sleep 2
@@ -145,7 +149,7 @@ except:
 HEALTHPY"
     log "Waiting for XCTest HTTP server on bridge:22087..."
     XCTEST_READY=false
-    for i in $(seq 1 15); do
+    for i in $(seq 1 22); do
       if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
         log "XCTest HTTP server responding on bridge:22087"
         XCTEST_READY=true
@@ -154,8 +158,9 @@ HEALTHPY"
       sleep 2
     done
     if [ "$XCTEST_READY" != "true" ]; then
-      log "FATAL: XCTest HTTP server not responding after 30s"
+      log "FATAL: XCTest HTTP server not responding after 45s"
       remote "cat /tmp/xctest.log" 2>/dev/null | tail -20 || true
+      EXIT_CODE=1
       exit 1
     fi
 
@@ -223,6 +228,7 @@ esac
 # Uninstall the runner app to guarantee the overlay is removed from the device.
 # The host app (care.artha.maestro-driver) stays installed to preserve developer
 # certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
+EXIT_CODE=0
 teardown() {
   log "Teardown starting..."
   # Logout (best effort — app may already be gone if app sidecar tore down first)
@@ -247,9 +253,9 @@ teardown() {
   kill $(jobs -p) 2>/dev/null
   wait 2>/dev/null
   log "Teardown complete."
-  exit 0
+  exit $EXIT_CODE
 }
-trap teardown TERM INT
+trap teardown TERM INT EXIT
 
 # Login (if flow provided)
 if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
@@ -257,6 +263,7 @@ if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
   if ! /run-test.sh "$LOGIN_FLOW" \
     -e EMAIL="$EMAIL" -e PASSWORD="$PASSWORD" -e APP_ID="$BUNDLE_ID"; then
     log "FATAL: Login flow failed"
+    EXIT_CODE=1
     exit 1
   fi
   log "Login complete."
