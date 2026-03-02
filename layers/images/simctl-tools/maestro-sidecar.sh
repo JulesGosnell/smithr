@@ -223,8 +223,22 @@ esac
 teardown() {
   log "Teardown starting..."
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
+    # Kill XCTest runner process on the device itself (clears overlay).
+    # Must happen BEFORE killing pymobiledevice3 (which holds the DVT channel).
+    RUNNER_PID=$(remote "cat /tmp/rsd-ready >/dev/null 2>&1 && \
+      RSD_IPV6=\$(awk '{print \$1}' /tmp/rsd-ready) && \
+      RSD_PORT=\$(awk '{print \$2}' /tmp/rsd-ready) && \
+      pymobiledevice3 developer dvt process-id-for-bundle-id \
+        --rsd \$RSD_IPV6 \$RSD_PORT care.artha.maestro-driver-tests 2>/dev/null" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$RUNNER_PID" ] && [ "$RUNNER_PID" -gt 0 ] 2>/dev/null; then
+      remote "RSD_IPV6=\$(awk '{print \$1}' /tmp/rsd-ready) && \
+        RSD_PORT=\$(awk '{print \$2}' /tmp/rsd-ready) && \
+        pymobiledevice3 developer dvt kill --rsd \$RSD_IPV6 \$RSD_PORT $RUNNER_PID" 2>/dev/null || true
+      log "XCTest runner killed on device (PID $RUNNER_PID)"
+    fi
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
-    log "XCTest runner stopped on bridge"
+    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+    log "XCTest + iproxy stopped on bridge"
   fi
   kill $(jobs -p) 2>/dev/null
   wait 2>/dev/null
