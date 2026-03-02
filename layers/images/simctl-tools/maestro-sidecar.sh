@@ -163,13 +163,16 @@ case "$SMITHR_SUBSTRATE" in
       log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
 
+    # Start iproxy BEFORE XCTest runner. iproxy listens passively on bridge:22087
+    # and only establishes USB forwarding when a client connects. Starting it first
+    # avoids USB contention with pymobiledevice3's DVT connection during XCTest startup.
+    log "Starting iproxy (device:22087 → bridge:22087)..."
+    remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/tmp/iproxy.log 2>&1 &"
+    sleep 1
+
     log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
     remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
     sleep 2
-
-    log "Starting iproxy (device:22087 → bridge:22087)..."
-    remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/dev/null 2>&1 &"
-    sleep 1
 
     # Maestro connects directly to port 22087 (via MAESTRO_OPTS in run-test.sh).
     # No socat needed — iproxy forwards device:22087 → bridge:22087 directly.
@@ -181,14 +184,16 @@ case "$SMITHR_SUBSTRATE" in
 import urllib.request, sys
 try:
     r = urllib.request.urlopen('http://127.0.0.1:22087/status', timeout=3)
+    print(f'HTTP {r.status}', file=sys.stderr)
     sys.exit(0 if r.status == 200 else 1)
-except:
+except Exception as e:
+    print(f'ERR: {e}', file=sys.stderr)
     sys.exit(1)
 HEALTHPY"
     log "Waiting for XCTest HTTP server on bridge:22087..."
     XCTEST_READY=false
     for i in $(seq 1 15); do
-      if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
+      if remote "python3 /tmp/xctest-health.py" >/dev/null 2>&1; then
         log "XCTest HTTP server responding on bridge:22087"
         XCTEST_READY=true
         break
@@ -197,7 +202,6 @@ HEALTHPY"
     done
     if [ "$XCTEST_READY" != "true" ]; then
       log "FATAL: XCTest HTTP server not responding after 30s"
-      remote "cat /tmp/xctest.log" 2>/dev/null | tail -20 || true
       EXIT_CODE=1
       exit 1
     fi
