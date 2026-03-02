@@ -240,10 +240,7 @@ touch /tmp/maestro-ready
 log "Sidecar ready."
 log "Run tests via: docker exec <container> /run-test.sh <flow-file>"
 
-# Stay alive — if we have a tunnel PID, wait on it; otherwise sleep
-if [ -n "${TUNNEL_PID:-}" ]; then
-  # Tunnel dying = container exits (forces restart/investigation)
-  wait $TUNNEL_PID
-else
-  exec sleep infinity
-fi
+# Stay alive — background sleep + wait so the trap handler runs on SIGTERM.
+# (exec sleep would replace bash and lose the trap.)
+sleep infinity &
+wait $!
