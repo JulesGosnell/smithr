@@ -169,10 +169,16 @@
 
 (defn- inspect-via-cli
   "Fallback: inspect a container via Docker CLI and build a resource map.
-   Used when docker-java inspect fails (e.g. unrecognized CAP_ enum values)."
+   Used when docker-java inspect fails (e.g. unrecognized CAP_ enum values).
+   For remote hosts (host-address non-nil), runs docker inspect via SSH."
   [container-id host-label network-name host-address]
   (try
-    (let [{:keys [exit out]} (shell/sh "docker" "inspect" container-id)]
+    (let [{:keys [exit out]} (if host-address
+                               (shell/sh "ssh" "-o" "StrictHostKeyChecking=no"
+                                         "-o" "LogLevel=ERROR"
+                                         (str "jules@" host-address)
+                                         "docker" "inspect" container-id)
+                               (shell/sh "docker" "inspect" container-id))]
       (when (zero? exit)
         (let [data (first (json/read-str out))
               labels (get-in data ["Config" "Labels"])
