@@ -58,6 +58,41 @@ for i in $(seq 1 60); do
 done
 log "SSH connected."
 
+# Teardown handler — clean up XCTest runner on bridge.
+# Uninstall the runner app to guarantee the overlay is removed from the device.
+# The host app (care.artha.maestro-driver) stays installed to preserve developer
+# certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
+# MUST be set before the case block — early exits (health check failure, install
+# timeout) need teardown to run so the phone isn't left in a dirty state.
+EXIT_CODE=0
+teardown() {
+  log "Teardown starting..."
+  # Logout (best effort — app may already be gone if app sidecar tore down first)
+  if [ -n "$LOGOUT_FLOW" ] && [ -f "$LOGOUT_FLOW" ]; then
+    log "Running logout flow: $LOGOUT_FLOW"
+    /run-test.sh "$LOGOUT_FLOW" -e APP_ID="$BUNDLE_ID" 2>&1 || true
+    log "Logout complete."
+  fi
+  if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
+    # Uninstall runner app from device (kills process + clears overlay).
+    RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+    if [ -n "$RSD_ADDR" ]; then
+      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+      RSD_PORT=$(echo "$RSD_ADDR" | awk '{print $2}')
+      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT care.artha.maestro-driver-tests" 2>/dev/null || true
+      log "Runner app uninstalled from device"
+    fi
+    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+    log "XCTest + iproxy stopped on bridge"
+  fi
+  kill $(jobs -p) 2>/dev/null
+  wait 2>/dev/null
+  log "Teardown complete."
+  exit $EXIT_CODE
+}
+trap teardown TERM INT EXIT
+
 case "$SMITHR_SUBSTRATE" in
   physical)
     # Physical: set up XCTest runner + Maestro on the bridge container.
@@ -149,7 +184,7 @@ except:
 HEALTHPY"
     log "Waiting for XCTest HTTP server on bridge:22087..."
     XCTEST_READY=false
-    for i in $(seq 1 22); do
+    for i in $(seq 1 45); do
       if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
         log "XCTest HTTP server responding on bridge:22087"
         XCTEST_READY=true
@@ -158,7 +193,7 @@ HEALTHPY"
       sleep 2
     done
     if [ "$XCTEST_READY" != "true" ]; then
-      log "FATAL: XCTest HTTP server not responding after 45s"
+      log "FATAL: XCTest HTTP server not responding after 90s"
       remote "cat /tmp/xctest.log" 2>/dev/null | tail -20 || true
       EXIT_CODE=1
       exit 1
@@ -223,39 +258,6 @@ chmod +x /usr/local/bin/xcrun"
     fi
     ;;
 esac
-
-# Teardown handler — clean up XCTest runner on bridge.
-# Uninstall the runner app to guarantee the overlay is removed from the device.
-# The host app (care.artha.maestro-driver) stays installed to preserve developer
-# certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
-EXIT_CODE=0
-teardown() {
-  log "Teardown starting..."
-  # Logout (best effort — app may already be gone if app sidecar tore down first)
-  if [ -n "$LOGOUT_FLOW" ] && [ -f "$LOGOUT_FLOW" ]; then
-    log "Running logout flow: $LOGOUT_FLOW"
-    /run-test.sh "$LOGOUT_FLOW" -e APP_ID="$BUNDLE_ID" 2>&1 || true
-    log "Logout complete."
-  fi
-  if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
-    # Uninstall runner app from device (kills process + clears overlay).
-    RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
-    if [ -n "$RSD_ADDR" ]; then
-      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
-      RSD_PORT=$(echo "$RSD_ADDR" | awk '{print $2}')
-      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT care.artha.maestro-driver-tests" 2>/dev/null || true
-      log "Runner app uninstalled from device"
-    fi
-    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
-    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
-    log "XCTest + iproxy stopped on bridge"
-  fi
-  kill $(jobs -p) 2>/dev/null
-  wait 2>/dev/null
-  log "Teardown complete."
-  exit $EXIT_CODE
-}
-trap teardown TERM INT EXIT
 
 # Login (if flow provided)
 if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
