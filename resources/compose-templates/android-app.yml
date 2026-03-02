@@ -1,14 +1,12 @@
 #
 # Android app lifecycle sidecar
 #
-# Manages the full app lifecycle on an Android device:
-#   up:   install APK → inject config → server bridge → run login flow → HEALTHY
-#   down: run logout flow → force-stop → uninstall
+# Manages app install/uninstall on an Android device:
+#   up:   install APK → inject config → server bridge → HEALTHY
+#   down: force-stop → uninstall
 #
-# Login and logout flows are injectable — mounted from the host via FLOWS_DIR,
-# selected via LOGIN_FLOW / LOGOUT_FLOW env vars. This keeps auth logic in
-# app-space (the flows), not in the container. Test body flows can be run
-# separately via docker exec on the maestro sidecar.
+# Login/logout lifecycle is handled by the maestro sidecar, not this container.
+# This keeps concerns separated: app sidecar owns the binary, maestro owns the session.
 #
 # Compose with android-phone, server, and maestro templates:
 #
@@ -27,11 +25,6 @@
 #   API_URL         — override api-config.json for test server (optional)
 #   SERVER_SERVICE  — compose service name for server bridge (optional)
 #   SERVER_PORT     — server port to bridge into device (default: 3000)
-#   LOGIN_FLOW      — Maestro flow for login (default: /flows/login.yaml)
-#   LOGOUT_FLOW     — Maestro flow for logout (default: /flows/logout.yaml)
-#   EMAIL           — login email (required)
-#   PASSWORD        — login password (default: Demo123!)
-#   FLOWS_DIR       — host path to Maestro flow files (required, mounted at /flows)
 #
 services:
   app:
@@ -49,17 +42,8 @@ services:
         ADB="adb -s $$ADB_TARGET"
 
         # ── Teardown (SIGTERM/INT) ──────────────────────────────
-        APP_INSTALLED=false
         teardown() {
             log "Teardown starting..."
-            if [ "$$APP_INSTALLED" = "true" ]; then
-                if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
-                    log "Running logout flow: $$LOGOUT_FLOW"
-                    maestro --device "$$ADB_TARGET" test -e APP_ID="$$BUNDLE_ID" "$$LOGOUT_FLOW" 2>&1 || true
-                    log "Logout complete."
-                fi
-            fi
-            # Always clean up the app — handles stale installs from prior runs
             log "Force-stopping $$BUNDLE_ID..."
             $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
             log "Uninstalling $$BUNDLE_ID..."
@@ -134,7 +118,6 @@ services:
             log "FATAL: APK install failed after 3 attempts"
             exit 1
         fi
-        APP_INSTALLED=true
         log "APK installed."
 
         # ── Inject api-config.json ─────────────────────────────
@@ -146,22 +129,9 @@ services:
             log "Config injected."
         fi
 
-        # ── Login ──────────────────────────────────────────────
-        if [ -n "$$LOGIN_FLOW" ] && [ -f "$$LOGIN_FLOW" ]; then
-            log "Running login flow: $$LOGIN_FLOW"
-            if ! maestro --device "$$ADB_TARGET" test \
-              -e APP_ID="$$BUNDLE_ID" \
-              -e EMAIL="$$EMAIL" -e PASSWORD="$$PASSWORD" \
-              "$$LOGIN_FLOW"; then
-                log "FATAL: Login flow failed"
-                exit 1
-            fi
-            log "Login complete."
-        fi
-
         # ── Ready ──────────────────────────────────────────────
         touch /tmp/app-installed
-        log "Ready. App installed and logged in."
+        log "Ready. App installed."
 
         # Stay alive — sleep in background so trap fires promptly
         while true; do sleep 60 & wait $$!; done
@@ -172,24 +142,15 @@ services:
       API_URL: ${API_URL:-}
       SERVER_SERVICE: ${SERVER_SERVICE:-}
       SERVER_PORT: ${SERVER_PORT:-3000}
-      LOGIN_FLOW: ${LOGIN_FLOW:-/flows/login.yaml}
-      LOGOUT_FLOW: ${LOGOUT_FLOW:-/flows/logout.yaml}
-      EMAIL: ${EMAIL:?EMAIL must be set}
-      PASSWORD: ${PASSWORD:-Demo123!}
-      MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7101}"
-      MAESTRO_CLI_NO_ANALYTICS: "true"
-      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true"
-      JAVA_TOOL_OPTIONS: ""
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]
       interval: 5s
       timeout: 3s
       retries: 60
       start_period: 120s
-    stop_grace_period: 60s
+    stop_grace_period: 30s
     volumes:
       - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
-      - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
       - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
     networks:

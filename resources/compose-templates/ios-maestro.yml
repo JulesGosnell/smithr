@@ -35,8 +35,8 @@ services:
     depends_on:
       ios-phone:
         condition: service_healthy
-      # When using ios-app.yml overlay, add app dependency via:
-      #   services: { maestro: { depends_on: { app: { condition: service_healthy } } } }
+      app:
+        condition: service_healthy
     environment:
       SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-simulated}
       SSH_TARGET: ios-phone:22
@@ -44,12 +44,18 @@ services:
       SSH_KEY: /root/.ssh/id_macos
       MAESTRO_EXTRA: ${MAESTRO_EXTRA:-}
       MAESTRO_HOME: /opt/maestro
+      LOGIN_FLOW: ${LOGIN_FLOW:-}
+      LOGOUT_FLOW: ${LOGOUT_FLOW:-}
+      BUNDLE_ID: ${BUNDLE_ID:-}
+      EMAIL: ${EMAIL:-}
+      PASSWORD: ${PASSWORD:-}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/maestro-ready"]
       interval: 5s
       timeout: 3s
-      retries: 30
-      start_period: 30s
+      retries: 60
+      start_period: 120s
+    stop_grace_period: 60s
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
       - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z

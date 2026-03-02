@@ -17,6 +17,11 @@ log() { echo "[ios-maestro] [$(( $(date +%s) - T0 ))s] $*"; }
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
 SSH_KEY="${SSH_KEY:-}"
+LOGIN_FLOW="${LOGIN_FLOW:-}"
+LOGOUT_FLOW="${LOGOUT_FLOW:-}"
+BUNDLE_ID="${BUNDLE_ID:-}"
+EMAIL="${EMAIL:-}"
+PASSWORD="${PASSWORD:-}"
 
 # Default SSH_USER based on substrate
 if [ -z "$SSH_USER" ]; then
@@ -216,6 +221,12 @@ esac
 # certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
 teardown() {
   log "Teardown starting..."
+  # Logout (best effort — app may already be gone if app sidecar tore down first)
+  if [ -n "$LOGOUT_FLOW" ] && [ -f "$LOGOUT_FLOW" ]; then
+    log "Running logout flow: $LOGOUT_FLOW"
+    /run-test.sh "$LOGOUT_FLOW" -e APP_ID="$BUNDLE_ID" 2>&1 || true
+    log "Logout complete."
+  fi
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
     # Uninstall runner app from device (kills process + clears overlay).
     RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
@@ -236,9 +247,20 @@ teardown() {
 }
 trap teardown TERM INT
 
+# Login (if flow provided)
+if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
+  log "Running login flow: $LOGIN_FLOW"
+  if ! /run-test.sh "$LOGIN_FLOW" \
+    -e EMAIL="$EMAIL" -e PASSWORD="$PASSWORD" -e APP_ID="$BUNDLE_ID"; then
+    log "FATAL: Login flow failed"
+    exit 1
+  fi
+  log "Login complete."
+fi
+
 # Signal healthy
 touch /tmp/maestro-ready
-log "Sidecar ready."
+log "Sidecar ready. App logged in."
 log "Run tests via: docker exec <container> /run-test.sh <flow-file>"
 
 # Stay alive — background sleep + wait so the trap handler runs on SIGTERM.
