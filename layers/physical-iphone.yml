@@ -22,7 +22,7 @@ services:
       TCP:host.docker.internal:${SMITHR_IPHONE_PROXY_PORT:-27753}
     extra_hosts:
       - "host.docker.internal:10.21.0.1"
-    restart: unless-stopped
+    restart: "no"
     networks:
       smithr-network:
         ipv4_address: "${SMITHR_IPHONE_IP:-10.21.0.52}"
@@ -43,4 +43,4 @@ services:
 networks:
   smithr-network:
     external: true
-    name: smithr-network
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

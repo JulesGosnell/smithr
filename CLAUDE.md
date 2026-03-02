@@ -47,6 +47,15 @@ curl -s http://localhost:7070/api/compose/macos-build | \
 | `ios-phone` | iOS Simulator | `localhost:7001` (Maestro) | E2E tests |
 | `macos-build` | macOS + Xcode VM | `localhost:22` (SSH) | iOS/macOS builds |
 | `android-build` | Fedora + Android SDK | `localhost:22` (SSH) | Android builds, E2E |
+| `phone` | Android or iOS phone | `localhost:22` (SSH) | Unified near-side phone proxy |
+| `server` | Adopted server | `localhost:3000` | E2E tests against an API server |
+| `adopt-proxy` | External container | configurable | Adopt + tunnel any container |
+| `android-app` | Android app sidecar | — | App install/config lifecycle |
+| `ios-app` | iOS app sidecar | — | App install/config lifecycle |
+| `maestro` | Maestro test runner | — | Android E2E test orchestration |
+| `ios-maestro` | iOS Maestro sidecar | — | iOS E2E test orchestration |
+| `unified-app` | Near-side app sidecar | — | Platform-aware app lifecycle |
+| `unified-maestro` | Near-side Maestro | — | Platform-aware test orchestration |
 
 ### Environment variables
 
@@ -147,14 +156,28 @@ Listens on port **7070**. Dashboard at `http://localhost:7070/`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/resources` | List resources (filter: type, platform, status, host) |
-| POST | `/api/leases` | Acquire a lease |
-| DELETE | `/api/leases/{id}` | Unlease |
+| GET | `/api/resources/{id}` | Get a single resource |
 | GET | `/api/leases` | List active leases |
-| GET | `/api/compose/:template` | Compose YAML for proxy sidecar |
-| POST | `/api/adopt` | Register an external container for tunneling |
+| POST | `/api/leases` | Acquire a lease |
+| GET | `/api/leases/{id}` | Get a single lease |
+| DELETE | `/api/leases/{id}` | Unlease |
+| GET | `/api/hosts` | List connected Docker hosts |
 | GET | `/api/workspaces` | List persistent workspaces |
+| GET | `/api/workspaces/{name}` | Get a workspace by name |
 | DELETE | `/api/workspaces/{name}` | Purge a workspace |
+| POST | `/api/adopt` | Register an external container for tunneling |
+| GET | `/api/adopts` | List active adopted containers |
+| DELETE | `/api/adopts/{id}` | Unadopt a container |
 | GET | `/api/health` | Health check |
+| GET | `/api/metrics` | Resource and lease metrics |
+| GET | `/api/events` | Recent Docker and lease events |
+| GET | `/api/catalogue` | Provisionable resource types and active resources |
+| POST | `/api/provision` | Auto-provision a resource from a template |
+| GET | `/api/scan/devices` | Scan for connected USB devices |
+| GET | `/api/compose/{template}` | Compose YAML for proxy sidecar |
+| GET | `/api/templates` | List published compose templates |
+| POST | `/api/templates` | Publish a compose template |
+| DELETE | `/api/templates/{name}` | Delete a published template |
 
 Full spec: [resources/openapi.yaml](resources/openapi.yaml)
 
@@ -194,6 +217,27 @@ bjarkan, madhr, logr, yr
 - Smithr API: port 7070
 - OCI registry: port 5000
 - Gateway: `10.21.0.1` (host accessible from containers)
+
+### IP Allocation
+
+| IP | Service | Layer |
+|----|---------|-------|
+| `10.21.0.1` | Gateway (host) | network.yml |
+| `10.21.0.5` | OCI Registry | registry.yml |
+| `10.21.0.10` | PostgreSQL | database.yml |
+| `10.21.0.11` | Redis | database.yml |
+| `10.21.0.12` | TLS Proxy (Caddy) | tls-proxy.yml |
+| `10.21.0.20` | Smithr API | server.yml |
+| `10.21.0.30` | Android Emulator | android.yml |
+| `10.21.0.40` | macOS / Xcode VM | xcode.yml |
+| `10.21.0.50` | Android Build* | android-build.yml |
+| `10.21.0.50` | Mock Email* | email.yml |
+| `10.21.0.50` | Physical Phone* | physical-phone.yml |
+| `10.21.0.51` | Mock SMS | sms.yml |
+| `10.21.0.52` | Physical iPhone | physical-iphone.yml |
+| `10.21.0.100` | DNS (dnsmasq) | dns.yml |
+
+*These layers share `10.21.0.50` and are mutually exclusive (never composed together).
 
 ## Config
 

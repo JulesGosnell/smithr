@@ -287,7 +287,7 @@ An iOS Simulator running inside a macOS VM (QEMU/KVM) inside Docker.
 The macOS VM comes as a pre-built QCOW2 disk image containing:
 - macOS Sonoma with auto-login (`smithr` user)
 - Xcode 16 + iOS 18.3 Simulator Runtime
-- Maestro 2.0.10 (for E2E tests)
+- Maestro 2.2.0 (for E2E tests)
 - SSH with key-based auth
 - Warmed simulator devices
 

@@ -337,6 +337,128 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
 
+  /api/metrics:
+    get:
+      operationId: listMetrics
+      summary: Resource and lease metrics
+      description: |
+        Returns aggregated metrics about resources, leases, and tunnels
+        for monitoring and dashboards.
+      responses:
+        "200":
+          description: Metrics data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/events:
+    get:
+      operationId: listEvents
+      summary: Recent Docker and lease events
+      description: |
+        Returns recent events (container start/stop, lease acquire/unlease,
+        adopt/unadopt) for debugging and audit.
+      responses:
+        "200":
+          description: List of recent events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/provision:
+    post:
+      operationId: provisionResource
+      summary: Auto-provision a resource from a compose template
+      description: |
+        Provisions a new resource by launching a container from one of the
+        catalogue templates. The resource becomes available for leasing
+        once it starts and Smithr detects it via Docker events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Resource provisioning started
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          description: Invalid provisioning request
+
+  /api/compose/{template}:
+    get:
+      operationId: serveComposeTemplate
+      summary: Serve a compose template for proxy sidecar
+      description: |
+        Returns a Docker Compose YAML file for the given template name.
+        Registry and Smithr URL placeholders are substituted automatically.
+      parameters:
+        - name: template
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Template name (e.g., android-phone, ios-phone, macos-build)
+      responses:
+        "200":
+          description: Compose YAML
+          content:
+            text/yaml:
+              schema:
+                type: string
+        "404":
+          description: Template not found
+
+  /api/templates:
+    get:
+      operationId: listPublishedTemplates
+      summary: List published compose templates
+      responses:
+        "200":
+          description: List of published templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: publishTemplate
+      summary: Publish a compose template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Template published
+
+  /api/templates/{name}:
+    delete:
+      operationId: deletePublishedTemplate
+      summary: Delete a published template
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Template deleted
+        "404":
+          description: Template not found
+
   /openapi.yaml:
     get:
       operationId: getSpec

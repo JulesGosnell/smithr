@@ -6,7 +6,7 @@
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
-            [smithr.config :as config]))
+            [smithr.ssh :as ssh]))
 
 (defn build-username
   "Generate a Linux username for a build lease.
@@ -14,39 +14,13 @@
   [lease-id]
   (str "build-" (subs lease-id 0 (min 8 (count lease-id)))))
 
-(defonce ^:private cached-ssh-key-path
-  (delay
-    (let [configured (get-in (config/load-config) [:tunnel :key-path])
-          candidates (remove nil?
-                       [configured
-                        "layers/scripts/ios/ssh/macos-ssh-key"
-                        "../layers/scripts/ios/ssh/macos-ssh-key"
-                        "/ssh-key/macos-ssh-key"
-                        "/srv/shared/images/ssh/macos-ssh-key"])
-          found (first (filter #(.exists (java.io.File. %)) candidates))]
-      (if found
-        (let [abs (.getCanonicalPath (java.io.File. found))]
-          ;; SSH requires private keys to be 0600
-          (try (let [f (java.io.File. abs)]
-                 (.setReadable f false false)    ;; remove read for all
-                 (.setReadable f true true)      ;; add read for owner only
-                 (.setWritable f false false)    ;; remove write for all
-                 (.setWritable f true true)      ;; add write for owner only
-                 (.setExecutable f false false)) ;; remove execute for all
-               (catch Exception _ nil))
-          (log/info "Linux SSH key resolved:" abs)
-          abs)
-        (do
-          (log/warn "No SSH key found for Linux, tried:" (pr-str candidates))
-          (first candidates))))))
-
-(defn- ssh-key-path [] @cached-ssh-key-path)
+(defn- ssh-key-path [] (ssh/ssh-key-path))
 
 (defn tunnel-ssh-key
   "Return the SSH key path for tunnel connections to Linux containers.
    Used by lease.clj when SSH-ing directly to a build container."
   []
-  (ssh-key-path))
+  (ssh/ssh-key-path))
 
 (defn ssh-exec-raw!
   "Execute a command on a Linux container via SSH.
@@ -127,12 +101,30 @@
             nil))))))
 
 (defn delete-user!
-  "Delete a Linux user account and home directory."
+  "Delete a Linux user account and home directory.
+   Times out after 30 seconds to prevent hanging on unresponsive containers."
   [resource username]
   (log/info "Deleting Linux user" username "on" (:id resource))
-  (let [result (ssh-exec-raw! resource
-                 (str "sudo pkill -u " username " 2>/dev/null; sleep 1; sudo userdel -r " username " 2>/dev/null; echo done"))]
-    (when (not= 0 (:exit result))
-      (log/warn "Failed to fully clean up user" username
-                "on" (:id resource) ":" (:err result)))
-    (= 0 (:exit result))))
+  (let [{:keys [ssh-host ssh-port]} (:connection resource)
+        key-path (ssh-key-path)
+        cmd ["ssh" "-i" key-path
+             "-o" "StrictHostKeyChecking=no"
+             "-o" "ConnectTimeout=10"
+             "-p" (str (or ssh-port 22))
+             (str "smithr@" ssh-host)
+             (str "sudo pkill -u " username " 2>/dev/null; sleep 1; sudo userdel -r " username " 2>/dev/null; echo done")]
+        proc (-> (ProcessBuilder. ^java.util.List cmd)
+                 (.redirectErrorStream true)
+                 (.start))
+        finished? (.waitFor proc 30 java.util.concurrent.TimeUnit/SECONDS)]
+    (if finished?
+      (let [exit (.exitValue proc)]
+        (when (not= 0 exit)
+          (log/warn "Failed to fully clean up user" username
+                    "on" (:id resource) "exit:" exit))
+        (= 0 exit))
+      (do
+        (log/warn "SSH user deletion timed out after 30s for" username
+                  "on" (:id resource) "- destroying process forcibly")
+        (.destroyForcibly proc)
+        false))))

@@ -25,7 +25,7 @@ Smithr uses a macOS Sonoma VM image (`smithr-sonoma.img`) for:
 - macOS Sonoma
 - Xcode 16
 - iOS 18.3 Simulator Runtime
-- Maestro 2.0.10 (E2E test automation)
+- Maestro 2.2.0 (E2E test automation)
 - SSH with key-based auth
 
 ## User Account Architecture

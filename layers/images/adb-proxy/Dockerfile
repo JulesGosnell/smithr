@@ -4,7 +4,7 @@
 # From the outside, indistinguishable from an emulated Android phone.
 #
 # Env: BRIDGE_HOST, BRIDGE_PORT, SERIAL
-FROM alpine:latest
+FROM alpine:3.21
 RUN apk add --no-cache socat android-tools bash
 COPY entrypoint.sh /entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh

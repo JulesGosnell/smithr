@@ -15,45 +15,21 @@ shift
 EXTRA_ARGS="$*"
 MAESTRO_EXTRA="${MAESTRO_EXTRA:-} $EXTRA_ARGS"
 
+SIDECAR_NAME="ios-maestro"
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
-SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
-SSH_KEY="${SSH_KEY:-}"
 REMOTE_FLOWS_DIR="${REMOTE_FLOWS_DIR:-/tmp/e2e-flows}"
 
 # Maestro home for physical substrate (volume-mounted at runtime)
 MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
 
-# Default SSH_USER based on substrate
-if [ -z "$SSH_USER" ]; then
-  case "$SMITHR_SUBSTRATE" in
-    physical) SSH_USER="root" ;;
-    *)        SSH_USER="smithr" ;;
-  esac
-fi
-
-# Extract host:port
-SSH_HOST="${SSH_TARGET%%:*}"
-SSH_PORT="${SSH_TARGET##*:}"
-
-KEY_OPT=""
-if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
-    KEY_OPT="-i $SSH_KEY"
-fi
-
-COMMON_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT"
-SSH_OPTS="$COMMON_OPTS -p $SSH_PORT"
-SCP_OPTS="$COMMON_OPTS -P $SSH_PORT"
-
-remote() {
-    ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "$@"
-}
+. /opt/scripts/ssh-common.sh
 
 case "$SMITHR_SUBSTRATE" in
   physical)
     # Physical: copy flows to bridge, run Maestro there via SSH.
     # Same pattern as simulated (Maestro on VM via SSH).
     # Maestro on the bridge connects directly to localhost:22087 (via iproxy).
-    echo "[ios-maestro] Copying flows to bridge..."
+    echo "[$SIDECAR_NAME] Copying flows to bridge..."
     remote "mkdir -p $REMOTE_FLOWS_DIR"
 
     if [ -d "$(dirname "$FLOW_FILE")" ]; then
@@ -71,7 +47,7 @@ case "$SMITHR_SUBSTRATE" in
     # connects to XCTest HTTP server on localhost:22087 (via iproxy).
     # DeviceControlIOSDevice.launch() is patched to throw UnsupportedOperationException
     # so the fallback in LocalIOSDevice sends launch commands via XCTest HTTP API.
-    echo "[ios-maestro] Running (physical on bridge): maestro test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $REMOTE_FLOW"
+    echo "[$SIDECAR_NAME] Running (physical on bridge): maestro test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $REMOTE_FLOW"
     remote "export USE_XCODE_TEST_RUNNER=1 && \
             export MAESTRO_CLI_NO_ANALYTICS=1 && \
             export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true && \
@@ -88,7 +64,7 @@ case "$SMITHR_SUBSTRATE" in
 
   *)
     # Simulated: copy flows to VM and run Maestro there via SSH
-    echo "[ios-maestro] Copying flows to VM..."
+    echo "[$SIDECAR_NAME] Copying flows to VM..."
     remote "mkdir -p $REMOTE_FLOWS_DIR"
 
     if [ -d "$(dirname "$FLOW_FILE")" ]; then
@@ -102,7 +78,7 @@ case "$SMITHR_SUBSTRATE" in
     FLOW_BASENAME=$(basename "$FLOW_FILE")
     REMOTE_FLOW="$REMOTE_FLOWS_DIR/$FLOW_BASENAME"
 
-    echo "[ios-maestro] Running (simulated): maestro test $MAESTRO_EXTRA $REMOTE_FLOW"
+    echo "[$SIDECAR_NAME] Running (simulated): maestro test $MAESTRO_EXTRA $REMOTE_FLOW"
     remote "eval \$(/usr/libexec/path_helper -s) && maestro test $MAESTRO_EXTRA $REMOTE_FLOW"
     EXIT_CODE=$?
 
@@ -110,5 +86,5 @@ case "$SMITHR_SUBSTRATE" in
     ;;
 esac
 
-echo "[ios-maestro] Maestro exited with code $EXIT_CODE"
+echo "[$SIDECAR_NAME] Maestro exited with code $EXIT_CODE"
 exit $EXIT_CODE

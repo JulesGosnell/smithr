@@ -28,7 +28,7 @@ The macOS base image is a pre-installed QCOW2/raw disk image containing:
 - macOS Sonoma
 - Xcode 16
 - iOS 18.3 Simulator Runtime
-- Maestro 2.0.10 (for E2E test automation)
+- Maestro 2.2.0 (for E2E test automation)
 - SSH configured with key-based auth
 
 **Current image location**: `/srv/shared/images/smithr-sonoma.img` (~120GB)

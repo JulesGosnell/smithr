@@ -7,7 +7,7 @@
 # connections after ~25 seconds).
 #
 # Usage: start-xctest.sh [BUNDLE_ID]
-#   BUNDLE_ID defaults to care.artha.maestro-driver-tests
+#   BUNDLE_ID defaults to XCTEST_BUNDLE_ID env var, or care.artha.maestro-driver-tests
 #
 # Requires:
 #   - RSD tunnel running (tun0 up, /tmp/rsd-ready present)
@@ -18,7 +18,9 @@
 #   iproxy -u <UDID> 22087:22087
 set -e
 
-BUNDLE_ID="${1:-care.artha.maestro-driver-tests}"
+# XCTest bundle ID — default is Artha's driver; override via XCTEST_BUNDLE_ID env var
+# or pass as first argument.
+BUNDLE_ID="${1:-${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}}"
 
 log() { echo "[xctest] $*" >&2; }
 

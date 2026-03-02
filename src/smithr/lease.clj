@@ -193,6 +193,94 @@
         (log/error "Failed to start socat bridge on port" tunnel-port ":" (.getMessage e))
         nil))))
 
+(defn- compute-tunnel-target
+  "Determine the target host:port for an SSH tunnel based on resource platform.
+   iOS sidecars route to parent macOS VM. Returns [target-host target-port]."
+  [resource]
+  (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
+        platform (:platform resource)
+        parent-conn (when (and (= platform :ios) (:parent resource))
+                      (let [parent (first (filter #(= (:container %) (:parent resource))
+                                                  (state/resources)))]
+                        (when parent
+                          (log/info "iOS tunnel: routing to parent" (:id parent)
+                                    "at" (get-in parent [:connection :ssh-host]))
+                          (:connection parent))))]
+    (case platform
+      :android [(or adb-host "localhost") (or adb-port 5555)]
+      :macos   [(or ssh-host "localhost") (or ssh-port 10022)]
+      :ios     (let [conn (or parent-conn (:connection resource))]
+                 [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
+      :android-build [(or ssh-host "localhost") (or ssh-port 22)]
+      ;; Default: container-ip + service-port (servers, adopted containers, etc.)
+      (let [conn (:connection resource)
+            ip   (or (:container-ip conn) "localhost")
+            port (or (:service-port conn) 3000)]
+        [ip port]))))
+
+(defn- compute-reverse-port-routing
+  "When reverse-ports are present, compute SSH routing that connects directly
+   to the build container so -R binds on the container's sshd.
+   Returns [final-hop final-fwd-host final-fwd-port extra-ssh-args] or nil
+   if no reverse-ports."
+  [resource reverse-ports target-host hop fwd-host fwd-port]
+  (when (seq reverse-ports)
+    (let [{:keys [ssh-port]} (:connection resource)
+          platform (:platform resource)
+          key-path (linux/tunnel-ssh-key)
+          ssh-user "smithr"
+          key-args (if key-path ["-i" key-path] [])
+          port-args (when ssh-port ["-p" (str ssh-port)])
+          ;; When SSHing into a VM container (macOS/iOS), the SSH lands
+          ;; inside the VM (QEMU forwards container:10022 → VM:22).
+          ;; The -L forward must target the VM's sshd (port 22), not
+          ;; the container's QEMU port mapping (10022).
+          internal-port (case platform
+                          :android-build 22
+                          :macos 22
+                          :ios 22
+                          fwd-port)]
+      (if (docker-network-ip? target-host)
+        ;; Local Docker container: SSH directly to it
+        [(str ssh-user "@" target-host) "localhost" internal-port
+         (vec (concat key-args port-args))]
+        ;; Remote host: SSH via ProxyJump
+        [(str ssh-user "@" target-host) "localhost" internal-port
+         (vec (concat key-args port-args ["-J" (or hop "localhost")]))]))))
+
+(defn- compute-reverse-flags
+  "Build -R flags for reverse port forwarding (build leases only).
+   Each entry has :bind (port on remote), :host (target host), :target (target port).
+   e.g. -R 5593:10.21.0.1:17003 routes container:5593 → 10.21.0.1:17003"
+  [lease-id reverse-ports]
+  (when (seq reverse-ports)
+    (mapcat (fn [{:keys [bind host target]}]
+              (let [rhost (or host "localhost")]
+                (log/info "Reverse tunnel: remote:" bind "→" (str rhost ":" target)
+                          "for lease" lease-id)
+                ["-R" (str bind ":" rhost ":" target)]))
+            reverse-ports)))
+
+(defn- build-ssh-command
+  "Build the full SSH command vector for a tunnel.
+   tunnel-port: local port to listen on.
+   final-hop, final-fwd-host, final-fwd-port: resolved routing targets.
+   extra-ssh-args: additional SSH args (e.g. -i, -p for reverse-port routing).
+   reverse-flags: -R flag pairs for reverse port forwarding."
+  [tunnel-port final-hop final-fwd-host final-fwd-port extra-ssh-args reverse-flags reverse-ports]
+  (let [exit-on-fail (if (seq reverse-ports) "no" "yes")]
+    (vec (concat ["ssh" "-N"
+                  "-o" "StrictHostKeyChecking=no"
+                  "-o" "UserKnownHostsFile=/dev/null"
+                  "-o" "BatchMode=yes"
+                  "-o" (str "ExitOnForwardFailure=" exit-on-fail)
+                  "-o" "ServerAliveInterval=30"
+                  "-o" "ServerAliveCountMax=3"]
+                 extra-ssh-args
+                 ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" final-fwd-port)]
+                 reverse-flags
+                 [final-hop]))))
+
 (defn- start-tunnel!
   "Start an SSH tunnel for a lease. Returns tunnel info map.
    Uses `ssh -N -L` for port forwarding. One SSH process per lease.
@@ -203,30 +291,8 @@
    session so the remote container can reach Smithr tunnel ports directly.
    Format: [{:bind port-on-remote, :target tunnel-port-on-localhost}]"
   [lease-id resource & {:keys [reverse-ports]}]
-  (let [{:keys [ssh-host ssh-port adb-host adb-port]} (:connection resource)
-        tunnel-port (allocate-tunnel-port!)
-        platform    (:platform resource)
-        ;; iOS sidecar doesn't run SSH — route to parent macOS VM
-        parent-conn (when (and (= platform :ios) (:parent resource))
-                      (let [parent (first (filter #(= (:container %) (:parent resource))
-                                                  (state/resources)))]
-                        (when parent
-                          (log/info "iOS tunnel: routing to parent" (:id parent)
-                                    "at" (get-in parent [:connection :ssh-host]))
-                          (:connection parent))))
-        ;; Determine the target we need to reach
-        [target-host target-port]
-        (case platform
-          :android [(or adb-host "localhost") (or adb-port 5555)]
-          :macos   [(or ssh-host "localhost") (or ssh-port 10022)]
-          :ios     (let [conn (or parent-conn (:connection resource))]
-                     [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
-          :android-build [(or ssh-host "localhost") (or ssh-port 22)]
-          ;; Default: container-ip + service-port (servers, adopted containers, etc.)
-          (let [conn (:connection resource)
-                ip   (or (:container-ip conn) "localhost")
-                port (or (:service-port conn) 3000)]
-            [ip port]))
+  (let [tunnel-port (allocate-tunnel-port!)
+        [target-host target-port] (compute-tunnel-target resource)
         ;; Resolve forwarding route: Docker IPs hop via localhost, remote hops via hostname.
         ;; Cross-host detection: if the resource lives on a remote Docker host (has a
         ;; non-nil host-address), and the target is a Docker network IP, hop through
@@ -235,70 +301,15 @@
         (let [resource-host-addr (docker/host-address (:host resource))]
           (if (and (docker-network-ip? target-host)
                    resource-host-addr)
-            ;; Cross-host: target is a Docker IP on a remote host — hop through
-            ;; the remote hostname to reach it.
             {:fwd-host target-host :fwd-port target-port :hop resource-host-addr}
             (resolve-tunnel-route target-host target-port)))
-        ;; When reverse-ports are present, SSH must connect directly to the build
-        ;; container so -R binds on the container's sshd (not on the hop host).
-        ;; For Docker IPs: SSH directly to the container, -L forwards to localhost.
-        ;; For remote hosts: SSH to the container via ProxyJump through the remote host.
-        ;; Build containers use user "smithr" and the tunnel SSH key for auth.
-        ;;
-        ;; IMPORTANT: For remote hosts, the resource's ssh-port is the HOST-mapped port
-        ;; (e.g. 2222), used in -p to reach the container. But -L must forward to the
-        ;; container's INTERNAL port (e.g. 22), since we're inside the container's sshd.
         [final-hop final-fwd-host final-fwd-port extra-ssh-args]
-        (if (seq reverse-ports)
-          (let [key-path (linux/tunnel-ssh-key)
-                ssh-user "smithr"
-                key-args (if key-path ["-i" key-path] [])
-                port-args (when ssh-port ["-p" (str ssh-port)])
-                ;; When SSHing into a VM container (macOS/iOS), the SSH lands
-                ;; inside the VM (QEMU forwards container:10022 → VM:22).
-                ;; The -L forward must target the VM's sshd (port 22), not
-                ;; the container's QEMU port mapping (10022).
-                internal-port (case platform
-                                :android-build 22
-                                :macos 22
-                                :ios 22
-                                fwd-port)]
-            (if (docker-network-ip? target-host)
-              ;; Local Docker container: SSH directly to it
-              [(str ssh-user "@" target-host) "localhost" internal-port
-               (vec (concat key-args port-args))]
-              ;; Remote host: SSH via ProxyJump
-              [(str ssh-user "@" target-host) "localhost" internal-port
-               (vec (concat key-args port-args ["-J" (or hop "localhost")]))]))
-          ;; No reverse ports: use standard routing
-          [hop fwd-host fwd-port []])
+        (or (compute-reverse-port-routing resource reverse-ports target-host hop fwd-host fwd-port)
+            [hop fwd-host fwd-port []])
         target-str (str final-fwd-host ":" final-fwd-port " via " final-hop)
-        ;; Build -R flags for reverse ports (build leases only)
-        ;; Each entry has :bind (port on remote), :host (target host), :target (target port)
-        ;; e.g. -R 5593:10.21.0.1:17003 routes container:5593 → 10.21.0.1:17003
-        reverse-flags (when (seq reverse-ports)
-                        (mapcat (fn [{:keys [bind host target]}]
-                                  (let [rhost (or host "localhost")]
-                                    (log/info "Reverse tunnel: remote:" bind "→" (str rhost ":" target)
-                                              "for lease" lease-id)
-                                    ["-R" (str bind ":" rhost ":" target)]))
-                                reverse-ports))
-        ;; ExitOnForwardFailure: only when no reverse-ports. With reverse-ports,
-        ;; shared server ports (3000, 4443) may already be bound by a sibling
-        ;; lease's SSH session on the same container — that's fine, we just need
-        ;; the -L forward to work. The duplicate -R silently fails.
-        exit-on-fail (if (seq reverse-ports) "no" "yes")
-        cmd (vec (concat ["ssh" "-N"
-                         "-o" "StrictHostKeyChecking=no"
-                         "-o" "UserKnownHostsFile=/dev/null"
-                         "-o" "BatchMode=yes"
-                         "-o" (str "ExitOnForwardFailure=" exit-on-fail)
-                         "-o" "ServerAliveInterval=30"
-                         "-o" "ServerAliveCountMax=3"]
-                        extra-ssh-args
-                        ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" final-fwd-port)]
-                        reverse-flags
-                        [final-hop]))]
+        reverse-flags (compute-reverse-flags lease-id reverse-ports)
+        cmd (build-ssh-command tunnel-port final-hop final-fwd-host final-fwd-port
+                               extra-ssh-args reverse-flags reverse-ports)]
     (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
               "→" target-str
               (when (seq reverse-ports)
@@ -346,7 +357,9 @@
       (try
         (when (.isAlive proc)
           (.destroyForcibly proc)
-          (log/info "Tunnel process killed: pid" (.pid proc)))
+          (if (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)
+            (log/info "Tunnel process killed: pid" (.pid proc))
+            (log/warn "Tunnel process pid" (.pid proc) "did not exit within 5s after destroyForcibly")))
         (catch Exception e
           (log/warn "Error stopping tunnel process:" (.getMessage e)))))
     (swap! tunnels dissoc lease-id)))
@@ -441,6 +454,7 @@
 ;; ---------------------------------------------------------------------------
 
 (declare unlease!)
+(declare acquire!)
 
 (defn- platform-user-ops
   "Return the user management functions for a resource's platform.
@@ -490,8 +504,8 @@
         (log/debug "Shared lock busy:" resource-id)
         false))))
 
-(defn- release-shared-lock!
-  "Release a shared filesystem lock for a phone resource."
+(defn- unlease-shared-lock!
+  "Unlease a shared filesystem lock for a phone resource."
   [resource-id]
   (let [lock-path (resource-id->lock-path resource-id)
         lock-dir  (java.io.File. lock-path)]
@@ -500,7 +514,7 @@
       (doseq [f (.listFiles lock-dir)]
         (.delete f))
       (.delete lock-dir)
-      (log/info "Shared lock released:" resource-id))))
+      (log/info "Shared lock unleased:" resource-id))))
 
 (defn- shared-lock-held?
   "Check if a shared filesystem lock is held for a phone resource."
@@ -519,13 +533,232 @@
             (when-not (some (fn [[_ l]] (= (:resource-id l) resource-id))
                            (:leases @state/state))
               (log/info "Cleaning stale shared lock:" resource-id)
-              (release-shared-lock! resource-id))))))))
+              (unlease-shared-lock! resource-id))))))))
 
 (defn- valid-workspace-name?
   "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."
   [name]
   (and (string? name)
        (re-matches #"[a-zA-Z][a-zA-Z0-9-]{2,30}" name)))
+
+(defn- acquire-server-lease!
+  "Post-swap setup for server build leases: start tunnel, no user creation."
+  [lease-id lease resource lessee ttl-seconds]
+  (if-let [tunnel (let [svc-port (get-in resource [:connection :service-port] 3000)
+                        ssh-host (get-in resource [:connection :ssh-host] "localhost")
+                        local?   (= ssh-host "localhost")]
+                    (if local?
+                      (start-socat-bridge! lease-id resource svc-port)
+                      (start-tunnel! lease-id resource)))]
+    (let [connection {:tunnel-port (:port tunnel)}]
+      (swap! state/state assoc-in [:leases lease-id :connection] connection)
+      (log/info "Server lease acquired:" lease-id
+                "resource:" (:id resource) "lessee:" lessee)
+      (state/record-event! "lease"
+        {:lessee    lessee
+         :container (:container resource)
+         :resource  (:id resource)
+         :lease-id  lease-id
+         :lease-type "build"
+         :ttl       ttl-seconds})
+      (assoc lease :connection connection))
+    ;; Tunnel failed — rollback
+    (do
+      (log/error "Failed to start tunnel for server lease" lease-id "- rolling back")
+      (unlease! lease-id)
+      nil)))
+
+(defn- acquire-build-lease!
+  "Post-swap setup for VM build leases: create/ensure user, start tunnel."
+  [lease-id lease resource lessee ttl-seconds workspace reverse-ports now]
+  (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
+        cached-ws (when workspace (state/workspace workspace))
+        user-info (cond
+                    ;; Workspace user already verified on this resource — skip SSH
+                    (and workspace cached-ws
+                         (:macos-user cached-ws)
+                         (:home-dir cached-ws)
+                         (= (:resource-id cached-ws) (:id resource)))
+                    (do
+                      (log/info "Workspace" workspace "user cached on"
+                                (:id resource) "- skipping ensure-user")
+                      {:macos-user (:macos-user cached-ws)
+                       :home-dir   (:home-dir cached-ws)})
+                    ;; Named workspace but not cached — create/verify via SSH
+                    workspace
+                    (ensure-user! resource workspace)
+                    ;; Ephemeral build — always create new user
+                    :else
+                    (create-user! resource lease-id))]
+    (if user-info
+      (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
+        (let [{:keys [ssh-host ssh-port]} (:connection resource)
+              connection (cond-> {:tunnel-port (:port tunnel)
+                                  :ssh-user    (:macos-user user-info)
+                                  :ssh-host    ssh-host
+                                  :ssh-port    (or ssh-port 10022)
+                                  :home-dir    (:home-dir user-info)}
+                           (seq reverse-ports) (assoc :reverse-ports
+                                                      (into {} (map (fn [{:keys [bind target]}]
+                                                                     [(str bind) target])
+                                                                   reverse-ports))))]
+          ;; Update lease and workspace state
+          (swap! state/state
+                 (fn [s]
+                   (cond-> s
+                     true (assoc-in [:leases lease-id :connection] connection)
+                     true (assoc-in [:leases lease-id :macos-user] (:macos-user user-info))
+                     ;; Register/update workspace
+                     workspace (assoc-in [:workspaces workspace]
+                                         {:name        workspace
+                                          :resource-id (:id resource)
+                                          :macos-user  (:macos-user user-info)
+                                          :home-dir    (:home-dir user-info)
+                                          :status      :leased
+                                          :lease-id    lease-id
+                                          :created-at  (or (:created-at (get-in s [:workspaces workspace]))
+                                                           now)}))))
+          (log/info (if workspace "Workspace" "Build") "lease acquired:" lease-id
+                    "resource:" (:id resource) "lessee:" lessee
+                    "user:" (:macos-user user-info)
+                    (when workspace (str "workspace:" workspace)))
+          (state/record-event! "lease"
+            {:lessee    lessee
+             :container (:container resource)
+             :resource  (:id resource)
+             :lease-id  lease-id
+             :lease-type "build"
+             :ttl       ttl-seconds
+             :workspace workspace
+             :user      (:macos-user user-info)})
+          (assoc lease
+                 :connection connection
+                 :macos-user (:macos-user user-info)))
+        ;; Tunnel failed — rollback
+        (do
+          (log/error "Failed to start tunnel for lease" lease-id "- rolling back")
+          (unlease! lease-id)
+          nil))
+      ;; User creation failed — rollback
+      (do
+        (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
+        (unlease! lease-id)
+        nil))))
+
+(defn- acquire-phone-lease!
+  "Post-swap setup for phone leases: shared lock, tunnel, ADB check, cascading parent."
+  [lease-id lease resource lessee ttl-seconds server-ports tunnel-protocol]
+  (if-not (try-acquire-shared-lock! (:id resource) lessee lease-id)
+    ;; Shared lock failed — another Smithr instance grabbed it between check and swap
+    (do
+      (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
+      (unlease! lease-id)
+      nil)
+    ;; Near-side: worker container provides SSH access colocated with phone.
+    ;; Only engaged when client explicitly requests tunnel-protocol "ssh".
+    ;; Default remains far-side (raw ADB/protocol tunneling) for backwards compat.
+    (let [worker-ssh-host (get-in resource [:connection :worker-ssh-host])
+          worker-ssh-port (get-in resource [:connection :worker-ssh-port] 22)
+          near-side?      (and (= tunnel-protocol "ssh") (some? worker-ssh-host))
+          ;; For near-side: create a synthetic resource pointing at the worker SSH
+          tunnel-resource (if near-side?
+                            (do (log/info "Near-side lease: routing to worker at"
+                                          worker-ssh-host ":" worker-ssh-port
+                                          "for" (:id resource))
+                                (assoc resource
+                                       :connection (assoc (:connection resource)
+                                                          :ssh-host worker-ssh-host
+                                                          :ssh-port worker-ssh-port)
+                                       ;; Override platform to :android-build so start-tunnel!
+                                       ;; uses ssh-host/ssh-port (port 22) routing, not ADB
+                                       :platform :android-build))
+                            resource)]
+      (if-let [tunnel (cond
+                        ;; Server resources: socat if local, SSH tunnel if remote
+                        (= (:type resource) :server)
+                        (let [svc-port (get-in resource [:connection :service-port] 3000)
+                              ssh-host (get-in resource [:connection :ssh-host] "localhost")
+                              local?   (= ssh-host "localhost")]
+                          (if local?
+                            (start-socat-bridge! lease-id resource svc-port)
+                            (start-tunnel! lease-id resource)))
+                        ;; Near-side: tunnel SSH to worker container
+                        near-side?
+                        (start-tunnel! lease-id tunnel-resource)
+                        ;; Legacy far-side (including physical devices): SSH tunnel
+                        :else
+                        (start-tunnel! lease-id resource))]
+        (if (and (not near-side?)
+                 (= (:platform resource) :android)
+                 (not (await-adb-ready! (:port tunnel) 15000)))
+          ;; ADB not ready through tunnel — rollback (far-side only)
+          (do
+            (log/error "ADB not responsive through tunnel port" (:port tunnel)
+                       "for lease" lease-id "- rolling back")
+            (unlease! lease-id)
+            nil)
+          (let [;; Cascading lease: if resource has a parent, hold it
+                parent-lease-id (when-let [parent-container (:parent resource)]
+                                  (let [parent-res (first (filter #(= (:container %) parent-container)
+                                                                  (state/resources)))]
+                                    (when parent-res
+                                      (log/info "Cascading: holding parent" (:id parent-res)
+                                                "for iOS lease" lease-id)
+                                      (let [parent-lease (acquire!
+                                                           {:type      (name (:type parent-res))
+                                                            :platform  (name (:platform parent-res))
+                                                            :ttl-seconds ttl-seconds
+                                                            :lessee    (str "hold:" lease-id)
+                                                            :lease-type :build})]
+                                        (when parent-lease
+                                          (:id parent-lease))))))]
+            ;; Set up reverse port forwarding for server_ports
+            (let [port-results (when (seq server-ports)
+                                 (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
+                  connection (cond-> {:tunnel-port (:port tunnel)}
+                               near-side? (assoc :tunnel-protocol "ssh"
+                                                 :worker-ssh-host worker-ssh-host)
+                               (seq server-ports) (assoc :server-ports server-ports)
+                               (get-in resource [:connection :udid])
+                               (assoc :udid (get-in resource [:connection :udid]))
+                               (get-in resource [:connection :rsd-port])
+                               (assoc :rsd-port (get-in resource [:connection :rsd-port]))
+                               (:device-name resource)
+                               (assoc :device-name (:device-name resource)))]
+              (swap! state/state
+                     (fn [s]
+                       (cond-> s
+                         true (assoc-in [:leases lease-id :connection] connection)
+                         true (assoc-in [:leases lease-id :server-ports] server-ports)
+                         parent-lease-id (assoc-in [:leases lease-id :parent-lease-id]
+                                                    parent-lease-id))))
+              ;; Wait for port forwarding to complete and merge results
+              (let [port-map (when port-results @port-results)
+                    final-connection (cond-> connection
+                                       port-map (assoc :server-port-status port-map))]
+                (when port-map
+                  (swap! state/state assoc-in [:leases lease-id :connection] final-connection))
+                (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
+                          (when (:device-name resource) (str "\"" (:device-name resource) "\""))
+                          "lessee:" lessee "ttl:" ttl-seconds "s"
+                          "tunnel-port:" (:port tunnel)
+                          (when near-side? "(near-side/SSH)")
+                          (when (seq server-ports) (str "server-ports:" server-ports))
+                          (when parent-lease-id (str "parent-hold:" parent-lease-id)))
+                (state/record-event! "lease"
+                  {:lessee    lessee
+                   :container (:container resource)
+                   :resource  (:id resource)
+                   :lease-id  lease-id
+                   :lease-type "phone"
+                   :ttl       ttl-seconds})
+                (cond-> (assoc lease :connection final-connection)
+                  parent-lease-id (assoc :parent-lease-id parent-lease-id))))))
+        ;; Tunnel failed — rollback phone lease
+        (do
+          (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
+          (unlease! lease-id)
+          nil)))))
 
 (defn acquire!
   "Atomically acquire a lease on an available resource.
@@ -659,228 +892,15 @@
                        :retried? true}))
           ;; Provisioning failed
           nil))
-    (when-let [{:keys [lease resource]} @result]
-      (if (= lease-type :build)
-        (if (= (:type resource) :server)
-          ;; Server build lease: just tunnel, no user creation
-          (if-let [tunnel (let [svc-port (get-in resource [:connection :service-port] 3000)
-                                ssh-host (get-in resource [:connection :ssh-host] "localhost")
-                                local?   (= ssh-host "localhost")]
-                            (if local?
-                              (start-socat-bridge! lease-id resource svc-port)
-                              (start-tunnel! lease-id resource)))]
-            (let [connection {:tunnel-port (:port tunnel)}]
-              (swap! state/state assoc-in [:leases lease-id :connection] connection)
-              (log/info "Server lease acquired:" lease-id
-                        "resource:" (:id resource) "lessee:" lessee)
-              (state/record-event! "lease"
-                {:lessee    lessee
-                 :container (:container resource)
-                 :resource  (:id resource)
-                 :lease-id  lease-id
-                 :lease-type "build"
-                 :ttl       ttl-seconds})
-              (assoc lease :connection connection))
-            ;; Tunnel failed — rollback
-            (do
-              (log/error "Failed to start tunnel for server lease" lease-id "- rolling back")
-              (unlease! lease-id)
-              nil))
-          ;; VM build lease: create/ensure user, then start tunnel
-          (let [{:keys [ensure-user! create-user!]} (platform-user-ops resource)
-                cached-ws (when workspace (state/workspace workspace))
-                user-info (cond
-                            ;; Workspace user already verified on this resource — skip SSH
-                            (and workspace cached-ws
-                                 (:macos-user cached-ws)
-                                 (:home-dir cached-ws)
-                                 (= (:resource-id cached-ws) (:id resource)))
-                            (do
-                              (log/info "Workspace" workspace "user cached on"
-                                        (:id resource) "- skipping ensure-user")
-                              {:macos-user (:macos-user cached-ws)
-                               :home-dir   (:home-dir cached-ws)})
-                            ;; Named workspace but not cached — create/verify via SSH
-                            workspace
-                            (ensure-user! resource workspace)
-                            ;; Ephemeral build — always create new user
-                            :else
-                            (create-user! resource lease-id))]
-            (if user-info
-              (if-let [tunnel (start-tunnel! lease-id resource :reverse-ports reverse-ports)]
-                (let [{:keys [ssh-host ssh-port]} (:connection resource)
-                      connection (cond-> {:tunnel-port (:port tunnel)
-                                          :ssh-user    (:macos-user user-info)
-                                          :ssh-host    ssh-host
-                                          :ssh-port    (or ssh-port 10022)
-                                          :home-dir    (:home-dir user-info)}
-                                   (seq reverse-ports) (assoc :reverse-ports
-                                                              (into {} (map (fn [{:keys [bind target]}]
-                                                                             [(str bind) target])
-                                                                           reverse-ports))))]
-                ;; Update lease and workspace state
-                (swap! state/state
-                       (fn [s]
-                         (cond-> s
-                           true (assoc-in [:leases lease-id :connection] connection)
-                           true (assoc-in [:leases lease-id :macos-user] (:macos-user user-info))
-                           ;; Register/update workspace
-                           workspace (assoc-in [:workspaces workspace]
-                                               {:name        workspace
-                                                :resource-id (:id resource)
-                                                :macos-user  (:macos-user user-info)
-                                                :home-dir    (:home-dir user-info)
-                                                :status      :leased
-                                                :lease-id    lease-id
-                                                :created-at  (or (:created-at (get-in s [:workspaces workspace]))
-                                                                 now)}))))
-                (log/info (if workspace "Workspace" "Build") "lease acquired:" lease-id
-                          "resource:" (:id resource) "lessee:" lessee
-                          "user:" (:macos-user user-info)
-                          (when workspace (str "workspace:" workspace)))
-                (state/record-event! "lease"
-                  {:lessee    lessee
-                   :container (:container resource)
-                   :resource  (:id resource)
-                   :lease-id  lease-id
-                   :lease-type "build"
-                   :ttl       ttl-seconds
-                   :workspace workspace
-                   :user      (:macos-user user-info)})
-                (assoc lease
-                       :connection connection
-                       :macos-user (:macos-user user-info)))
-                ;; Tunnel failed — rollback
-                (do
-                  (log/error "Failed to start tunnel for lease" lease-id "- rolling back")
-                  (unlease! lease-id)
-                  nil))
-              ;; User creation failed — rollback
-              (do
-                (log/error "Failed to create macOS user for lease" lease-id "- rolling back")
-                (unlease! lease-id)
-                nil))))
-        ;; Phone lease: acquire shared lock, start tunnel, ADB check, cascading parent
-        (if-not (try-acquire-shared-lock! (:id resource) lessee lease-id)
-          ;; Shared lock failed — another Smithr instance grabbed it between check and swap
-          (do
-            (log/warn "Shared lock race lost for" (:id resource) "- rolling back")
-            (unlease! lease-id)
-            nil)
-        ;; Near-side: worker container provides SSH access colocated with phone.
-        ;; Only engaged when client explicitly requests tunnel-protocol "ssh".
-        ;; Default remains far-side (raw ADB/protocol tunneling) for backwards compat.
-        (let [worker-ssh-host (get-in resource [:connection :worker-ssh-host])
-              worker-ssh-port (get-in resource [:connection :worker-ssh-port] 22)
-              near-side?      (and (= tunnel-protocol "ssh") (some? worker-ssh-host))
-              ;; For near-side: create a synthetic resource pointing at the worker SSH
-              tunnel-resource (if near-side?
-                                (do (log/info "Near-side lease: routing to worker at"
-                                              worker-ssh-host ":" worker-ssh-port
-                                              "for" (:id resource))
-                                    (assoc resource
-                                           :connection (assoc (:connection resource)
-                                                              :ssh-host worker-ssh-host
-                                                              :ssh-port worker-ssh-port)
-                                           ;; Override platform to :android-build so start-tunnel!
-                                           ;; uses ssh-host/ssh-port (port 22) routing, not ADB
-                                           :platform :android-build))
-                                resource)]
-        (if-let [tunnel (cond
-                          ;; Server resources: socat if local, SSH tunnel if remote
-                          ;; Local = ssh-host is "localhost" (same host as Smithr)
-                          ;; Remote = ssh-host is a hostname → tunnel via that host
-                          (= (:type resource) :server)
-                          (let [svc-port (get-in resource [:connection :service-port] 3000)
-                                ssh-host (get-in resource [:connection :ssh-host] "localhost")
-                                local?   (= ssh-host "localhost")]
-                            (if local?
-                              (start-socat-bridge! lease-id resource svc-port)
-                              (start-tunnel! lease-id resource)))
-                          ;; Near-side: tunnel SSH to worker container
-                          near-side?
-                          (start-tunnel! lease-id tunnel-resource)
-                          ;; Legacy far-side (including physical devices): SSH tunnel
-                          ;; Physical devices use wrapper containers with connect-host/port
-                          ;; labels pointing to the host bridge (adb forward + socat or
-                          ;; iproxy), so they tunnel identically to emulated devices.
-                          :else
-                          (start-tunnel! lease-id resource))]
-          (if (and (not near-side?)
-                   (= (:platform resource) :android)
-                   (not (await-adb-ready! (:port tunnel) 15000)))
-            ;; ADB not ready through tunnel — rollback (far-side only)
-            (do
-              (log/error "ADB not responsive through tunnel port" (:port tunnel)
-                         "for lease" lease-id "- rolling back")
-              (unlease! lease-id)
-              nil)
-          (let [;; Cascading lease: if resource has a parent, hold it
-              parent-lease-id (when-let [parent-container (:parent resource)]
-                                (let [parent-res (first (filter #(= (:container %) parent-container)
-                                                                (state/resources)))]
-                                  (when parent-res
-                                    (log/info "Cascading: holding parent" (:id parent-res)
-                                              "for iOS lease" lease-id)
-                                    (let [parent-lease (acquire!
-                                                         {:type      (name (:type parent-res))
-                                                          :platform  (name (:platform parent-res))
-                                                          :ttl-seconds ttl-seconds
-                                                          :lessee    (str "hold:" lease-id)
-                                                          :lease-type :build})]
-                                      (when parent-lease
-                                        (:id parent-lease))))))]
-          ;; Set up reverse port forwarding for server_ports
-          (let [port-results (when (seq server-ports)
-                               (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
-                connection (cond-> {:tunnel-port (:port tunnel)}
-                             ;; Near-side: tell clients the tunnel carries SSH, not raw protocol
-                             near-side? (assoc :tunnel-protocol "ssh"
-                                               :worker-ssh-host worker-ssh-host)
-                             (seq server-ports) (assoc :server-ports server-ports)
-                             ;; Include UDID for physical iOS devices
-                             (get-in resource [:connection :udid])
-                             (assoc :udid (get-in resource [:connection :udid]))
-                             ;; Include RSD port for physical iOS devices
-                             (get-in resource [:connection :rsd-port])
-                             (assoc :rsd-port (get-in resource [:connection :rsd-port]))
-                             ;; Include device name for physical devices
-                             (:device-name resource)
-                             (assoc :device-name (:device-name resource)))]
-            (swap! state/state
-                   (fn [s]
-                     (cond-> s
-                       true (assoc-in [:leases lease-id :connection] connection)
-                       true (assoc-in [:leases lease-id :server-ports] server-ports)
-                       parent-lease-id (assoc-in [:leases lease-id :parent-lease-id]
-                                                  parent-lease-id))))
-            ;; Wait for port forwarding to complete and merge results
-            (let [port-map (when port-results @port-results)
-                  final-connection (cond-> connection
-                                     port-map (assoc :server-port-status port-map))]
-              (when port-map
-                (swap! state/state assoc-in [:leases lease-id :connection] final-connection))
-              (log/info "Phone lease acquired:" lease-id "resource:" (:id resource)
-                        (when (:device-name resource) (str "\"" (:device-name resource) "\""))
-                        "lessee:" lessee "ttl:" ttl-seconds "s"
-                        "tunnel-port:" (:port tunnel)
-                        (when near-side? "(near-side/SSH)")
-                        (when (seq server-ports) (str "server-ports:" server-ports))
-                        (when parent-lease-id (str "parent-hold:" parent-lease-id)))
-              (state/record-event! "lease"
-                {:lessee    lessee
-                 :container (:container resource)
-                 :resource  (:id resource)
-                 :lease-id  lease-id
-                 :lease-type "phone"
-                 :ttl       ttl-seconds})
-              (cond-> (assoc lease :connection final-connection)
-                parent-lease-id (assoc :parent-lease-id parent-lease-id))))))
-          ;; Tunnel failed — rollback phone lease
-          (do
-            (log/error "Failed to start tunnel for phone lease" lease-id "- rolling back")
-            (unlease! lease-id)
-            nil)))))))))  ;; extra paren closes the if-provisioning + near-side let branch
+      ;; Dispatch to type-specific post-swap setup
+      (when-let [{:keys [lease resource]} @result]
+        (if (= lease-type :build)
+          (if (= (:type resource) :server)
+            (acquire-server-lease! lease-id lease resource lessee ttl-seconds)
+            (acquire-build-lease! lease-id lease resource lessee ttl-seconds
+                                  workspace reverse-ports now))
+          (acquire-phone-lease! lease-id lease resource lessee ttl-seconds
+                                server-ports tunnel-protocol))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unlease
@@ -945,12 +965,12 @@
           (when (and resource tunnel)
             (teardown-server-ports! resource (:port tunnel) server-ports))))
       (stop-tunnel! lease-id)
-      ;; Release shared filesystem lock for phone leases
+      ;; Unlease shared filesystem lock for phone leases
       (when (not= (:lease-type lease) :build)
-        (release-shared-lock! (:resource-id lease)))
-      ;; Cascading: release parent hold lease if present
+        (unlease-shared-lock! (:resource-id lease)))
+      ;; Cascading: unlease parent hold lease if present
       (when-let [parent-lid (:parent-lease-id lease)]
-        (log/info "Cascading: releasing parent hold" parent-lid "for lease" lease-id)
+        (log/info "Cascading: unleasing parent hold" parent-lid "for lease" lease-id)
         (unlease! parent-lid))
       (log/info "Lease unleased:" lease-id
                 (when (= (:lease-type lease) :build)

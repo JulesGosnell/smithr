@@ -16,49 +16,25 @@
 #   SMITHR_SUBSTRATE  — simulated (default) | physical
 #   SSH_TARGET        — host:port for SSH (default: ios-phone:22)
 #   SSH_USER          — SSH user (default: smithr for simulated, root for physical)
-#   BUNDLE_ID         — iOS bundle identifier
+#   BUNDLE_ID         — iOS bundle identifier (default: com.artha.healthcare)
 #   APP_FILE          — path to .app/.ipa inside the container
 #   API_URL           — if set, inject api-config.json into the app
 #
 set -e
 
-T0=$(date +%s)
-log() { echo "[ios-app] [$(( $(date +%s) - T0 ))s] $*"; }
-
+SIDECAR_NAME="ios-app"
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
-SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
-SSH_KEY="${SSH_KEY:-}"
+
+. /opt/scripts/ssh-common.sh
+. /opt/scripts/common-funcs.sh
+
+# App bundle ID — default is Artha; override via BUNDLE_ID env var
 BUNDLE_ID="${BUNDLE_ID:-com.artha.healthcare}"
 APP_FILE="${APP_FILE:-/app/Artha.app}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/tmp/e2e-apps}"
 API_URL="${API_URL:-}"
 SERVER_SERVICE="${SERVER_SERVICE:-}"
 SERVER_PORT="${SERVER_PORT:-3000}"
-
-# Default SSH_USER based on substrate (simulated → macOS VM user, physical → bridge root)
-if [ -z "$SSH_USER" ]; then
-  case "$SMITHR_SUBSTRATE" in
-    physical) SSH_USER="root" ;;
-    *)        SSH_USER="smithr" ;;
-  esac
-fi
-
-# Extract host:port
-SSH_HOST="${SSH_TARGET%%:*}"
-SSH_PORT="${SSH_TARGET##*:}"
-
-KEY_OPT=""
-if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
-    KEY_OPT="-i $SSH_KEY"
-fi
-
-COMMON_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT"
-SSH_OPTS="$COMMON_OPTS -p $SSH_PORT"
-SCP_OPTS="$COMMON_OPTS -P $SSH_PORT"
-
-remote() {
-    ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "$@"
-}
 
 APP_BASENAME=$(basename "$APP_FILE")
 
@@ -91,14 +67,7 @@ case "$SMITHR_SUBSTRATE" in
 esac
 
 # Wait for SSH
-log "Waiting for SSH at $SSH_TARGET (user: $SSH_USER)..."
-for i in $(seq 1 60); do
-    if remote "echo ok" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-log "SSH connected."
+wait_for_ssh
 
 # Copy app to target
 log "App: $APP_FILE ($(du -sh "$APP_FILE" 2>/dev/null | cut -f1))"
@@ -136,7 +105,7 @@ fi
 do_launch
 
 # Signal healthy
-touch /tmp/app-installed
+mark_ready /tmp/app-installed
 log "Ready."
 
 # Stay alive — sleep in background so trap fires promptly

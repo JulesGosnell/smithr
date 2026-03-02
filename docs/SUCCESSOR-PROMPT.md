@@ -61,7 +61,7 @@ The VM user is `smithr` (NOT `claude` — that was the old Artha image). Contain
 - macOS Sonoma 14.8.3
 - Xcode 16.2
 - iOS 18.3 Simulator Runtime
-- Maestro 2.0.10
+- Maestro 2.2.0
 
 ### What's Built and Working
 

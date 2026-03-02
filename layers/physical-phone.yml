@@ -23,7 +23,7 @@ services:
     command: >-
       TCP-LISTEN:5555,fork,reuseaddr
       TCP:${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}:${SMITHR_PHYSICAL_ADB_PORT:-5557}
-    restart: unless-stopped
+    restart: "no"
     networks:
       smithr-network:
         ipv4_address: "${SMITHR_PHYSICAL_IP:-10.21.0.50}"
@@ -44,4 +44,4 @@ services:
 networks:
   smithr-network:
     external: true
-    name: smithr-network
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}

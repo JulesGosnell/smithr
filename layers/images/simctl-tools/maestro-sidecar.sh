@@ -11,56 +11,30 @@
 #
 set -e
 
-T0=$(date +%s)
-log() { echo "[ios-maestro] [$(( $(date +%s) - T0 ))s] $*"; }
-
+SIDECAR_NAME="ios-maestro"
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
-SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
-SSH_KEY="${SSH_KEY:-}"
+
+. /opt/scripts/ssh-common.sh
+. /opt/scripts/common-funcs.sh
+
 LOGIN_FLOW="${LOGIN_FLOW:-}"
 LOGOUT_FLOW="${LOGOUT_FLOW:-}"
 BUNDLE_ID="${BUNDLE_ID:-}"
 EMAIL="${EMAIL:-}"
 PASSWORD="${PASSWORD:-}"
 
-# Default SSH_USER based on substrate
-if [ -z "$SSH_USER" ]; then
-  case "$SMITHR_SUBSTRATE" in
-    physical) SSH_USER="root" ;;
-    *)        SSH_USER="smithr" ;;
-  esac
-fi
-
-# Extract host:port
-SSH_HOST="${SSH_TARGET%%:*}"
-SSH_PORT="${SSH_TARGET##*:}"
-
-KEY_OPT=""
-if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
-    KEY_OPT="-i $SSH_KEY"
-fi
-
-COMMON_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR $KEY_OPT"
-SSH_OPTS="$COMMON_OPTS -p $SSH_PORT"
-
-remote() {
-    ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" "$@"
-}
+# Maestro XCTest driver bundle IDs — defaults are Artha; override via env vars.
+MAESTRO_DRIVER_BUNDLE_ID="${MAESTRO_DRIVER_BUNDLE_ID:-care.artha.maestro-driver}"
+XCTEST_RUNNER_BUNDLE_ID="${XCTEST_RUNNER_BUNDLE_ID:-care.artha.maestro-driver-tests}"
+XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-$XCTEST_RUNNER_BUNDLE_ID}"
 
 # Wait for SSH
 log "Substrate: $SMITHR_SUBSTRATE"
-log "Waiting for SSH at $SSH_TARGET (user: $SSH_USER)..."
-for i in $(seq 1 60); do
-    if remote "echo ok" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-log "SSH connected."
+wait_for_ssh
 
 # Teardown handler — clean up XCTest runner on bridge.
 # Uninstall the runner app to guarantee the overlay is removed from the device.
-# The host app (care.artha.maestro-driver) stays installed to preserve developer
+# The host app (MAESTRO_DRIVER_BUNDLE_ID) stays installed to preserve developer
 # certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
 # MUST be set before the case block — early exits (health check failure, install
 # timeout) need teardown to run so the phone isn't left in a dirty state.
@@ -79,7 +53,7 @@ teardown() {
     if [ -n "$RSD_ADDR" ]; then
       RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
       RSD_PORT=$(echo "$RSD_ADDR" | awk '{print $2}')
-      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT care.artha.maestro-driver-tests" 2>/dev/null || true
+      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT $XCTEST_RUNNER_BUNDLE_ID" 2>/dev/null || true
       log "Runner app uninstalled from device"
     fi
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
@@ -132,7 +106,7 @@ case "$SMITHR_SUBSTRATE" in
     # CRITICAL: Kill the device-side XCTest runner FIRST — it holds port 22087.
     # Killing only the bridge-side pymobiledevice3 leaves the device process alive,
     # blocking port 22087 for 60+ seconds until the device-side process times out.
-    remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT_VAL --bundle care.artha.maestro-driver-tests" 2>/dev/null || true
+    remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT_VAL --bundle $XCTEST_RUNNER_BUNDLE_ID" 2>/dev/null || true
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
     remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
     sleep 1
@@ -140,10 +114,6 @@ case "$SMITHR_SUBSTRATE" in
     # Install XCTest driver apps on the physical device (via bridge).
     # The signed .app bundles are mounted at /opt/driver-apps/ on the bridge.
     # pymobiledevice3 on the bridge installs them via the RSD tunnel.
-    DRIVER_HOST_BUNDLE="care.artha.maestro-driver"
-    DRIVER_RUNNER_BUNDLE="care.artha.maestro-driver-tests"
-    XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-care.artha.maestro-driver-tests}"
-
     if remote "test -d /opt/driver-apps/maestro-driver-ios.app" 2>/dev/null; then
       log "Installing XCTest driver apps on device..."
 
@@ -153,12 +123,12 @@ case "$SMITHR_SUBSTRATE" in
       timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
         "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-ios.app" \
         || { log "ERROR: Host app install timed out or failed"; exit 1; }
-      log "Host app installed: $DRIVER_HOST_BUNDLE"
+      log "Host app installed: $MAESTRO_DRIVER_BUNDLE_ID"
       sleep 2
       timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
         "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-iosUITests-Runner.app" \
         || { log "ERROR: Runner app install timed out or failed"; exit 1; }
-      log "Runner app installed: $DRIVER_RUNNER_BUNDLE"
+      log "Runner app installed: $XCTEST_RUNNER_BUNDLE_ID"
     else
       log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
@@ -279,7 +249,7 @@ if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
 fi
 
 # Signal healthy
-touch /tmp/maestro-ready
+mark_ready /tmp/maestro-ready
 log "Sidecar ready. App logged in."
 log "Run tests via: docker exec <container> /run-test.sh <flow-file>"
 

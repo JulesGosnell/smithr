@@ -6,7 +6,7 @@
   (:require [clojure.tools.logging :as log]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
-            [smithr.config :as config]))
+            [smithr.ssh :as ssh]))
 
 (defn build-username
   "Generate a macOS username for a build lease.
@@ -14,33 +14,7 @@
   [lease-id]
   (str "build-" (subs lease-id 0 (min 8 (count lease-id)))))
 
-(defonce ^:private cached-ssh-key-path
-  (delay
-    (let [configured (get-in (config/load-config) [:tunnel :key-path])
-          candidates (remove nil?
-                       [configured
-                        "layers/scripts/ios/ssh/macos-ssh-key"
-                        "../layers/scripts/ios/ssh/macos-ssh-key"
-                        "/ssh-key/macos-ssh-key"
-                        "/srv/shared/images/ssh/macos-ssh-key"])
-          found (first (filter #(.exists (java.io.File. %)) candidates))]
-      (if found
-        (let [abs (.getCanonicalPath (java.io.File. found))]
-          ;; SSH requires private keys to be 0600
-          (try (let [f (java.io.File. abs)]
-                 (.setReadable f false false)
-                 (.setReadable f true true)
-                 (.setWritable f false false)
-                 (.setWritable f true true)
-                 (.setExecutable f false false))
-               (catch Exception _ nil))
-          (log/info "Resolved SSH key path:" abs)
-          abs)
-        (do
-          (log/warn "No SSH key found, tried:" (pr-str candidates))
-          (first candidates))))))
-
-(defn- ssh-key-path [] @cached-ssh-key-path)
+(defn- ssh-key-path [] (ssh/ssh-key-path))
 
 (defn ssh-exec-raw!
   "Execute a command on a macOS VM via SSH.
@@ -197,21 +171,39 @@
 
 (defn delete-user!
   "Delete a macOS user account and home directory.
-   Handles process cleanup and both RAM disk and /Users paths."
+   Handles process cleanup and both RAM disk and /Users paths.
+   Times out after 30 seconds to prevent hanging on unresponsive VMs."
   [resource macos-user]
   (log/info "Deleting macOS user" macos-user "on" (:id resource))
   (let [home (str "/Users/" macos-user)
         ramdisk-home (str "/Volumes/BuildHomes/" macos-user)
-        result (ssh-exec-raw! resource
-                 (str "sudo pkill -u " macos-user " 2>/dev/null; sleep 1; "
-                      "sudo dscl . -delete /Users/" macos-user " 2>/dev/null; "
-                      "sudo dscl . -delete /Groups/com.apple.access_ssh GroupMembership " macos-user " 2>/dev/null; "
-                      "sudo rm -rf " home " " ramdisk-home " 2>/dev/null; "
-                      "echo done"))]
-    (when (not= 0 (:exit result))
-      (log/warn "Failed to fully clean up user" macos-user
-                "on" (:id resource) ":" (:err result)))
-    (= 0 (:exit result))))
+        {:keys [ssh-host ssh-port]} (:connection resource)
+        key-path (ssh-key-path)
+        cmd ["ssh" "-i" key-path
+             "-o" "StrictHostKeyChecking=no"
+             "-o" "ConnectTimeout=10"
+             "-p" (str (or ssh-port 10022))
+             (str "smithr@" ssh-host)
+             (str "sudo pkill -u " macos-user " 2>/dev/null; sleep 1; "
+                  "sudo dscl . -delete /Users/" macos-user " 2>/dev/null; "
+                  "sudo dscl . -delete /Groups/com.apple.access_ssh GroupMembership " macos-user " 2>/dev/null; "
+                  "sudo rm -rf " home " " ramdisk-home " 2>/dev/null; "
+                  "echo done")]
+        proc (-> (ProcessBuilder. ^java.util.List cmd)
+                 (.redirectErrorStream true)
+                 (.start))
+        finished? (.waitFor proc 30 java.util.concurrent.TimeUnit/SECONDS)]
+    (if finished?
+      (let [exit (.exitValue proc)]
+        (when (not= 0 exit)
+          (log/warn "Failed to fully clean up user" macos-user
+                    "on" (:id resource) "exit:" exit))
+        (= 0 exit))
+      (do
+        (log/warn "SSH user deletion timed out after 30s for" macos-user
+                  "on" (:id resource) "- destroying process forcibly")
+        (.destroyForcibly proc)
+        false))))
 
 (defn list-build-users
   "List existing build user accounts on a macOS VM."
