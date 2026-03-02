@@ -127,18 +127,19 @@ case "$SMITHR_SUBSTRATE" in
     # No socat needed — iproxy forwards device:22087 → bridge:22087 directly.
 
     # Wait for XCTest HTTP server to respond on bridge:22087.
-    # Use a real HTTP check — TCP connect alone is unreliable because iproxy
-    # accepts TCP but the HTTP server may not be ready yet (~15s startup).
-    log "Waiting for XCTest HTTP server on bridge:22087..."
-    for i in $(seq 1 45); do
-      if remote "python3 -c \"
-import urllib.request
+    # Write a health check script on the bridge — inline python through SSH
+    # has quoting issues that cause silent failures.
+    remote "cat > /tmp/xctest-health.py << 'HEALTHPY'
+import urllib.request, sys
 try:
     r = urllib.request.urlopen('http://127.0.0.1:22087/status', timeout=3)
-    exit(0 if r.status == 200 else 1)
+    sys.exit(0 if r.status == 200 else 1)
 except:
-    exit(1)
-\"" 2>/dev/null; then
+    sys.exit(1)
+HEALTHPY"
+    log "Waiting for XCTest HTTP server on bridge:22087..."
+    for i in $(seq 1 45); do
+      if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
         log "XCTest HTTP server responding on bridge:22087"
         break
       fi
