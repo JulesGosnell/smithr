@@ -122,6 +122,21 @@ case "$SMITHR_SUBSTRATE" in
     log "Device UDID: $DEVICE_UDID"
     echo "$DEVICE_UDID" > /tmp/device-udid
 
+    # Read RSD tunnel address from bridge (needed for app install + device process kill).
+    RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+    RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+    RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
+    log "RSD tunnel: [$RSD_IPV6]:$RSD_PORT_VAL"
+
+    # Kill stale processes from previous runs before starting fresh.
+    # CRITICAL: Kill the device-side XCTest runner FIRST — it holds port 22087.
+    # Killing only the bridge-side pymobiledevice3 leaves the device process alive,
+    # blocking port 22087 for 60+ seconds until the device-side process times out.
+    remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT_VAL --bundle care.artha.maestro-driver-tests" 2>/dev/null || true
+    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+    sleep 1
+
     # Install XCTest driver apps on the physical device (via bridge).
     # The signed .app bundles are mounted at /opt/driver-apps/ on the bridge.
     # pymobiledevice3 on the bridge installs them via the RSD tunnel.
@@ -131,12 +146,6 @@ case "$SMITHR_SUBSTRATE" in
 
     if remote "test -d /opt/driver-apps/maestro-driver-ios.app" 2>/dev/null; then
       log "Installing XCTest driver apps on device..."
-
-      # Read RSD tunnel address from bridge
-      RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
-      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
-      RSD_PORT_VAL=$(echo "$RSD_ADDR" | awk '{print $2}')
-      log "RSD tunnel: [$RSD_IPV6]:$RSD_PORT_VAL"
 
       # Install (or upgrade) driver apps — do NOT uninstall first.
       # Removing all apps from a developer cert revokes iOS trust.
@@ -153,12 +162,6 @@ case "$SMITHR_SUBSTRATE" in
     else
       log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
-
-    # The sidecar owns XCTest + iproxy lifecycle on the bridge.
-    # Kill any stale processes from previous runs before starting fresh.
-    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
-    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
-    sleep 1
 
     log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
     remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
@@ -184,7 +187,7 @@ except:
 HEALTHPY"
     log "Waiting for XCTest HTTP server on bridge:22087..."
     XCTEST_READY=false
-    for i in $(seq 1 45); do
+    for i in $(seq 1 15); do
       if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
         log "XCTest HTTP server responding on bridge:22087"
         XCTEST_READY=true
@@ -193,7 +196,7 @@ HEALTHPY"
       sleep 2
     done
     if [ "$XCTEST_READY" != "true" ]; then
-      log "FATAL: XCTest HTTP server not responding after 90s"
+      log "FATAL: XCTest HTTP server not responding after 30s"
       remote "cat /tmp/xctest.log" 2>/dev/null | tail -20 || true
       EXIT_CODE=1
       exit 1
