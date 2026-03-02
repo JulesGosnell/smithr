@@ -62,27 +62,33 @@ remote() {
 
 APP_BASENAME=$(basename "$APP_FILE")
 
-# Source substrate-specific functions: do_install, do_inject_config, do_launch, do_uninstall
-log "Substrate: $SMITHR_SUBSTRATE"
-case "$SMITHR_SUBSTRATE" in
-  physical) . /opt/scripts/physical-install.sh ;;
-  *)        . /opt/scripts/simulated-install.sh ;;
-esac
-
-# Teardown handler
+# Teardown handler — MUST be set before any exit-able code (source, SSH, install).
+# Guards do_uninstall with a function check since substrate scripts may not be sourced yet.
 SERVER_BRIDGE_PID=""
+EXIT_CODE=0
 teardown() {
     log "Teardown starting..."
     if [ -n "$SERVER_BRIDGE_PID" ]; then
         kill "$SERVER_BRIDGE_PID" 2>/dev/null || true
         log "Server bridge stopped."
     fi
-    do_uninstall
+    if type do_uninstall >/dev/null 2>&1; then
+        do_uninstall
+    fi
     remote "rm -rf $REMOTE_APP_DIR" 2>/dev/null || true
+    kill $(jobs -p) 2>/dev/null
+    wait 2>/dev/null
     log "Teardown complete."
-    exit 0
+    exit $EXIT_CODE
 }
-trap teardown TERM INT
+trap teardown TERM INT EXIT
+
+# Source substrate-specific functions: do_install, do_inject_config, do_launch, do_uninstall
+log "Substrate: $SMITHR_SUBSTRATE"
+case "$SMITHR_SUBSTRATE" in
+  physical) . /opt/scripts/physical-install.sh ;;
+  *)        . /opt/scripts/simulated-install.sh ;;
+esac
 
 # Wait for SSH
 log "Waiting for SSH at $SSH_TARGET (user: $SSH_USER)..."
@@ -121,6 +127,7 @@ if [ "$SMITHR_SUBSTRATE" != "physical" ] && [ -n "$SERVER_SERVICE" ]; then
         log "Server bridge ready (PID: $SERVER_BRIDGE_PID)."
     else
         log "FATAL: Server bridge SSH process died"
+        EXIT_CODE=1
         exit 1
     fi
 fi
