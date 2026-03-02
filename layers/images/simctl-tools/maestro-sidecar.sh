@@ -105,6 +105,7 @@ case "$SMITHR_SUBSTRATE" in
         "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-ios.app" \
         || { log "ERROR: Host app install timed out or failed"; exit 1; }
       log "Host app installed: $DRIVER_HOST_BUNDLE"
+      sleep 2
       timeout 60 ssh $SSH_OPTS "$SSH_USER@$SSH_HOST" \
         "pymobiledevice3 apps install --rsd $RSD_IPV6 $RSD_PORT_VAL /opt/driver-apps/maestro-driver-iosUITests-Runner.app" \
         || { log "ERROR: Runner app install timed out or failed"; exit 1; }
