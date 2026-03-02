@@ -241,6 +241,11 @@
               nil)))
         @docker-clients))
 
+(defn host-address
+  "Return the host-address for a given host label (nil for local, hostname for remote)."
+  [host-label]
+  (get-in @docker-clients [host-label :host-address]))
+
 (defn container-ip-any-network
   "Get the IP address from the first available Docker network on a container.
    Adopted containers may not be on smithr-network, so we check all networks."
