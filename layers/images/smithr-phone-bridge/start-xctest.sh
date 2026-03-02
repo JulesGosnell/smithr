@@ -37,6 +37,10 @@ fi
 
 log "Starting XCTest runner: bundle=$BUNDLE_ID rsd=[$RSD_IPV6]:$RSD_PORT"
 
+# PORT=22087 is required: without it, Maestro's internal ViewHierarchyHandlerTests
+# runs first (alphabetical), tries to launch org.wikimedia.wikipedia, and blocks
+# the HTTP server from starting. With PORT set, that test skips via XCTSkip.
 exec pymobiledevice3 developer dvt xcuitest \
   --rsd "$RSD_IPV6" "$RSD_PORT" \
+  --env PORT=22087 \
   "$BUNDLE_ID"

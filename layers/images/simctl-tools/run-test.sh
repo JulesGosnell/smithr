@@ -67,18 +67,15 @@ case "$SMITHR_SUBSTRATE" in
     FLOW_BASENAME=$(basename "$FLOW_FILE")
     REMOTE_FLOW="$REMOTE_FLOWS_DIR/$FLOW_BASENAME"
 
-    # Tell Maestro to use the externally-managed XCTest runner.
-    # The sidecar starts the runner on the bridge; Maestro just connects
-    # to localhost:22087 (iproxy → device:22087 → XCTest HTTP server).
-    #
-    # Flags:
-    #   --apple-team-id    — required by 2.2.0 for physical devices (any non-null value)
-    #   --no-reinstall-driver — skip xcodebuild (we start XCTest externally)
-    #   USE_XCODE_TEST_RUNNER — wait for externally-started XCTest server
+    # Physical device: Maestro discovers device via fake xcrun (devicectl),
+    # connects to XCTest HTTP server on localhost:22087 (via iproxy).
+    # DeviceControlIOSDevice.launch() is patched to throw UnsupportedOperationException
+    # so the fallback in LocalIOSDevice sends launch commands via XCTest HTTP API.
     echo "[ios-maestro] Running (physical on bridge): maestro test --platform ios --apple-team-id SMITHR --no-reinstall-driver $MAESTRO_EXTRA $REMOTE_FLOW"
     remote "export USE_XCODE_TEST_RUNNER=1 && \
             export MAESTRO_CLI_NO_ANALYTICS=1 && \
             export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true && \
+            export MAESTRO_OPTS='-Dmaestro.driver.port=22087' && \
             /opt/maestro/bin/maestro test \
               --platform ios \
               --apple-team-id SMITHR \

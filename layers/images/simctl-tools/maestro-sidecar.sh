@@ -131,32 +131,33 @@ case "$SMITHR_SUBSTRATE" in
       log "iproxy already running on bridge"
     fi
 
-    # Maestro hardcodes port 7001 for the XCTest driver connection.
-    # Bridge socat: 7001 → 22087 so Maestro finds the XCTest HTTP server.
-    if ! remote "pgrep -f 'socat.*7001'" >/dev/null 2>&1; then
-      log "Starting socat (bridge:7001 → bridge:22087)..."
-      remote "nohup socat TCP-LISTEN:7001,fork,reuseaddr TCP:localhost:22087 </dev/null >/dev/null 2>&1 &"
-      sleep 1
-    else
-      log "socat 7001→22087 already running on bridge"
-    fi
+    # Maestro connects directly to port 22087 (via MAESTRO_OPTS in run-test.sh).
+    # No socat needed — iproxy forwards device:22087 → bridge:22087 directly.
 
-    # Wait for XCTest HTTP server to be reachable on bridge:22087
+    # Wait for XCTest HTTP server to respond on bridge:22087.
+    # Use a real HTTP check — TCP connect alone is unreliable because iproxy
+    # accepts TCP but the HTTP server may not be ready yet (~15s startup).
     log "Waiting for XCTest HTTP server on bridge:22087..."
-    for i in $(seq 1 30); do
-      if remote "bash -c 'exec 3<>/dev/tcp/localhost/22087 && exec 3>&-'" 2>/dev/null; then
-        log "XCTest HTTP server reachable on bridge:22087"
+    for i in $(seq 1 45); do
+      if remote "python3 -c \"
+import urllib.request
+try:
+    r = urllib.request.urlopen('http://127.0.0.1:22087/status', timeout=3)
+    exit(0 if r.status == 200 else 1)
+except:
+    exit(1)
+\"" 2>/dev/null; then
+        log "XCTest HTTP server responding on bridge:22087"
         break
       fi
-      if [ "$i" -eq 30 ]; then
-        log "WARNING: XCTest HTTP server not reachable after 60s"
+      if [ "$i" -eq 45 ]; then
+        log "WARNING: XCTest HTTP server not responding after 90s"
       fi
       sleep 2
     done
 
     # Install fake xcrun on the bridge for Maestro device discovery.
-    # Maestro uses xcrun simctl/devicectl (macOS-only) to find iOS devices.
-    # We provide synthetic responses so Maestro sees our physical device.
+    # Maestro uses xcrun devicectl to find physical iOS devices.
     remote "cat > /usr/local/bin/xcrun << 'FAKE_XCRUN'
 #!/bin/bash
 case \"\$1\" in
@@ -184,9 +185,8 @@ FAKE_XCRUN
 chmod +x /usr/local/bin/xcrun"
     log "Fake xcrun installed on bridge (UDID: $DEVICE_UDID)"
 
-    # Pre-populate fake driver build artifacts on the bridge so Maestro's
-    # validateAndUpdateDriver() skips xcodebuild (which doesn't exist on Linux).
-    MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
+    # Pre-populate fake driver build artifacts so Maestro's
+    # validateAndUpdateDriver() skips xcodebuild (doesn't exist on Linux).
     MAESTRO_VER=$(remote "ls /opt/maestro/lib/maestro-cli-*.jar 2>/dev/null" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     : "${MAESTRO_VER:=2.2.0}"
     remote "mkdir -p /root/.maestro/maestro-iphoneos-driver-build/driver-iphoneos/Build/Products && \
