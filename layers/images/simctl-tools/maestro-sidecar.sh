@@ -144,16 +144,20 @@ except:
     sys.exit(1)
 HEALTHPY"
     log "Waiting for XCTest HTTP server on bridge:22087..."
-    for i in $(seq 1 45); do
+    XCTEST_READY=false
+    for i in $(seq 1 15); do
       if remote "python3 /tmp/xctest-health.py" 2>/dev/null; then
         log "XCTest HTTP server responding on bridge:22087"
+        XCTEST_READY=true
         break
-      fi
-      if [ "$i" -eq 45 ]; then
-        log "WARNING: XCTest HTTP server not responding after 90s"
       fi
       sleep 2
     done
+    if [ "$XCTEST_READY" != "true" ]; then
+      log "FATAL: XCTest HTTP server not responding after 30s"
+      remote "cat /tmp/xctest.log" 2>/dev/null | tail -20 || true
+      exit 1
+    fi
 
     # Install fake xcrun on the bridge for Maestro device discovery.
     # Maestro uses xcrun devicectl to find physical iOS devices.
