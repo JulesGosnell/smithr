@@ -113,23 +113,15 @@ case "$SMITHR_SUBSTRATE" in
       log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
 
-    # Start XCTest runner on bridge (if not already running)
-    if ! remote "pgrep -f 'pymobiledevice3.*xcuitest'" >/dev/null 2>&1; then
-      log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
-      remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
-      sleep 2
-    else
-      log "XCTest runner already running on bridge"
-    fi
+    # The sidecar owns XCTest + iproxy lifecycle on the bridge.
+    # Teardown kills them; startup always starts fresh.
+    log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
+    remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
+    sleep 2
 
-    # Start iproxy on bridge (forwards device:22087 → bridge:22087)
-    if ! remote "pgrep -f 'iproxy.*22087'" >/dev/null 2>&1; then
-      log "Starting iproxy (device:22087 → bridge:22087)..."
-      remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/dev/null 2>&1 &"
-      sleep 1
-    else
-      log "iproxy already running on bridge"
-    fi
+    log "Starting iproxy (device:22087 → bridge:22087)..."
+    remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/dev/null 2>&1 &"
+    sleep 1
 
     # Maestro connects directly to port 22087 (via MAESTRO_OPTS in run-test.sh).
     # No socat needed — iproxy forwards device:22087 → bridge:22087 directly.
