@@ -208,25 +208,20 @@ chmod +x /usr/local/bin/xcrun"
     ;;
 esac
 
-# Teardown handler — clean up XCTest runner on bridge
-# NOTE: Driver apps are NOT uninstalled — they stay on the device permanently.
-# Removing all apps from a developer certificate causes iOS to revoke the trust,
-# requiring manual re-trust in Settings > General > Device Management each time.
+# Teardown handler — clean up XCTest runner on bridge.
+# Uninstall the runner app to guarantee the overlay is removed from the device.
+# The host app (care.artha.maestro-driver) stays installed to preserve developer
+# certificate trust — removing ALL apps from a cert triggers iOS re-trust prompt.
 teardown() {
   log "Teardown starting..."
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
-    # Kill XCTest runner process on the device itself (clears overlay).
-    # Must happen BEFORE killing pymobiledevice3 (which holds the DVT channel).
-    RUNNER_PID=$(remote "cat /tmp/rsd-ready >/dev/null 2>&1 && \
-      RSD_IPV6=\$(awk '{print \$1}' /tmp/rsd-ready) && \
-      RSD_PORT=\$(awk '{print \$2}' /tmp/rsd-ready) && \
-      pymobiledevice3 developer dvt process-id-for-bundle-id \
-        --rsd \$RSD_IPV6 \$RSD_PORT care.artha.maestro-driver-tests 2>/dev/null" 2>/dev/null | tr -d '[:space:]')
-    if [ -n "$RUNNER_PID" ] && [ "$RUNNER_PID" -gt 0 ] 2>/dev/null; then
-      remote "RSD_IPV6=\$(awk '{print \$1}' /tmp/rsd-ready) && \
-        RSD_PORT=\$(awk '{print \$2}' /tmp/rsd-ready) && \
-        pymobiledevice3 developer dvt kill --rsd \$RSD_IPV6 \$RSD_PORT $RUNNER_PID" 2>/dev/null || true
-      log "XCTest runner killed on device (PID $RUNNER_PID)"
+    # Uninstall runner app from device (kills process + clears overlay).
+    RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
+    if [ -n "$RSD_ADDR" ]; then
+      RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
+      RSD_PORT=$(echo "$RSD_ADDR" | awk '{print $2}')
+      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT care.artha.maestro-driver-tests" 2>/dev/null || true
+      log "Runner app uninstalled from device"
     fi
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
     remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
