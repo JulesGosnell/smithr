@@ -48,17 +48,29 @@ teardown() {
     log "Logout complete."
   fi
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
-    # Uninstall runner app from device (kills process + clears overlay).
     RSD_ADDR=$(remote "cat /tmp/rsd-ready" 2>/dev/null)
     if [ -n "$RSD_ADDR" ]; then
       RSD_IPV6=$(echo "$RSD_ADDR" | awk '{print $1}')
       RSD_PORT=$(echo "$RSD_ADDR" | awk '{print $2}')
-      remote "pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT $XCTEST_RUNNER_BUNDLE_ID" 2>/dev/null || true
-      log "Runner app uninstalled from device"
+      # Kill device-side XCTest runner FIRST — it holds port 22087 and may
+      # block uninstall if the process is still active on the device.
+      log "Killing device-side XCTest runner..."
+      remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT --bundle $XCTEST_RUNNER_BUNDLE_ID" 2>&1 || true
+      sleep 1
+      # Kill bridge-side processes (pymobiledevice3 xcuitest + iproxy).
+      remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+      remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+      log "XCTest + iproxy stopped on bridge"
+      # Uninstall runner app from device (clears overlay).
+      log "Uninstalling runner app ($XCTEST_RUNNER_BUNDLE_ID)..."
+      if remote "timeout 15 pymobiledevice3 apps uninstall --rsd $RSD_IPV6 $RSD_PORT $XCTEST_RUNNER_BUNDLE_ID" 2>&1; then
+        log "Runner app uninstalled from device"
+      else
+        log "WARNING: Failed to uninstall runner app — may persist on device"
+      fi
+    else
+      log "WARNING: No RSD address — cannot clean up device apps"
     fi
-    remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
-    remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
-    log "XCTest + iproxy stopped on bridge"
   fi
   kill $(jobs -p) 2>/dev/null
   wait 2>/dev/null
