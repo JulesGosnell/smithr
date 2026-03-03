@@ -18,6 +18,9 @@
 #   APP_DIR              — Host path to the application source (mounted at /app)
 #   PLAYWRIGHT_BASE_URL  — URL the server is reachable at (default: http://server:3000)
 #
+# The node_modules volume persists across runs so pnpm install only happens
+# on the first cold start (~3 min). Subsequent warm starts skip it entirely.
+#
 services:
   playwright:
     image: {{REGISTRY}}/smithr/playwright:latest
@@ -37,8 +40,13 @@ services:
     stop_grace_period: 30s
     volumes:
       - ${APP_DIR:-.}:/app:z
+      - smithr-playwright-deps:/app/node_modules
     networks:
       - internal
+
+volumes:
+  smithr-playwright-deps:
+    name: smithr-playwright-deps
 
 networks:
   internal:
