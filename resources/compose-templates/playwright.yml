@@ -1,0 +1,43 @@
+#
+# Playwright browser test sidecar
+#
+# Provides a ready-to-use Chromium environment for running Playwright specs
+# as part of the E2E compose stack. The container starts, waits for the
+# server to be reachable, installs dependencies if needed, then sleeps.
+#
+# Tests are executed via docker exec:
+#   docker exec -e EMAIL=... -e PASSWORD=... <project>-playwright-1 \
+#     /usr/local/bin/run-playwright.sh <spec-file>
+#
+# Compose with server and phone/app/maestro templates:
+#   curl -s http://localhost:7070/api/compose/server > /tmp/server.yml
+#   curl -s http://localhost:7070/api/compose/playwright > /tmp/playwright.yml
+#   docker compose -f /tmp/server.yml -f /tmp/playwright.yml -p test up -d
+#
+# Env vars:
+#   APP_DIR              — Host path to the application source (mounted at /app)
+#   PLAYWRIGHT_BASE_URL  — URL the server is reachable at (default: http://server:3000)
+#
+services:
+  playwright:
+    image: smithr-playwright:latest
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      PLAYWRIGHT_BASE_URL: ${PLAYWRIGHT_BASE_URL:-http://server:3000}
+      CI: "true"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/playwright-ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+    stop_grace_period: 30s
+    volumes:
+      - ${APP_DIR:-.}:/app:z
+    networks:
+      - internal
+
+networks:
+  internal:

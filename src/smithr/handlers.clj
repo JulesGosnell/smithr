@@ -378,7 +378,7 @@
 (def ^:private static-templates
   #{"android-phone" "ios-phone" "macos-build" "android-build"
     "maestro" "android-app" "ios-app" "ios-maestro" "adopt-proxy" "server"
-    "phone" "unified-app" "unified-maestro"})
+    "phone" "unified-app" "unified-maestro" "playwright"})
 
 (defn- resolve-registry-url []
   [(or (System/getenv "SMITHR_REGISTRY") "localhost:5000")
