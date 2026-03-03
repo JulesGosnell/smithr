@@ -396,3 +396,222 @@ single biggest cause of slow builds.
 - For testing multiple devices of the same model, use separate VMs
 - iOS Simulator is lightweight within a VM (~30s boot)
 - The macOS VM itself takes 60-120s to boot
+
+---
+
+## Physical iPhone Setup
+
+Smithr can manage physical iPhones connected via USB. A bridge container
+provides the RSD tunnel, iproxy port forwarding, and pymobiledevice3
+tooling. From the outside, physical and simulated iPhones are leased
+identically.
+
+```
+Linux Host (Fedora)
++-- USB cable → Physical iPhone
++-- usbmuxd (systemd, manages USB multiplexing)
++-- Docker bridge container (smithr-network)
+    +-- smithr-tunnel (RSD tunnel → tun0, CAP_NET_ADMIN via SUID)
+    +-- pymobiledevice3 (app install, XCTest runner, device management)
+    +-- iproxy (USB forwarding: bridge:22087 → device:22087)
+    +-- Maestro + Java 21 (mounted from /srv/shared/images/maestro)
+```
+
+### Prerequisites
+
+1. **usbmuxd** — manages USB multiplexing to iPhones:
+   ```bash
+   sudo dnf install usbmuxd libimobiledevice  # Fedora
+   systemctl enable --now usbmuxd
+   ```
+
+2. **iproxy** — USB port forwarding (part of libusbmuxd):
+   ```bash
+   sudo dnf install libusbmuxd-utils  # provides iproxy
+   ```
+
+3. **pymobiledevice3** — Python toolkit for iOS device management:
+   ```bash
+   pip3 install pymobiledevice3
+   ```
+
+4. **smithr-tunnel** — SUID binary for on-demand RSD tunnels (no root/daemon):
+   ```bash
+   cd ~/src/smithr
+   # Build and install (requires root for SUID + CAP_NET_ADMIN)
+   gcc -o bin/smithr-tunnel bin/smithr-tunnel.c
+   sudo install -o root -g root -m 4755 bin/smithr-tunnel /usr/local/bin/
+   sudo setcap cap_net_admin+ep /usr/local/bin/smithr-tunnel
+   ```
+
+5. **Maestro 2.2.0** distribution at `/srv/shared/images/maestro/`
+
+6. **Signed XCTest driver apps** at `/srv/shared/images/maestro-driver-signed/`:
+   - `maestro-driver-ios.app` (host app, bundle: `care.artha.maestro-driver`)
+   - `maestro-driver-iosUITests-Runner.app` (runner, bundle: `care.artha.maestro-driver-tests`)
+   - Built via `bin/build-wda.sh` (builds on macOS VM, re-signs with custom provisioning profiles)
+
+### Phone Preparation
+
+#### Step 1: Enable Developer Mode
+
+1. Connect iPhone via USB
+2. Open **Settings > Privacy & Security > Developer Mode**
+3. Toggle **ON** and restart when prompted
+4. After reboot, confirm the Developer Mode prompt
+
+#### Step 2: Trust the Computer
+
+1. Unlock the iPhone
+2. Connect via USB — tap **Trust** on the "Trust This Computer?" prompt
+3. Enter passcode to confirm
+
+#### Step 3: Trust the Developer Certificate
+
+1. Open **Settings > General > VPN & Device Management**
+2. Find the developer certificate used to sign the Maestro driver apps
+3. Tap it and tap **Trust**
+4. Confirm the dialog
+
+**CRITICAL**: This trust persists as long as at least one app from the
+certificate remains installed on the device. If ALL apps from the cert
+are uninstalled, iOS revokes the trust and you must repeat this step.
+The Maestro sidecar teardown intentionally keeps the host app
+(`care.artha.maestro-driver`) installed to preserve trust — only the
+runner app is uninstalled between test runs.
+
+**Re-trusting after revocation**: Install the host app first (via
+pymobiledevice3 on the bridge), then go to VPN & Device Management to
+trust. The phone needs internet access (WiFi) to verify the certificate
+with Apple's servers. You will also need to enter your **passcode** on
+the phone to confirm the trust.
+
+#### Step 4: Verify USB Connection
+
+```bash
+# Check usbmuxd sees the device
+idevice_id -l
+# Should print the UDID, e.g.: 00008101-000C1CA02652001E
+
+# Check device info
+ideviceinfo -u <UDID> -k DeviceName
+```
+
+#### Step 5: Verify RSD Tunnel
+
+```bash
+# Start an on-demand tunnel (no sudo needed with SUID binary)
+smithr-tunnel tunnel -u <UDID>
+# Should create tun device and print IPv6 address + port
+
+# Test via pymobiledevice3
+pymobiledevice3 developer dvt ls --rsd <ipv6-addr> <port> /
+```
+
+### Automatic Discovery
+
+Smithr scans for USB devices periodically. When a physical iPhone is found:
+
+1. **Bridge container created**: Docker container with RSD tunnel, iproxy,
+   pymobiledevice3, Maestro, and signed driver apps
+2. **Device registered**: Container appears on `smithr-network` with
+   `smithr.resource.substrate=physical` labels
+3. **Both hosts see it**: Docker event subscription propagates to all hosts
+
+### Leasing
+
+```bash
+# Via compose template (identical to simulated)
+curl -s http://localhost:7070/api/compose/ios-phone | \
+  SMITHR_LESSEE="my-test" SMITHR_SUBSTRATE=physical \
+  docker compose -f - -p my-test up -d
+
+# Maestro available — run tests via sidecar
+docker exec my-test-maestro-1 /run-test.sh /flows/login.yaml
+
+# Cleanup
+curl -s http://localhost:7070/api/compose/ios-phone | \
+  docker compose -f - -p my-test down
+```
+
+### XCTest Lifecycle
+
+The Maestro sidecar manages the XCTest runner lifecycle per test session:
+
+1. **Startup**: Kill stale device-side runner → install driver apps →
+   start iproxy → start XCTest runner → wait for HTTP server on port 22087
+2. **Testing**: Maestro on bridge connects to `localhost:22087` (via iproxy
+   → USB → device XCTest HTTP server)
+3. **Teardown**: Kill device-side runner (DVT pkill) → kill bridge-side
+   processes → uninstall runner app (keeps host app for cert trust)
+
+**IMPORTANT**: The `PORT=22087` env var MUST be passed to the XCTest runner
+(`pymobiledevice3 developer dvt xcuitest --env PORT=22087`). Without it,
+Maestro's internal `ViewHierarchyHandlerTests` runs first, tries to launch
+`org.wikimedia.wikipedia`, and blocks the HTTP server from starting.
+
+### Troubleshooting
+
+#### "Error connecting to device" in iproxy logs
+
+The USB connection is alive but nothing is listening on the target port
+on the device. Check:
+- Is the XCTest runner actually running? (`ps aux | grep xcuitest` on bridge)
+- Did the XCTest test plan complete prematurely? (check `/tmp/xctest.log`)
+- Was `PORT=22087` passed to the runner?
+
+#### Two Maestro app icons on the phone
+
+This is expected during a test — the host app and runner are both installed.
+After teardown, only the host app should remain. If both persist, teardown
+failed — check sidecar logs for "WARNING: Failed to uninstall runner app".
+
+#### "Trust This Developer" prompt after test run
+
+All apps from the developer certificate were uninstalled, revoking iOS
+trust. Go to **Settings > General > VPN & Device Management** and re-trust.
+To prevent this: ensure teardown only uninstalls the runner app, never the
+host app.
+
+#### XCTest HTTP server not responding after 30s
+
+Common causes:
+1. Stale device-side runner from previous run holding port 22087 — the
+   sidecar startup kills it via DVT pkill, but if DVT pkill hangs, port
+   stays occupied for 60+ seconds
+2. iproxy USB forwarding broken — check `/tmp/iproxy.log` on bridge
+3. `usbmuxd` errors — check `journalctl -u usbmuxd` for error 61
+   (ECONNREFUSED = nothing listening on device port)
+
+#### Phone disconnects during CI
+
+- Use a short, high-quality USB-C cable (Lightning is deprecated)
+- Avoid USB hubs — connect directly to the host
+- Check `dmesg` for USB disconnect messages
+- The RSD tunnel will re-establish automatically when the phone reconnects
+
+### Files Reference
+
+```
+layers/images/smithr-phone-bridge/
+  Dockerfile           # Bridge image (Debian + pymobiledevice3 + iproxy + Java 21)
+  entrypoint.sh        # Starts RSD tunnel, waits for ready
+  start-xctest.sh      # Starts XCTest runner via DVT
+
+layers/images/simctl-tools/
+  maestro-sidecar.sh   # XCTest lifecycle management (install, start, teardown)
+  run-test.sh          # Run Maestro test (dispatches to bridge via SSH)
+
+bin/
+  smithr-tunnel        # SUID binary for on-demand RSD tunnels
+  build-wda.sh         # Build + sign XCTest driver apps
+
+/srv/shared/images/
+  maestro/             # Maestro 2.2.0 distribution
+  maestro-driver-signed/
+    maestro-driver-ios.app                    # Host app (stays installed)
+    maestro-driver-iosUITests-Runner.app      # Runner app (installed/uninstalled per session)
+
+src/smithr/
+  devices.clj          # USB scanning, bridge container creation
+```
