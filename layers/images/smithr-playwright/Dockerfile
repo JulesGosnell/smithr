@@ -9,6 +9,9 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY run-playwright.sh /usr/local/bin/run-playwright.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-playwright.sh
 
+# Pre-create mount point so named volume inherits correct ownership
+RUN mkdir -p /app/node_modules && chown pwuser:pwuser /app /app/node_modules
+
 USER pwuser
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
