@@ -24,13 +24,17 @@ done
 # Use /tmp for pnpm store so root-owned files don't leak onto the host mount.
 # --no-frozen-lockfile because CI=true defaults to frozen mode but the
 # monorepo lockfile may have patchedDependencies mismatches.
-if [ -d /app/apps/web ] && [ ! -d /app/node_modules/.pnpm ]; then
-  log "Installing dependencies..."
+if [ -d /app/apps/web ]; then
   cd /app
-  pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store 2>&1 | tail -10
-  log "Dependencies installed."
-elif [ -d /app/apps/web ]; then
-  log "Dependencies already installed, skipping."
+  # Check for the actual playwright binary, not just .pnpm dir — stale volumes
+  # may have an incomplete install that tricks a directory-only check.
+  if [ ! -x /app/node_modules/.bin/playwright ]; then
+    log "Installing dependencies..."
+    pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store 2>&1 | tail -10
+    log "Dependencies installed."
+  else
+    log "Dependencies already installed, skipping."
+  fi
 fi
 
 # ── Ready ────────────────────────────────────────────────────
