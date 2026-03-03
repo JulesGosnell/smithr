@@ -24,7 +24,7 @@ done
 if [ -d /app/apps/web ] && [ ! -d /app/node_modules/.pnpm ]; then
   log "Installing dependencies..."
   cd /app
-  pnpm install 2>&1 | tail -10
+  pnpm install --no-frozen-lockfile 2>&1 | tail -10
   log "Dependencies installed."
 elif [ -d /app/apps/web ]; then
   log "Dependencies already installed, skipping."
