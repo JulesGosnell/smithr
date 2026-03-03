@@ -3,11 +3,12 @@ FROM mcr.microsoft.com/playwright:v1.58.0-noble
 RUN npm install -g pnpm@9
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-    CI=true \
-    DOCKER_BUILD=1
+    CI=true
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY run-playwright.sh /usr/local/bin/run-playwright.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-playwright.sh
+
+USER pwuser
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

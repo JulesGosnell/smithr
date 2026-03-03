@@ -21,10 +21,13 @@ for i in $(seq 1 120); do
 done
 
 # ── Install dependencies if needed ──────────────────────────
+# Use /tmp for pnpm store so root-owned files don't leak onto the host mount.
+# --no-frozen-lockfile because CI=true defaults to frozen mode but the
+# monorepo lockfile may have patchedDependencies mismatches.
 if [ -d /app/apps/web ] && [ ! -d /app/node_modules/.pnpm ]; then
   log "Installing dependencies..."
   cd /app
-  pnpm install --no-frozen-lockfile 2>&1 | tail -10
+  pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store 2>&1 | tail -10
   log "Dependencies installed."
 elif [ -d /app/apps/web ]; then
   log "Dependencies already installed, skipping."
