@@ -13,6 +13,7 @@ managed — the client doesn't need to know (or care) where it physically lives:
 - **Emulated phones** — Android emulators (ADB access)
 - **Physical phones** — USB-attached Android and iOS devices
 - **macOS + Xcode VMs** — QEMU-hosted macOS for iOS/macOS builds
+- **Physical macOS hardware** — Bare-metal Macs adopted as build resources
 - **Build containers** — Fedora + Android SDK for CI builds
 - **Dev sandboxes** — Fedora + Claude Code for AI-assisted development
 - **Adopted servers** — Any container you own, tunneled transparently
@@ -21,6 +22,9 @@ All resources are **location-agnostic**: Smithr runs on multiple hosts and
 routes tunnels automatically. A client on host A can lease a phone on host B
 without any networking setup. Resources are kept **warm** (pre-started and
 health-checked) so leases are instant.
+
+Develop on Linux, build for iOS on real Apple hardware — transparently. No
+macOS development machine required.
 
 ## For CI Clients (the simple version)
 
