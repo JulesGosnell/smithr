@@ -25,14 +25,13 @@ services:
   playwright:
     image: {{REGISTRY}}/smithr/playwright:latest
     pull_policy: always
-    user: root
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     depends_on:
       server:
         condition: service_healthy
     environment:
       PLAYWRIGHT_BASE_URL: ${PLAYWRIGHT_BASE_URL:-http://server:3000}
       CI: "true"
-      DOCKER_BUILD: "1"
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/playwright-ready"]
       interval: 5s
