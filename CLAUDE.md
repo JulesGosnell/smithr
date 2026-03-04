@@ -47,6 +47,7 @@ curl -s http://localhost:7070/api/compose/macos-build | \
 | `ios-phone` | iOS Simulator | `localhost:7001` (Maestro) | E2E tests |
 | `macos-build` | macOS + Xcode VM | `localhost:22` (SSH) | iOS/macOS builds |
 | `android-build` | Fedora + Android SDK | `localhost:22` (SSH) | Android builds, E2E |
+| `sandbox` | Fedora + Claude Code | `localhost:22` (SSH) | Dev sandboxes (Karls) |
 | `phone` | Android or iOS phone | `localhost:22` (SSH) | Unified near-side phone proxy |
 | `server` | Adopted server | `localhost:3000` | E2E tests against an API server |
 | `adopt-proxy` | External container | configurable | Adopt + tunnel any container |
@@ -232,6 +233,7 @@ bjarkan, madhr, logr, yr
 | `10.21.0.40` | macOS / Xcode VM | xcode.yml |
 | `10.21.0.50` | Android Build* | android-build.yml |
 | `10.21.0.50` | Mock Email* | email.yml |
+| `10.21.0.60` | Sandbox | sandbox.yml |
 | `10.21.0.50` | Physical Phone* | physical-phone.yml |
 | `10.21.0.51` | Mock SMS | sms.yml |
 | `10.21.0.52` | Physical iPhone | physical-iphone.yml |

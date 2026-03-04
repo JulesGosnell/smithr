@@ -48,6 +48,16 @@
                                  :substrate "virtual"
                                  :os "Fedora 43"}
                      :variants [{:model "Fedora 43"}]}
+   :sandbox         {:compose-files ["layers/sandbox.yml"]
+                     :env-template {"SMITHR_SANDBOX_RUNE" :auto
+                                    "SMITHR_SANDBOX_IP" :auto}
+                     :description "Headless dev sandbox (Fedora + Claude Code)"
+                     :boot-time-seconds 10
+                     :catalogue {:type "vm"
+                                 :platform "sandbox"
+                                 :substrate "virtual"
+                                 :os "Fedora 43"}
+                     :variants [{:model "Fedora 43"}]}
    :macos-vm        {:compose-files ["layers/xcode.yml"]
                      :env-template {"SMITHR_XCODE_RUNE" :auto
                                     "SMITHR_MACOS_IP" :auto
@@ -79,11 +89,13 @@
   :type-mapping {"phone:android"      :android-phone
                  "phone:ios"          :ios-phone
                  "vm:android-build"   :android-build
+                 "vm:sandbox"         :sandbox
                  "vm:macos"           :macos-vm}
   :rune-pool ["fe" "ur" "thurs" "oss" "reid" "kaun" "hagall" "naud"
               "iss" "ar" "sol" "tyr" "bjarkan" "madhr" "logr" "yr"]
   :ip-ranges {:android       {:base "10.21.0" :start 30}
               :android-build {:base "10.21.0" :start 50}
+              :sandbox       {:base "10.21.0" :start 60}
               :macos         {:base "10.21.0" :start 40}}
   :port-ranges {:android-adb   {:start 5555}
                 :android-vnc   {:start 5900}

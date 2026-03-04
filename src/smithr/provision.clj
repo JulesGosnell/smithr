@@ -89,6 +89,7 @@
   (case template-key
     :android-phone :android
     :android-build :android-build
+    :sandbox       :sandbox
     :macos-vm      :macos
     :ios-phone     :macos
     :android))
@@ -416,7 +417,7 @@
     (when cfg
       (let [counts (running-counts-by-template)
             ;; Platform sort order for grouping
-            platform-order {"android" 0 "ios" 1 "macos" 2 "android-build" 3}
+            platform-order {"android" 0 "ios" 1 "macos" 2 "android-build" 3 "sandbox" 4}
             variants (->> (:templates cfg)
                           (mapcat (fn [[k tmpl]]
                                     (let [cat-info (:catalogue tmpl)

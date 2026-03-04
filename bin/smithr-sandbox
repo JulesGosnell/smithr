@@ -46,6 +46,13 @@ Usage:
   smithr sandbox status
       Show status of all sandbox slots.
 
+  smithr sandbox lease <name>
+      Lease a sandbox via Smithr API (workspace = name, build lease).
+      Env: SMITHR_URL, SMITHR_WORKSPACE, SMITHR_LESSEE, SMITHR_TTL
+
+  smithr sandbox unlease <lease-id>
+      Unlease a sandbox by lease ID.
+
 Options:
   --help    Show this help
 EOF
@@ -181,13 +188,59 @@ cmd_status() {
     cmd_list
 }
 
+cmd_lease() {
+    local name="${1:?Usage: smithr sandbox lease <name>}"
+    validate_name "$name"
+
+    local smithr_url="${SMITHR_URL:-http://localhost:7070}"
+    local workspace="${SMITHR_WORKSPACE:-${name}}"
+    local lessee="${SMITHR_LESSEE:-sandbox-${name}}"
+    local ttl="${SMITHR_TTL:-3600}"
+
+    log_info "Leasing sandbox via Smithr: workspace=${workspace} lessee=${lessee}"
+
+    local response
+    response=$(curl -sf -X POST "${smithr_url}/api/leases" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"vm\",\"platform\":\"sandbox\",\"lease_type\":\"build\",\"workspace\":\"${workspace}\",\"lessee\":\"${lessee}\",\"ttl_seconds\":${ttl}}")
+
+    if [[ $? -ne 0 ]]; then
+        die "Failed to acquire sandbox lease"
+    fi
+
+    local lease_id tunnel_port
+    lease_id=$(echo "$response" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    tunnel_port=$(echo "$response" | grep -o '"tunnel_port":[0-9]*' | head -1 | cut -d: -f2)
+
+    log_ok "Sandbox leased: id=${lease_id} tunnel_port=${tunnel_port}"
+    log_info "  SSH: ssh -p ${tunnel_port} ${workspace}@localhost"
+    echo "$response"
+}
+
+cmd_unlease() {
+    local lease_id="${1:?Usage: smithr sandbox unlease <lease-id>}"
+
+    local smithr_url="${SMITHR_URL:-http://localhost:7070}"
+
+    log_info "Unleasing sandbox: ${lease_id}"
+    curl -sf -X DELETE "${smithr_url}/api/leases/${lease_id}"
+
+    if [[ $? -eq 0 ]]; then
+        log_ok "Sandbox unleased: ${lease_id}"
+    else
+        die "Failed to unlease sandbox: ${lease_id}"
+    fi
+}
+
 # Dispatch
 case "${1:-}" in
-    start)  shift; cmd_start "$@" ;;
-    stop)   shift; cmd_stop "$@" ;;
-    list)   cmd_list ;;
-    exec)   shift; cmd_exec "$@" ;;
-    status) cmd_status ;;
+    start)   shift; cmd_start "$@" ;;
+    stop)    shift; cmd_stop "$@" ;;
+    list)    cmd_list ;;
+    exec)    shift; cmd_exec "$@" ;;
+    status)  cmd_status ;;
+    lease)   shift; cmd_lease "$@" ;;
+    unlease) shift; cmd_unlease "$@" ;;
     help|--help|-h) usage ;;
     *) usage; exit 1 ;;
 esac

@@ -212,6 +212,7 @@
       :ios     (let [conn (or parent-conn (:connection resource))]
                  [(or (:ssh-host conn) "localhost") (or (:ssh-port conn) 10022)])
       :android-build [(or ssh-host "localhost") (or ssh-port 22)]
+      :sandbox [(or ssh-host "localhost") (or ssh-port 22)]
       ;; Default: container-ip + service-port (servers, adopted containers, etc.)
       (let [conn (:connection resource)
             ip   (or (:container-ip conn) "localhost")
@@ -237,6 +238,7 @@
           ;; the container's QEMU port mapping (10022).
           internal-port (case platform
                           :android-build 22
+                          :sandbox 22
                           :macos 22
                           :ios 22
                           fwd-port)]
@@ -460,7 +462,7 @@
   "Return the user management functions for a resource's platform.
    macOS uses dscl-based scripts, Linux uses useradd/userdel."
   [resource]
-  (if (= (:platform resource) :android-build)
+  (if (#{:android-build :sandbox} (:platform resource))
     {:ensure-user!  linux/ensure-user!
      :create-user!  linux/create-user!
      :delete-user!  linux/delete-user!}

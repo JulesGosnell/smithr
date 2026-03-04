@@ -1,0 +1,30 @@
+services:
+  sandbox:
+    image: {{REGISTRY}}/smithr/proxy:latest
+    pull_policy: always
+    stop_grace_period: 120s
+    healthcheck:
+      test: /usr/local/bin/healthcheck.sh
+      interval: 5s
+      timeout: 5s
+      retries: 200
+      start_period: 15s
+    environment:
+      SMITHR_MODE: lease
+      SMITHR_URL: {{SMITHR_URL}}
+      SMITHR_RESOURCE_TYPE: vm
+      SMITHR_PLATFORM: sandbox
+      SMITHR_LEASE_TYPE: build
+      SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
+      SMITHR_PORTS: "22"
+      SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_WORKSPACE: ${SMITHR_WORKSPACE:-}
+      SMITHR_REVERSE_PORTS: ${SMITHR_REVERSE_PORTS:-}
+    volumes:
+      - ${SMITHR_SSH_KEY:-/srv/shared/images/ssh/macos-ssh-key}:/run/secrets/ssh-key:ro,z
+    networks:
+      - smithr-network
+
+networks:
+  smithr-network:
+    external: true

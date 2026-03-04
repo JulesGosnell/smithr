@@ -100,6 +100,10 @@
                                    host-address ip)
                        :ssh-port (if (and remote? (host-port-fn 22))
                                    (host-port-fn 22) 22)}
+      :sandbox {:ssh-host (if (and remote? (host-port-fn 22))
+                              host-address ip)
+                 :ssh-port (if (and remote? (host-port-fn 22))
+                              (host-port-fn 22) 22)}
       ;; Default: direct-access resources (e.g. servers)
       (cond-> {:container-ip ip}
         remote? (assoc :ssh-host host-address)
@@ -132,7 +136,7 @@
              :device-name (get labels "smithr.resource.device-name")
              :provisioned? (= "true" (get labels "smithr.provisioned"))
              :updated-at (Instant/now)}
-      (#{:macos :android-build} platform)
+      (#{:macos :android-build :sandbox} platform)
       (assoc :max-slots (if-let [s (get labels "smithr.resource.max-slots")]
                           (Integer/parseInt s)
                           10)

@@ -376,7 +376,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private static-templates
-  #{"android-phone" "ios-phone" "macos-build" "android-build"
+  #{"android-phone" "ios-phone" "macos-build" "android-build" "sandbox"
     "maestro" "android-app" "ios-app" "ios-maestro" "adopt-proxy" "server"
     "phone" "unified-app" "unified-maestro" "playwright"})
 

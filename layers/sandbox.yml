@@ -1,0 +1,56 @@
+# layers/sandbox.yml
+#
+# Headless Dev Sandbox — Fedora container with Claude Code + Android SDK + E2E tools
+# for workspace build leases (concurrent SSH sessions, user isolation).
+#
+# Same pattern as android-build.yml but with gh CLI and Claude Code pre-installed.
+#
+# Usage:
+#   docker compose -f layers/network.yml -f layers/sandbox.yml up -d
+#
+# Environment Variables:
+#   SMITHR_PREFIX             - Container name prefix (default: smithr)
+#   SMITHR_SANDBOX_RUNE      - Instance ID (default: fe)
+#   SMITHR_SANDBOX_IP        - Fixed IP on smithr-network (default: 10.21.0.60)
+#   SMITHR_SANDBOX_MAX_SLOTS - Max concurrent build leases (default: 10)
+
+services:
+  sandbox:
+    build:
+      context: ./images/smithr-sandbox
+    image: smithr-sandbox:latest
+    container_name: ${SMITHR_PREFIX:-smithr}-sandbox-${SMITHR_SANDBOX_RUNE:-fe}
+    volumes:
+      # Mount the SSH public key to staging location (entrypoint copies to .ssh/)
+      - "${SMITHR_SSH_PUBKEY:-/srv/shared/images/ssh/macos-ssh-key.pub}:/tmp/authorized_keys:ro,z"
+      # Docker socket — allows builds inside the container to use host Docker
+      - /var/run/docker.sock:/var/run/docker.sock:z
+      # node_exporter binary for resource monitoring
+      - /srv/shared/images/node_exporter:/usr/local/bin/node_exporter:ro,z
+    labels:
+      smithr.managed: "true"
+      smithr.provisioned: "${SMITHR_PROVISIONED:-false}"
+      smithr.resource.type: "vm"
+      smithr.resource.platform: "sandbox"
+      smithr.resource.pool: "sandbox"
+      smithr.resource.substrate: "virtual"
+      smithr.resource.max-slots: "${SMITHR_SANDBOX_MAX_SLOTS:-10}"
+    ports:
+      - "${SMITHR_SANDBOX_SSH_PORT:-2223}:22"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/22'"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      default:
+        ipv4_address: ${SMITHR_SANDBOX_IP:-10.21.0.60}
+    security_opt:
+      - label=disable
+    restart: unless-stopped
+
+networks:
+  default:
+    external: true
+    name: ${SMITHR_NETWORK_NAME:-smithr-network}
