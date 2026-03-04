@@ -161,10 +161,10 @@
 
 (defn- slugify
   "Turn a device name into a DNS-safe container name slug.
-   e.g. \"Jules' iPhone 12 Pro Max\" → \"jules-iphone-12-pro-max\""
+   e.g. \"Jules\u2019 iPhone 12 Pro Max\" → \"jules-iphone-12-pro-max\""
   [s]
   (-> (str/lower-case (str s))
-      (str/replace #"[''']" "")
+      (str/replace #"[\u0027\u2018\u2019\u0060\u00B4]" "")  ; straight/curly quotes, backtick, acute
       (str/replace #"[^a-z0-9]+" "-")
       (str/replace #"^-|-$" "")))
 
@@ -443,6 +443,33 @@
     {:host host-label
      :devices (vec (concat android ios))}))
 
+(defn- cleanup-orphan-bridges!
+  "Remove wrapper containers for physical devices that are no longer connected.
+   Handles the case where Smithr restarts after a phone was unplugged — the
+   old container is still running but not tracked in device-bridges."
+  [scanned-keys]
+  (let [{:keys [out exit]} (shell/sh "docker" "ps" "-a"
+                                     "--filter" "label=smithr.resource.substrate=physical"
+                                     "--format" "{{.Names}}")
+        containers (when (zero? exit)
+                     (remove str/blank? (str/split-lines out)))]
+    (doseq [cname containers]
+      ;; Check if any scanned device would produce this container name
+      (let [tracked? (some (fn [dk] (= cname (:container-name (get @device-bridges dk))))
+                           scanned-keys)
+            ;; Also check if any current device matches by inspecting labels
+            has-device? (when-not tracked?
+                          (let [{lout :out lexit :exit}
+                                (shell/sh "docker" "inspect" cname
+                                          "--format"
+                                          "{{index .Config.Labels \"smithr.resource.serial\"}}|{{index .Config.Labels \"smithr.resource.udid\"}}")]
+                            (when (zero? lexit)
+                              (let [ids (remove str/blank? (str/split (str/trim lout) #"\|"))]
+                                (some scanned-keys ids)))))]
+        (when (and (not tracked?) (not has-device?))
+          (log/info "Removing orphan bridge container:" cname)
+          (remove-wrapper-container! cname))))))
+
 (defn register-devices!
   "Scan for physical devices, create host bridges and wrapper containers.
    The wrapper containers carry smithr labels on smithr-network, so
@@ -454,6 +481,8 @@
   (let [{:keys [devices]} (scan-all-devices host-label)
         scanned-keys (set (map device-id-key devices))
         current-bridges @device-bridges]
+    ;; Clean up orphan containers from previous runs
+    (cleanup-orphan-bridges! scanned-keys)
     ;; Register new devices
     (doseq [device devices]
       (let [dk (device-id-key device)
