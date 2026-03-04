@@ -2,6 +2,12 @@
 
 > Resource-as-a-Service for CI, testing, and development.
 
+> [!WARNING]
+> **Caveat emptor** — Smithr is just coming out of active development. The edges
+> are rough but navigable if you throw your own Claude at it. Documentation may
+> be at best incomplete and at worst misleading. Proceed with curiosity and a
+> healthy tolerance for surprises.
+
 Smithr enhances Docker with four capabilities that Docker alone doesn't provide:
 
 1. **Location independence** — Resources live on any host. A client on host A
