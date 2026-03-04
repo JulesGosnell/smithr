@@ -29,9 +29,9 @@ Any Docker container can be a Smithr resource. The project includes templates
 for common resource types:
 
 - **Emulated phones** — Android emulators (ADB access)
-- **Physical phones** — USB-attached Android and iOS devices
-- **Simulated phones** — iOS Simulators inside macOS VMs
-- **macOS + Xcode VMs** — QEMU-hosted macOS for iOS/macOS builds
+- **Physical phones** — USB-attached Android and iOS devices [^1]
+- **Simulated phones** — iOS Simulators inside macOS VMs [^1]
+- **macOS + Xcode VMs** — QEMU-hosted macOS for iOS/macOS builds [^1]
 - **Physical macOS hardware** — Bare-metal Macs adopted as build resources
 - **Build containers** — Fedora + Android SDK for CI builds
 - **Dev sandboxes** — Fedora + Claude Code for AI-assisted development
@@ -66,7 +66,7 @@ maestro test flows/
 docker compose -f android-phone.yml -p my-phone down
 ```
 
-### Lease a build workspace (macOS)
+### Lease a build workspace (macOS) [^1]
 
 ```bash
 # Fetch the proxy template (once)
@@ -105,8 +105,8 @@ docker compose -f sandbox.yml -p my-sandbox down
 | Template | Resource | Forwarded Port | Use Case |
 |----------|----------|----------------|----------|
 | `android-phone` | Android emulator | `localhost:5555` (ADB) | E2E tests |
-| `ios-phone` | iOS Simulator | `localhost:7001` (Maestro) | E2E tests |
-| `macos-build` | macOS + Xcode VM | `localhost:22` (SSH) | iOS/macOS builds |
+| `ios-phone` | iOS Simulator [^1] | `localhost:7001` (Maestro) | E2E tests |
+| `macos-build` | macOS + Xcode VM [^1] | `localhost:22` (SSH) | iOS/macOS builds |
 | `android-build` | Fedora + Android SDK | `localhost:22` (SSH) | Android builds, E2E |
 | `sandbox` | Fedora + Claude Code | `localhost:22` (SSH) | Dev sandboxes |
 | `phone` | Android or iOS phone | `localhost:22` (SSH) | Unified phone proxy |
@@ -181,16 +181,11 @@ Dashboard at `http://localhost:7070/`.
 - Linux (Fedora 43 recommended)
 - Docker with Compose v2
 - Clojure 1.12+ (control plane)
-- KVM (`/dev/kvm`) for Android emulators and macOS VMs
+- KVM (`/dev/kvm`) for Android emulators and macOS VMs [^1]
 - 16+ GB RAM (64 GB recommended for phone pools)
-
-## Legal
-
-Smithr does not download, build, or distribute macOS or any Apple software.
-The macOS VM template orchestrates a user-supplied container image via Docker
-and SSH. It is the user's responsibility to ensure compliance with Apple's
-EULA, which requires macOS virtualisation to run on Apple hardware.
 
 ## License
 
 See [LICENSE](LICENSE).
+
+[^1]: Smithr does not download, build, or distribute macOS or any Apple software. The macOS VM template orchestrates a user-supplied container image via Docker and SSH. It is the user's responsibility to ensure compliance with Apple's EULA, which requires macOS virtualisation to run on Apple hardware.
