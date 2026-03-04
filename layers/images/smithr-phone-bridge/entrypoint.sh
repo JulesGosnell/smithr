@@ -95,6 +95,14 @@ case "$PLATFORM" in
           log "RSD relay proxy started (pid $!)"
 
           echo "$RSD_IPV6 $RSD_TUNNEL_PORT" > /tmp/rsd-ready
+
+          # Mount DeveloperDiskImage if not already mounted.
+          # Required for DVT services (xcuitest, process control, etc.).
+          # Persists across container restarts but not device reboots.
+          pymobiledevice3 mounter auto-mount --rsd "$RSD_IPV6" "$RSD_TUNNEL_PORT" 2>&1 \
+            | grep -v "already mounted" || true
+          log "DeveloperDiskImage: mounted"
+
           break
         fi
         sleep 0.5

@@ -120,6 +120,10 @@ case "$SMITHR_SUBSTRATE" in
     # CRITICAL: Kill the device-side XCTest runner FIRST — it holds port 22087.
     # Killing only the bridge-side pymobiledevice3 leaves the device process alive,
     # blocking port 22087 for 60+ seconds until the device-side process times out.
+    # Ensure DeveloperDiskImage is mounted (required for DVT/XCTest).
+    # Persists across container restarts but not device reboots.
+    remote "pymobiledevice3 mounter auto-mount --rsd $RSD_IPV6 $RSD_PORT_VAL 2>&1 | grep -v 'already mounted'" || true
+
     remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT_VAL --bundle $XCTEST_RUNNER_BUNDLE_ID" 2>/dev/null || true
     remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
     remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
