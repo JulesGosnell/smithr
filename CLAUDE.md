@@ -1,30 +1,38 @@
 # Smithr
 
-> Resource-as-a-Service for CI, testing, and development. Lease any
-> containerized resource — phones, VMs, build environments, dev sandboxes —
-> with a single command. No infrastructure knowledge required.
+> Resource-as-a-Service for CI, testing, and development.
 
-## What Smithr manages
+Smithr enhances Docker with four capabilities that Docker alone doesn't provide:
 
-Smithr is a **resource abstraction layer** that serves warm, ready-to-use
-infrastructure across multiple hosts. Any containerized resource can be
-managed — the client doesn't need to know (or care) where it physically lives:
+1. **Location independence** — Resources live on any host. A client on host A
+   leases a phone on host B without knowing or caring where it runs. Smithr
+   routes SSH tunnels automatically across the cluster.
+
+2. **Leasing** — Acquire exclusive or shared access to a resource for a
+   bounded duration. When the lease expires (or the client disconnects),
+   Smithr guarantees cleanup and returns the resource to the pool.
+
+3. **Warm resources** — Containers are pre-started and health-checked. Leasing
+   is instant — no boot wait, no provisioning delay.
+
+4. **Stickiness** — Named workspaces persist across leases. Lease a sandbox
+   called `karl-1`, do work, unlease, re-lease later — your files are still
+   there.
+
+Any Docker container can be a Smithr resource. The project includes templates
+for common resource types:
 
 - **Emulated phones** — Android emulators (ADB access)
 - **Physical phones** — USB-attached Android and iOS devices
+- **Simulated phones** — iOS Simulators inside macOS VMs
 - **macOS + Xcode VMs** — QEMU-hosted macOS for iOS/macOS builds
 - **Physical macOS hardware** — Bare-metal Macs adopted as build resources
 - **Build containers** — Fedora + Android SDK for CI builds
 - **Dev sandboxes** — Fedora + Claude Code for AI-assisted development
 - **Adopted servers** — Any container you own, tunneled transparently
 
-All resources are **location-agnostic**: Smithr runs on multiple hosts and
-routes tunnels automatically. A client on host A can lease a phone on host B
-without any networking setup. Resources are kept **warm** (pre-started and
-health-checked) so leases are instant.
-
-Develop on Linux, build for iOS on real Apple hardware — transparently. No
-macOS development machine required.
+Develop on commodity Linux hardware. Share expensive, specialised resources
+— Macs, iPhones, Android phones — transparently.
 
 ## For CI Clients (the simple version)
 
