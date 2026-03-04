@@ -5,8 +5,8 @@
 > [!WARNING]
 > **Caveat emptor** — Smithr is just coming out of active development. The edges
 > are rough but navigable if you throw your own Claude at it. Documentation may
-> be at best incomplete and at worst misleading. Proceed with curiosity and a
-> healthy tolerance for surprises.
+> be at best incomplete and at worst misleading. That said, it is used 24/7 by
+> the author. Proceed with curiosity and a healthy tolerance for surprises.
 
 Smithr enhances Docker with four capabilities that Docker alone doesn't provide:
 
