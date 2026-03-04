@@ -34,6 +34,10 @@ for common resource types:
 Develop on commodity Linux hardware. Share expensive, specialised resources
 — Macs, iPhones, Android phones — transparently.
 
+## Dashboard
+
+![Smithr Dashboard](docs/dashboard.png)
+
 ## Quick Start
 
 Clients get access through a **proxy sidecar** that handles leasing, port
