@@ -44,6 +44,15 @@ Develop on commodity Linux hardware. Share expensive, specialised resources
 
 ![Smithr Dashboard](docs/dashboard.png)
 
+## In Production
+
+The CI pipeline below is what Smithr was built to support — five parallel
+builds, four concurrent E2E tests across emulated and physical phones, deploy
+on green. But because Smithr is built entirely on existing Docker abstractions
+(labels, compose, networks), it can do much more than CI.
+
+![GitHub Actions Pipeline](docs/github-actions.png)
+
 ## Quick Start
 
 Clients get access through a **proxy sidecar** that handles leasing, port
