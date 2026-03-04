@@ -27,3 +27,15 @@ smithr.pid
 
 # Compiled SUID binary (only track .c source)
 bin/smithr-tunnel
+
+# MCP config (machine-specific)
+.mcp.json
+
+# BFG repo cleaner reports
+..bfg-report/
+
+# Maestro compiled classes
+maestro/
+
+# Scratch screenshots
+smithr-*.png
