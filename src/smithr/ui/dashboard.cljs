@@ -485,9 +485,9 @@
 
 (defn- format-uptime [started-at-str]
   (when started-at-str
-    (let [started (.parse js/Date started-at-str)
-          now     (js/Date.)
-          secs    (Math/floor (/ (- (.getTime now) (.getTime started)) 1000))
+    (let [started-ms (js/Date.parse started-at-str)
+          now-ms     (.getTime (js/Date.))
+          secs       (Math/floor (/ (- now-ms started-ms) 1000))
           mins    (Math/floor (/ secs 60))
           hrs     (Math/floor (/ mins 60))
           days    (Math/floor (/ hrs 24))]
