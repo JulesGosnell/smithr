@@ -483,12 +483,28 @@
 ;; Top-level components
 ;; ---------------------------------------------------------------------------
 
+(defn- format-uptime [started-at-str]
+  (when started-at-str
+    (let [started (.parse js/Date started-at-str)
+          now     (js/Date.)
+          secs    (Math/floor (/ (- (.getTime now) (.getTime started)) 1000))
+          mins    (Math/floor (/ secs 60))
+          hrs     (Math/floor (/ mins 60))
+          days    (Math/floor (/ hrs 24))]
+      (cond
+        (>= days 1) (str days "d " (mod hrs 24) "h")
+        (>= hrs 1)  (str hrs "h " (mod mins 60) "m")
+        :else       (str mins "m")))))
+
 (defn header []
   (let [h @state/health]
     [:div.header
      [:h1 "SMITHR"
       (when-let [hash (or (:git-hash h) (:git_hash h))]
-        [:span.git-hash (str " (" hash ")")])]
+        [:span.git-hash (str " (" hash
+                              (when-let [up (format-uptime (or (:started-at h) (:started_at h)))]
+                                (str " \u2502 up " up))
+                              ")")])]
      [:div.header-right
       [:a.header-link {:href "#catalogue"} "Catalogue"]
       [:a.header-link {:href "/swagger" :target "_blank"} "API"]

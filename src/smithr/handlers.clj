@@ -19,6 +19,10 @@
         :out str/trim)
     (catch Exception _ "unknown")))
 
+(def ^:private started-at
+  "Startup timestamp captured at load time."
+  (java.time.Instant/now))
+
 ;; ---------------------------------------------------------------------------
 ;; Response helpers
 ;; ---------------------------------------------------------------------------
@@ -197,7 +201,8 @@
                     :leases     (count leases)
                     :workspaces (count workspaces)
                     :adopts     (count adopts)
-                    :git-hash   git-hash})))
+                    :git-hash   git-hash
+                    :started-at (str started-at)})))
 
 (defn list-metrics
   "GET /api/metrics"
