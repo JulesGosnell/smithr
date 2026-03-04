@@ -32,6 +32,7 @@ services:
     environment:
       PLAYWRIGHT_BASE_URL: ${PLAYWRIGHT_BASE_URL:-http://server:3000}
       CI: "true"
+      DOCKER_BUILD: "1"
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/playwright-ready"]
       interval: 5s
