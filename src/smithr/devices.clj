@@ -171,11 +171,12 @@
 (defn- container-name-for
   "Docker container name for a physical device marker.
    Uses slugified device-name for human-readable names,
-   falls back to device-id if no name is available."
+   falls back to device-id if name is unavailable or 'Unknown'."
   [device]
-  (let [slug (when-let [dn (:device-name device)]
+  (let [dn (:device-name device)
+        slug (when (and dn (not= dn "Unknown"))
                (let [s (slugify dn)]
-                 (when (seq s) s)))]
+                 (when (and (seq s) (not= s "unknown")) s)))]
     (str "smithr-" (or slug (device-id-key device)))))
 
 (defn- start-android-bridge!
@@ -487,9 +488,19 @@
     (doseq [device devices]
       (let [dk (device-id-key device)
             existing (get current-bridges dk)]
-        (when (or (nil? existing) (not (bridge-alive? existing)))
+        (if (and existing (bridge-alive? existing))
+          ;; Bridge alive — check if container needs renaming (e.g. device name
+          ;; became available after trust handshake completed)
+          (let [desired-cname (container-name-for device)
+                current-cname (:container-name existing)]
+            (when (and current-cname (not= current-cname desired-cname))
+              (log/info "Renaming bridge container:" current-cname "\u2192" desired-cname)
+              (remove-wrapper-container! current-cname)
+              (when (create-wrapper-container! host-label device (:bridge-port existing))
+                (swap! device-bridges assoc dk
+                       (assoc existing :container-name desired-cname)))))
           ;; Bridge missing or dead — (re)create
-          (when existing
+          (do (when existing
             (log/info "Bridge dead for" dk "— recreating")
             (stop-bridge! dk existing))
           (let [bridge (case (:platform device)
@@ -513,7 +524,7 @@
                            (assoc bridge
                                   :container-name cname
                                   :platform (:platform device)
-                                  :original-settings originals))))))))))
+                                  :original-settings originals)))))))))))
     ;; Remove unplugged devices
     (doseq [[dk bridge] current-bridges]
       (when-not (contains? scanned-keys dk)
