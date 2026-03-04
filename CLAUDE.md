@@ -1,13 +1,31 @@
 # Smithr
 
-> Resource-as-a-Service for CI and testing. Lease phones, build VMs, and
-> workspaces with a single command. No infrastructure knowledge required.
+> Resource-as-a-Service for CI, testing, and development. Lease any
+> containerized resource — phones, VMs, build environments, dev sandboxes —
+> with a single command. No infrastructure knowledge required.
+
+## What Smithr manages
+
+Smithr is a **resource abstraction layer** that serves warm, ready-to-use
+infrastructure across multiple hosts. Any containerized resource can be
+managed — the client doesn't need to know (or care) where it physically lives:
+
+- **Emulated phones** — Android emulators (ADB access)
+- **Physical phones** — USB-attached Android and iOS devices
+- **macOS + Xcode VMs** — QEMU-hosted macOS for iOS/macOS builds
+- **Build containers** — Fedora + Android SDK for CI builds
+- **Dev sandboxes** — Fedora + Claude Code for AI-assisted development
+- **Adopted servers** — Any container you own, tunneled transparently
+
+All resources are **location-agnostic**: Smithr runs on multiple hosts and
+routes tunnels automatically. A client on host A can lease a phone on host B
+without any networking setup. Resources are kept **warm** (pre-started and
+health-checked) so leases are instant.
 
 ## For CI Clients (the simple version)
 
-Smithr manages Android phones, iOS phones, macOS build VMs, and Android build
-containers across multiple hosts. Clients get access through a **proxy sidecar**
-that handles leasing, port forwarding, and cleanup automatically.
+Clients get access through a **proxy sidecar** that handles leasing, port
+forwarding, and cleanup automatically.
 
 ### Lease a phone (Android)
 
