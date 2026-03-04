@@ -300,7 +300,15 @@
         ;; non-nil host-address), and the target is a Docker network IP, hop through
         ;; the remote host to reach the Docker network.
         {:keys [fwd-host fwd-port hop]}
-        (let [resource-host-addr (docker/host-address (:host resource))]
+        (let [resource-host-addr (docker/host-address (:host resource))
+              ;; For local resources with hostname-based targets (e.g. physical
+              ;; phone bridges), rewrite to localhost to avoid SSH-to-self which
+              ;; requires SSH config for the machine's own hostname.
+              target-host (if (and (nil? resource-host-addr)
+                                   (not (docker-network-ip? target-host))
+                                   (not= target-host "localhost"))
+                            "localhost"
+                            target-host)]
           (if (and (docker-network-ip? target-host)
                    resource-host-addr)
             {:fwd-host target-host :fwd-port target-port :hop resource-host-addr}
