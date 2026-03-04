@@ -184,6 +184,13 @@ Dashboard at `http://localhost:7070/`.
 - KVM (`/dev/kvm`) for Android emulators and macOS VMs
 - 16+ GB RAM (64 GB recommended for phone pools)
 
+## Legal
+
+Smithr does not download, build, or distribute macOS or any Apple software.
+The macOS VM template orchestrates a user-supplied container image via Docker
+and SSH. It is the user's responsibility to ensure compliance with Apple's
+EULA, which requires macOS virtualisation to run on Apple hardware.
+
 ## License
 
 See [LICENSE](LICENSE).
