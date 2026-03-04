@@ -42,46 +42,52 @@ forwarding, and cleanup automatically.
 ### Lease a phone (Android)
 
 ```bash
-curl -s http://localhost:7070/api/compose/android-phone | \
-  SMITHR_LESSEE="ci-123" docker compose -f - -p my-phone up -d
+# Fetch the proxy template (once)
+curl -s http://localhost:7070/api/compose/android-phone -o android-phone.yml
+
+# Start — proxy acquires lease and forwards ADB
+SMITHR_LESSEE="ci-123" docker compose -f android-phone.yml -p my-phone up -d
 
 # ADB is now available at localhost:5555
 adb connect localhost:5555
 maestro test flows/
 
-# Done — tears down lease automatically
-curl -s http://localhost:7070/api/compose/android-phone | \
-  docker compose -f - -p my-phone down
+# Stop — proxy unleases automatically
+docker compose -f android-phone.yml -p my-phone down
 ```
 
 ### Lease a build workspace (macOS)
 
 ```bash
-curl -s http://localhost:7070/api/compose/macos-build | \
-  SMITHR_LESSEE="ci-123" SMITHR_WORKSPACE="my-build" \
-  docker compose -f - -p my-build up -d
+# Fetch the proxy template (once)
+curl -s http://localhost:7070/api/compose/macos-build -o macos-build.yml
+
+# Start — proxy acquires lease and forwards SSH
+SMITHR_LESSEE="ci-123" SMITHR_WORKSPACE="my-build" \
+  docker compose -f macos-build.yml -p my-build up -d
 
 # Run commands on the remote VM — no SSH keys or ports needed
 docker exec my-build-macos-build-1 workspace-ssh "xcodebuild -workspace ..."
 
-# Cleanup
-curl -s http://localhost:7070/api/compose/macos-build | \
-  docker compose -f - -p my-build down
+# Stop — proxy unleases automatically
+docker compose -f macos-build.yml -p my-build down
 ```
 
 ### Lease a dev sandbox
 
 ```bash
-curl -s http://localhost:7070/api/compose/sandbox | \
-  SMITHR_LESSEE="ci-123" SMITHR_WORKSPACE="karl-1" \
-  docker compose -f - -p my-sandbox up -d
+# Fetch the proxy template (once)
+curl -s http://localhost:7070/api/compose/sandbox -o sandbox.yml
+
+# Start — proxy acquires lease and forwards SSH
+SMITHR_LESSEE="ci-123" SMITHR_WORKSPACE="karl-1" \
+  docker compose -f sandbox.yml -p my-sandbox up -d
 
 # SSH into the sandbox — Claude Code, gh CLI, Android SDK all pre-installed
 docker exec my-sandbox-sandbox-1 workspace-ssh "claude --version"
 
-# Cleanup
-curl -s http://localhost:7070/api/compose/sandbox | \
-  docker compose -f - -p my-sandbox down
+# Stop — proxy unleases automatically
+docker compose -f sandbox.yml -p my-sandbox down
 ```
 
 ## Available Templates
@@ -103,7 +109,7 @@ curl -s http://localhost:7070/api/compose/sandbox | \
 ┌──────────────────────────────────────────────────────────┐
 │  CI Runner / Client                                      │
 │                                                          │
-│  curl template │ docker compose up │ run tests │ down    │
+│  docker compose up  │  run tests  │  docker compose down  │
 └───────┬────────────────┬───────────────────────────┬─────┘
         │                │                           │
    ┌────▼────┐    ┌──────▼──────┐              ┌─────▼─────┐
