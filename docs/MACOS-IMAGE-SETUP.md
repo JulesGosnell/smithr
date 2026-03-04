@@ -1,4 +1,4 @@
-# macOS VM Image Setup
+# macOS VM Image Setup [^1]
 
 ## Overview
 
@@ -102,3 +102,5 @@ If you need to create a fresh image (2-4 hours):
 
 - **Original image**: `artha-sonoma.img` with `claude` user (from Artha project)
 - **2026-02-17**: Copied to `smithr-sonoma.img`, created `smithr` admin user, removed `claude` user, configured auto-login, compacted QCOW2
+
+[^1]: Smithr does not download, build, or distribute macOS or any Apple software. The macOS VM template orchestrates a user-supplied container image via Docker and SSH. It is the user's responsibility to ensure compliance with Apple's EULA, which requires macOS virtualisation to run on Apple hardware.
