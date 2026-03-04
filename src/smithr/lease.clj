@@ -884,8 +884,10 @@
                          (assoc-in [:leases lease-id] lease))))
                  ;; No resource available
                  s))))
-    ;; If no candidates found and provisioning is available, try lazy provisioning
+    ;; If no candidates found and provisioning is available, try lazy provisioning.
+    ;; Never auto-provision when substrate=physical — physical devices can't be created.
     (if (and (nil? @result) (not retried?)
+             (not= substrate "physical")
              (provision/can-provision? (keyword type) (keyword platform)))
       (do
         (log/info "No warm resource for" type platform "- attempting lazy provisioning")
