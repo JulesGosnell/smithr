@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.ui.dashboard
   "Dashboard components for the Smithr UI — nested box visualization.
    Hosts contain resources, resources contain child resources and leases."

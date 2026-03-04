@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.clojure-mcp
   (:require [nrepl.server :refer [start-server] :rename {start-server start-nrepl-server}]))
 

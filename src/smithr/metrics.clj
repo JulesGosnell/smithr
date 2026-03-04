@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.metrics
   "Resource monitoring via Prometheus node_exporter.
    Scrapes node_exporter endpoints on managed resources every 4s,

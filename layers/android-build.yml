@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # layers/android-build.yml
 #
 # Android Build VM — lightweight Fedora container with Android SDK + Node.js

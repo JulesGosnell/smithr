@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Physical phone bridge — proxies ADB from host bridge to container port 5555.
 #
 # The host runs:  adb forward + socat (managed by smithr.devices)

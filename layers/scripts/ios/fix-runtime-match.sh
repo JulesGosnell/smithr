@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # fix-runtime-match.sh — Set SDK-to-runtime override for Xcode 16.2
 #

@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.core
   "Entry point for Smithr resource pool manager.
    Starts Docker event subscriptions, GC loop, and HTTP server."

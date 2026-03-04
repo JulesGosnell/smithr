@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # Physical Android phone proxy — exposes a USB-connected phone as a Smithr resource.
 #
 # The phone must have ADB over TCP enabled:

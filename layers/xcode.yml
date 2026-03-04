@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # layers/xcode.yml
 #
 # Xcode VM Layer - macOS Sonoma + Xcode via Docker-OSX (QEMU/KVM)

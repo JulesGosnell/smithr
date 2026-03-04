@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # Refresh Smithr on one or both hosts: git pull, restart service.
 #

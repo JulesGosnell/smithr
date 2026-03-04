@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # smithr-proxy template: macos-build
 #
 # Acquires a shared build lease on a macOS VM and forwards SSH port 22.

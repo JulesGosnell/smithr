@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Build the smithr-phone-bridge Docker image.
 #
 # Usage:

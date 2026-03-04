@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # layers/ios.yml
 #
 # iOS Simulator Sidecar - Boots iOS Simulator inside the macOS VM

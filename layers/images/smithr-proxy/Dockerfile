@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 FROM alpine:3.21
 
 RUN apk add --no-cache socat curl jq bash openssh-client

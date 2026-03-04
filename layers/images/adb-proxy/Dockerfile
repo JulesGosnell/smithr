@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # Phone bridge — wraps a physical phone as a container with ADB on port 5555.
 #
 # Bridges host-side ADB forward into the container via socat.

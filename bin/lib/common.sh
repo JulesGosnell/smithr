@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # smithr/bin/lib/common.sh — Shared utilities for all Smithr scripts
 #
 # Sourced by other scripts. Do not execute directly.

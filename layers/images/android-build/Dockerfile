@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # Smithr Android Build Image
 #
 # Fedora 43 base (matches host) + Android SDK + Node.js + sshd

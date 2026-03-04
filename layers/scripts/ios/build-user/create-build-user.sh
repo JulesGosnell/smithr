@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # create-build-user.sh — Create a macOS user for an isolated build environment
 #

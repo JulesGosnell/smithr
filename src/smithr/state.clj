@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.state
   "Atom-based state management for resources, leases, and hosts.
    All state mutations happen via swap! for atomicity.")

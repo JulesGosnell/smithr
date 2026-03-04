@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # Run a Maestro test on iOS.
 # Called via: docker exec <container> /run-test.sh /flows/login.yaml

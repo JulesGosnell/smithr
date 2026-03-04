@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # iOS Maestro sidecar — persistent container for running Maestro tests.
 # Stays alive as a sidecar; run tests via:

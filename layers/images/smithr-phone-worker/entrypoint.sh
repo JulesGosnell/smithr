@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # smithr-phone-worker entrypoint
 #
 # Universal near-side worker container. Provides SSH access + testing

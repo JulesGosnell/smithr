@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # smithr/bin/lib/config.sh — YAML config parser for smithr.yml
 #
 # Reads a project's smithr.yml and makes values available via shell functions.

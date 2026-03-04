@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.config
   "EDN config loader using Aero."
   (:require [aero.core :as aero]

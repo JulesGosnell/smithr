@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.ui.api
   "HTTP client for polling the Smithr API."
   (:require [ajax.core :refer [GET POST DELETE]]

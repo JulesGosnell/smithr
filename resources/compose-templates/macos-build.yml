@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 services:
   macos-build:
     image: {{REGISTRY}}/smithr/proxy:latest

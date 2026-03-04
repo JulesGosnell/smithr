@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Build the smithr-phone-worker Docker image.
 #
 # Copies Maestro tarball and patched smithr jars from /srv/shared/images

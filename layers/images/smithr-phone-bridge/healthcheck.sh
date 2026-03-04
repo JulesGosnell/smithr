@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Healthcheck — verify device protocol is responsive through the bridge.
 
 PLATFORM="${PLATFORM:-android}"

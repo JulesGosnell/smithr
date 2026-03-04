@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # ssh-common.sh — Shared SSH connection setup for iOS sidecars.
 # Source this file to get SSH variables and the remote() function.
 #

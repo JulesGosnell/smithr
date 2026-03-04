@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.compose
   "Shell out to docker compose CLI for container lifecycle operations."
   (:require [clojure.tools.logging :as log]

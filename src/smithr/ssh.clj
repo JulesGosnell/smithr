@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.ssh
   "Shared SSH utilities: key resolution and common SSH operations."
   (:require [clojure.tools.logging :as log]

@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Physical phone bridge — proxies device protocol from host bridge to container.
 #
 # Android: socat container:5555 → host:BRIDGE_PORT (ADB)

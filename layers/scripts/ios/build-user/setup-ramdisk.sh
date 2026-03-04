@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 #
 # setup-ramdisk.sh — Create a RAM disk for ephemeral build user home directories
 #

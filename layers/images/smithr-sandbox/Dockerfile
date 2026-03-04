@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # Smithr Sandbox Image
 #
 # Headless dev sandbox for Claude Code workers (Karls).

@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.handlers
   "Ring handler implementations for the Smithr API."
   (:require [smithr.state :as state]

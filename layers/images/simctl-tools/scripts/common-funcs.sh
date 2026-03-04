@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # common-funcs.sh — Shared utility functions for iOS sidecars.
 # Source this file to get logging, SSH wait, and readiness helpers.
 #

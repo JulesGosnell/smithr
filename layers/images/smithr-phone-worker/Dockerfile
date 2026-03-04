@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 FROM eclipse-temurin:21-jre-alpine
 
 RUN apk add --no-cache \

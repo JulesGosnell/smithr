@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # layers/tls-proxy.yml
 #
 # TLS Proxy Layer - Caddy HTTPS termination

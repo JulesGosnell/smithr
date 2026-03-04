@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # Physical iOS — pymobiledevice3 operations on bridge container.
 # Sourced by entrypoint.sh when SMITHR_SUBSTRATE=physical.
 #

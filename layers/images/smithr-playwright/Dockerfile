@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 FROM mcr.microsoft.com/playwright:v1.58.0-noble
 
 RUN npm install -g pnpm@9

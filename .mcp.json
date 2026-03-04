@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "GITHUB_PERSONAL_ACCESS_TOKEN=$(gh auth token) exec npx -y @modelcontextprotocol/server-github"
+      ]
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {}
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
+    },
+    "clojure-tools": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd /home/jules/src/smithr && ./bin/mcp-clojure-tools.sh"
+      ]
+    },
+    "clojure-language-server": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd /home/jules/src/smithr && ./bin/mcp-language-server.sh"
+      ]
+    }
+  }
+}

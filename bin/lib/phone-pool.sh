@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # smithr/bin/lib/phone-pool.sh — Phone pool management core
 #
 # Manages warm pools of Android emulators and iOS simulators.

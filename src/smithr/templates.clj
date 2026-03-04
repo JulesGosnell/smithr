@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.templates
   "Dynamic template management — publish, serve, and provision from
    user-uploaded compose templates.

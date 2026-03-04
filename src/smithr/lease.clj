@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.lease
   "Lease acquire/unlease/GC logic.
    Uses swap! on state atom for atomic compare-and-set semantics.

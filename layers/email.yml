@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # layers/email.yml
 #
 # Mock Resend Email API for E2E testing

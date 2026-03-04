@@ -1,3 +1,6 @@
+;; Copyright 2026 Jules Gosnell
+;; SPDX-License-Identifier: Apache-2.0
+
 (ns smithr.linux
   "Linux user lifecycle management via SSH.
    Creates and deletes per-build user accounts on Linux containers

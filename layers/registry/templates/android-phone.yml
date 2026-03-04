@@ -1,3 +1,6 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
 # smithr-proxy template: android-phone
 #
 # Acquires a lease on an Android phone (emulator) and forwards ADB port 5555.

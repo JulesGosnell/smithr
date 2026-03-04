@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
 # Start XCTest runner on an iOS device via DVT protocol.
 #
 # Runs inside the bridge container where the RSD tunnel's TUN device
