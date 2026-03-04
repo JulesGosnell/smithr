@@ -26,5 +26,16 @@ RUN curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo \
 # Claude Code (Anthropic CLI)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Voice mode: audio libraries + voice-mode package
+RUN dnf install -y \
+    pulseaudio-utils alsa-utils alsa-plugins-pulseaudio \
+    portaudio portaudio-devel libsndfile libsndfile-devel \
+    python3-devel gcc alsa-lib-devel python3-pip \
+    && dnf clean all \
+    && pip3 install voice-mode
+
+# Add smithr user to audio group
+RUN usermod -aG audio smithr
+
 # Export additional env vars in global profile
 RUN echo 'export PATH="$PATH:$(npm root -g)/.bin"' >> /etc/profile.d/smithr-env.sh
