@@ -37,7 +37,7 @@ EOF
 }
 
 cmd_list() {
-  docker ps --filter "name=physical-" \
+  docker ps --filter "label=smithr.resource.substrate=physical" \
     --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null
 }
 
@@ -133,7 +133,7 @@ cmd_restart() {
   if [ "${1:-}" = "--all" ]; then
     while IFS= read -r name; do
       [ -n "$name" ] && targets+=("$name")
-    done < <(docker ps --filter "name=physical-" --format '{{.Names}}' 2>/dev/null)
+    done < <(docker ps --filter "label=smithr.resource.substrate=physical" --format '{{.Names}}' 2>/dev/null)
   elif [ -n "${1:-}" ]; then
     targets+=("$1")
   else

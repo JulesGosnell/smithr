@@ -159,10 +159,24 @@
   [device]
   (or (:serial device) (:udid device)))
 
+(defn- slugify
+  "Turn a device name into a DNS-safe container name slug.
+   e.g. \"Jules' iPhone 12 Pro Max\" → \"jules-iphone-12-pro-max\""
+  [s]
+  (-> (str/lower-case (str s))
+      (str/replace #"[''']" "")
+      (str/replace #"[^a-z0-9]+" "-")
+      (str/replace #"^-|-$" "")))
+
 (defn- container-name-for
-  "Docker container name for a physical device marker."
+  "Docker container name for a physical device marker.
+   Uses slugified device-name for human-readable names,
+   falls back to device-id if no name is available."
   [device]
-  (str "physical-" (device-id-key device)))
+  (let [slug (when-let [dn (:device-name device)]
+               (let [s (slugify dn)]
+                 (when (seq s) s)))]
+    (str "smithr-" (or slug (device-id-key device)))))
 
 (defn- start-android-bridge!
   "Start adb forward + socat for a physical Android device.

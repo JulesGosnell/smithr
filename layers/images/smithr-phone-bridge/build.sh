@@ -20,8 +20,8 @@ if [ "$1" = "--restart" ]; then
     --format '{{.Names}}' 2>/dev/null || true)
 
   if [ -z "$BRIDGES" ]; then
-    # Fallback: find by name convention (physical-*)
-    BRIDGES=$(docker ps --filter "name=physical-" --filter "status=running" \
+    # Fallback: find by substrate label
+    BRIDGES=$(docker ps --filter "label=smithr.resource.substrate=physical" --filter "status=running" \
       --format '{{.Names}}' 2>/dev/null || true)
   fi
 

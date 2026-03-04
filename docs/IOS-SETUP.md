@@ -486,7 +486,31 @@ trust. The phone needs internet access (WiFi) to verify the certificate
 with Apple's servers. You will also need to enter your **passcode** on
 the phone to confirm the trust.
 
-#### Step 4: Verify USB Connection
+#### Step 4: CI Hardening (Unattended Operation)
+
+These settings prevent the phone from interrupting CI runs with prompts,
+lock screens, or notifications. Do these once per phone.
+
+1. **Disable Passcode** — Settings > Face ID & Passcode > Enter passcode >
+   Turn Passcode Off > Confirm. Eliminates lock screen prompts.
+
+2. **Disable Auto-Lock** — Settings > Display & Brightness > Auto-Lock >
+   Never. Keeps the screen on permanently.
+
+3. **Disable Notification Previews** — Settings > Notifications > Show
+   Previews > Never. Prevents popup banners from obscuring test UI.
+
+4. **Airplane Mode + Wi-Fi** — Settings > Airplane Mode > ON, then
+   Settings > Wi-Fi > ON. Blocks incoming calls/SMS while keeping
+   network access for certificate verification and test traffic.
+
+5. **Disable Automatic Updates** — Settings > General > Software Update >
+   Automatic Updates > toggle ALL off. Prevents mid-test update prompts.
+
+6. **Disable Siri** — Settings > Siri & Search > toggle off all
+   activation triggers. Prevents accidental Siri activation during tests.
+
+#### Step 5: Verify USB Connection
 
 ```bash
 # Check usbmuxd sees the device
@@ -497,7 +521,7 @@ idevice_id -l
 ideviceinfo -u <UDID> -k DeviceName
 ```
 
-#### Step 5: Verify RSD Tunnel
+#### Step 6: Verify RSD Tunnel
 
 ```bash
 # Start an on-demand tunnel (no sudo needed with SUID binary)
