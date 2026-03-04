@@ -469,7 +469,33 @@
                                 (some scanned-keys ids)))))]
         (when (and (not tracked?) (not has-device?))
           (log/info "Removing orphan bridge container:" cname)
-          (remove-wrapper-container! cname))))))
+          ;; Get platform label before removing (need it for state cleanup)
+          (let [platform (let [{lout :out lexit :exit}
+                               (shell/sh "docker" "inspect" cname "--format"
+                                         "{{index .Config.Labels \"smithr.resource.platform\"}}")]
+                           (when (zero? lexit) (str/trim lout)))]
+            (remove-wrapper-container! cname)
+            ;; Also remove from Smithr state (Docker events may not fire during startup)
+            (when platform
+              (doseq [h (state/hosts)]
+                (state/remove-resource! (str (:label h) ":" platform ":" cname))))))))))
+
+(defn- cleanup-stale-physical-resources!
+  "Remove state entries for physical resources whose containers no longer exist.
+   Handles the case where a container was removed while Smithr was down —
+   cleanup-orphan-bridges! can't catch these because it iterates Docker containers."
+  [scanned-keys]
+  (let [container-set (let [{:keys [out exit]}
+                            (shell/sh "docker" "ps" "-a"
+                                      "--filter" "label=smithr.resource.substrate=physical"
+                                      "--format" "{{.Names}}")]
+                        (when (zero? exit)
+                          (set (remove str/blank? (str/split-lines out)))))]
+    (doseq [r (state/resources)]
+      (when (and (= "physical" (:substrate r))
+                 (not (contains? container-set (:container r))))
+        (log/info "Removing stale physical resource from state:" (:id r))
+        (state/remove-resource! (:id r))))))
 
 (defn register-devices!
   "Scan for physical devices, create host bridges and wrapper containers.
@@ -484,6 +510,8 @@
         current-bridges @device-bridges]
     ;; Clean up orphan containers from previous runs
     (cleanup-orphan-bridges! scanned-keys)
+    ;; Clean up state entries for containers that no longer exist
+    (cleanup-stale-physical-resources! scanned-keys)
     ;; Register new devices
     (doseq [device devices]
       (let [dk (device-id-key device)
