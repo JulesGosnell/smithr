@@ -18,8 +18,8 @@
 #   APP_DIR              — Host path to the application source (mounted at /app)
 #   PLAYWRIGHT_BASE_URL  — URL the server is reachable at (default: http://server:3000)
 #
-# The node_modules volume persists across runs so pnpm install only happens
-# on the first cold start (~3 min). Subsequent warm starts skip it entirely.
+# Dependencies are installed fresh each run (~2.5 min). A named volume was
+# tried but caused root-ownership conflicts across container restarts.
 #
 services:
   playwright:
@@ -41,12 +41,8 @@ services:
     stop_grace_period: 30s
     volumes:
       - ${APP_DIR:-.}:/app:z
-      - playwright-deps:/app/node_modules
     networks:
       - internal
-
-volumes:
-  playwright-deps:
 
 networks:
   internal:
