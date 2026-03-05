@@ -68,7 +68,8 @@ fi
 # container restart. We re-provision them from the host-mounted /shared-images/.
 if [ -f /shared-images/ios-signing/Certificates.p12 ]; then
     log "Provisioning signing files..."
-    ssh_cmd "mkdir -p /Users/smithr/signing"
+    # Ensure smithr home is world-traversable so build users can reach signing/
+    ssh_cmd "chmod o+rx /Users/smithr && mkdir -p /Users/smithr/signing"
     scp $SSH_OPTS -P "$SSH_PORT" \
         /shared-images/ios-signing/Certificates.p12 \
         /shared-images/ios-signing/dev.mobileprovision \
