@@ -41,6 +41,8 @@ services:
       # Mount simulator boot script
       - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ios-sim-boot.sh:/boot.sh:z"
       - "${SMITHR_SCRIPTS_DIR:-./scripts/ios}/ssh/macos-ssh-key:/ssh-key/macos-ssh-key:z"
+      # Mount shared images for provisioning signing files + universal driver jar
+      - "${SMITHR_SHARED_IMAGES:-/srv/shared/images}:/shared-images:ro,z"
     environment:
       SSH_HOST: "${SMITHR_PREFIX:-smithr}-xcode-${SMITHR_XCODE_RUNE:-fe}"
       SSH_PORT: "10022"

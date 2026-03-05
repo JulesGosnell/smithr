@@ -63,6 +63,37 @@ else
     log "WARNING: Could not detect Xcode SDK version"
 fi
 
+# ─── Provision volatile overlay with signing files + universal driver jar ───
+# The VM runs in volatile overlay mode, so these files are lost on every
+# container restart. We re-provision them from the host-mounted /shared-images/.
+if [ -f /shared-images/ios-signing/Certificates.p12 ]; then
+    log "Provisioning signing files..."
+    ssh_cmd "mkdir -p /Users/smithr/signing"
+    scp $SSH_OPTS -P "$SSH_PORT" \
+        /shared-images/ios-signing/Certificates.p12 \
+        /shared-images/ios-signing/dev.mobileprovision \
+        /shared-images/ios-signing/AppleWWDRCAG3.cer \
+        /shared-images/ios-signing/.p12-password \
+        "$SSH_USER@$SSH_HOST:/Users/smithr/signing/" 2>/dev/null
+    # Copy additional profiles if present
+    for f in /shared-images/ios-signing/*.mobileprovision; do
+        [ -f "$f" ] && scp $SSH_OPTS -P "$SSH_PORT" "$f" "$SSH_USER@$SSH_HOST:/Users/smithr/signing/" 2>/dev/null || true
+    done
+    log "Signing files provisioned."
+else
+    log "WARNING: No signing files at /shared-images/ios-signing/ — device builds will be unsigned"
+fi
+
+if [ -f /shared-images/maestro-ios-driver-smithr.jar ]; then
+    log "Provisioning universal XCTest driver jar..."
+    scp $SSH_OPTS -P "$SSH_PORT" \
+        /shared-images/maestro-ios-driver-smithr.jar \
+        "$SSH_USER@$SSH_HOST:/Users/smithr/.maestro/lib/maestro-ios-driver.jar" 2>/dev/null
+    log "Universal XCTest driver jar provisioned."
+else
+    log "WARNING: No universal driver jar at /shared-images/maestro-ios-driver-smithr.jar — Simulator tests may fail on x86_64"
+fi
+
 # Shutdown all devices BEFORE opening Simulator.app
 # If we open Simulator first, it auto-boots the default device AND opens windows
 # for previously used devices. Shutting down first ensures a clean slate.
