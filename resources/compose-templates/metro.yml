@@ -1,0 +1,152 @@
+# Copyright 2026 Jules Gosnell
+# SPDX-License-Identifier: Apache-2.0
+
+#
+# Metro bundler sidecar — hot-reload for Smithr-managed phones
+#
+# Runs Metro (React Native's JS bundler) in a container and routes
+# port 8081 to the leased phone, enabling hot-reload on all combos:
+#   android/emulated, android/physical, ios/simulated, ios/physical
+#
+# Compose alongside existing phone + app templates:
+#
+#   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
+#   curl -s http://localhost:7070/api/compose/android-app > /tmp/app.yml
+#   curl -s http://localhost:7070/api/compose/metro > /tmp/metro.yml
+#   SMITHR_PLATFORM=android SMITHR_LESSEE=jules-dev \
+#     APP_PATH=/path/to/apk-dir APP_FILE=app-debug.apk BUNDLE_ID=care.artha.mobile \
+#     METRO_SOURCE=/home/jules/src/artha \
+#     docker compose -f /tmp/phone.yml -f /tmp/app.yml -f /tmp/metro.yml \
+#       -p dev up -d
+#
+# Env vars:
+#   METRO_SOURCE      — host path to monorepo root (required, mounted at /src)
+#   SMITHR_PLATFORM   — android | ios (required)
+#   SMITHR_SUBSTRATE  — emulated | simulated | physical (optional)
+#   METRO_PORT        — Metro bundler port (default: 8081)
+#   METRO_SUBDIR      — subdirectory for Metro within source (default: apps/mobile)
+#   ADB_TARGET        — ADB endpoint for Android (default: android-phone:5555)
+#   SSH_TARGET        — SSH endpoint for iOS simulated (default: ios-phone:22)
+#   SSH_KEY_PATH      — host path to SSH private key (default: ~/.ssh/id_macos)
+#
+services:
+  metro:
+    image: node:22-slim
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        T0=$$(date +%s)
+        log() { echo "[metro] [$$(( $$(date +%s) - T0 ))s] $$*"; }
+
+        PORT=$${METRO_PORT:-8081}
+        SUBDIR=$${METRO_SUBDIR:-apps/mobile}
+
+        # ── Teardown ──────────────────────────────────────────
+        teardown() {
+            log "Teardown starting..."
+            # Kill Metro and any background processes
+            kill $$(jobs -p) 2>/dev/null || true
+            log "Teardown complete."
+            exit 0
+        }
+        trap teardown TERM INT
+
+        # ── Install platform tools ────────────────────────────
+        log "Installing platform tools..."
+        apt-get update -qq && apt-get install -y -qq curl socat >/dev/null 2>&1
+        if [ "$$SMITHR_PLATFORM" = "android" ]; then
+            apt-get install -y -qq android-tools-adb >/dev/null 2>&1
+            log "ADB installed."
+        elif [ "$$SMITHR_PLATFORM" = "ios" ]; then
+            apt-get install -y -qq openssh-client >/dev/null 2>&1
+            log "SSH client installed."
+        fi
+
+        # ── Install pnpm if needed ────────────────────────────
+        if ! command -v pnpm >/dev/null 2>&1; then
+            log "Installing pnpm..."
+            npm install -g pnpm >/dev/null 2>&1
+        fi
+
+        # ── Check node_modules ────────────────────────────────
+        cd /src
+        if [ ! -d node_modules ]; then
+            log "node_modules missing, running pnpm install..."
+            pnpm install
+        fi
+
+        # ── Platform-specific port routing ────────────────────
+        if [ "$$SMITHR_PLATFORM" = "android" ]; then
+            log "Connecting ADB to $$ADB_TARGET..."
+            for i in $$(seq 1 60); do
+                if adb connect "$$ADB_TARGET" 2>/dev/null | grep -q "connected"; then
+                    break
+                fi
+                sleep 2
+            done
+            adb -s "$$ADB_TARGET" wait-for-device
+            log "ADB connected."
+
+            # Reverse port so device reaches Metro at localhost:PORT
+            adb -s "$$ADB_TARGET" reverse tcp:$$PORT tcp:$$PORT
+            log "ADB reverse tcp:$$PORT established."
+
+        elif [ "$$SMITHR_PLATFORM" = "ios" ]; then
+            if [ "$${SMITHR_SUBSTRATE:-simulated}" = "physical" ]; then
+                # Physical iOS: Metro binds 0.0.0.0, device reaches it via LAN
+                log "iOS physical: Metro will bind 0.0.0.0:$$PORT"
+            else
+                # Simulated iOS: SSH reverse tunnel into macOS VM
+                SSH_USER=$${SSH_USER:-smithr}
+                SSH_HOST=$$(echo "$$SSH_TARGET" | cut -d: -f1)
+                SSH_PORT=$$(echo "$$SSH_TARGET" | cut -d: -f2)
+
+                log "Waiting for SSH at $$SSH_TARGET..."
+                for i in $$(seq 1 60); do
+                    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 \
+                           -i /root/.ssh/id_macos \
+                           -p "$$SSH_PORT" "$$SSH_USER@$$SSH_HOST" true 2>/dev/null; then
+                        break
+                    fi
+                    sleep 2
+                done
+
+                log "Establishing SSH reverse tunnel -R $$PORT:localhost:$$PORT..."
+                ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 \
+                    -i /root/.ssh/id_macos \
+                    -p "$$SSH_PORT" "$$SSH_USER@$$SSH_HOST" \
+                    -R "$$PORT:localhost:$$PORT" -N &
+                log "SSH reverse tunnel established."
+            fi
+        fi
+
+        # ── Start Metro ───────────────────────────────────────
+        cd /src/$$SUBDIR
+        log "Starting Metro on port $$PORT in /src/$$SUBDIR..."
+        touch /tmp/metro-ready
+        exec npx expo start --dev-client --port $$PORT --non-interactive
+    environment:
+      SMITHR_PLATFORM: ${SMITHR_PLATFORM:?SMITHR_PLATFORM required (android or ios)}
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
+      METRO_PORT: ${METRO_PORT:-8081}
+      METRO_SUBDIR: ${METRO_SUBDIR:-apps/mobile}
+      ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
+      SSH_TARGET: ${SSH_TARGET:-ios-phone:22}
+      SSH_USER: ${SSH_USER:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${METRO_PORT:-8081}/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 120s
+    stop_grace_period: 15s
+    volumes:
+      - ${METRO_SOURCE:?METRO_SOURCE must be set}:/src:z
+      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
+      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/id_macos}:/root/.ssh/id_macos:ro,z
+    networks:
+      - internal
+
+networks:
+  internal:

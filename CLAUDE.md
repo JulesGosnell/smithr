@@ -91,6 +91,7 @@ docker compose -f macos-build.yml -p my-build down
 | `ios-maestro` | iOS Maestro sidecar | — | iOS E2E test orchestration |
 | `unified-app` | Near-side app sidecar | — | Platform-aware app lifecycle |
 | `unified-maestro` | Near-side Maestro | — | Platform-aware test orchestration |
+| `metro` | Metro JS bundler | `localhost:8081` | Hot-reload dev ([docs](docs/METRO-HOT-RELOAD.md)) |
 
 ### Environment variables
 
