@@ -3,8 +3,9 @@
 
 # Smithr Sandbox Image
 #
-# Headless dev sandbox for Claude Code workers (Karls).
-# Extends the android-build image with gh CLI and claude-code.
+# Dev sandbox for Claude Code workers (Karls).
+# Extends the android-build image with gh CLI, Claude Code, and Xfce4 desktop + VNC.
+# Can run headless (SSH only) or with a desktop (VNC on port 5900).
 #
 # Build:
 #   docker build -t smithr-sandbox:latest layers/images/smithr-sandbox/
@@ -37,8 +38,26 @@ RUN dnf install -y \
     && dnf clean all \
     && pip3 install voice-mode
 
+# ---------------------------------------------------------------------------
+# Layer 5: Desktop environment (Xfce4 + TigerVNC)
+# ---------------------------------------------------------------------------
+RUN dnf install -y \
+    xfce4-session xfwm4 xfce4-panel xfce4-terminal xfdesktop xfce4-settings \
+    tigervnc-server dbus-x11 xorg-x11-xinit \
+    dejavu-sans-fonts dejavu-sans-mono-fonts \
+    && dnf clean all
+
 # Add smithr user to audio group
 RUN usermod -aG audio smithr
 
 # Export additional env vars in global profile
 RUN echo 'export PATH="$PATH:$(npm root -g)/.bin"' >> /etc/profile.d/smithr-env.sh
+
+# Custom entrypoint: sshd + optional VNC desktop
+COPY entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
+
+# VNC port (5901 for display :1)
+EXPOSE 22 5901
+
+CMD ["bash", "/usr/local/bin/sandbox-entrypoint.sh"]

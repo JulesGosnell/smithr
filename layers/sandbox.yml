@@ -24,6 +24,10 @@ services:
     image: smithr-sandbox:latest
     container_name: ${SMITHR_PREFIX:-smithr}-sandbox-${SMITHR_SANDBOX_RUNE:-fe}
     environment:
+      # VNC desktop (set SMITHR_VNC=1 to enable Xfce + TigerVNC on display :1)
+      SMITHR_VNC: "${SMITHR_VNC:-1}"
+      VNC_RESOLUTION: "${VNC_RESOLUTION:-1920x1080}"
+      VNC_PASSWORD: "${VNC_PASSWORD:-sandbox}"
       # Voice mode: STT/TTS services on host
       PULSE_SERVER: tcp:host.docker.internal:4713
       VOICEMODE_TTS_BASE_URLS: http://host.docker.internal:8880/v1
@@ -51,6 +55,7 @@ services:
       smithr.resource.max-slots: "${SMITHR_SANDBOX_MAX_SLOTS:-10}"
     ports:
       - "${SMITHR_SANDBOX_SSH_PORT:-2223}:22"
+      - "${SMITHR_SANDBOX_VNC_PORT:-5960}:5901"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/22'"]
       interval: 5s
