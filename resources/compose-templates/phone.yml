@@ -47,6 +47,7 @@ services:
       SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
       SMITHR_MODEL: ${SMITHR_MODEL:-}
       SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
+      SMITHR_TUNNEL_PROTOCOL: ssh
     networks:
       - smithr-network
       - internal

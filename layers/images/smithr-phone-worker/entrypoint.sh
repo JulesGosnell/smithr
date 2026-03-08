@@ -43,6 +43,17 @@ ENVEOF
 # Also set for non-login shells (scp, direct command)
 cp /etc/profile.d/smithr.sh /root/.bashrc
 
+# Write ~/.ssh/environment for SSH remote commands (non-interactive, non-login).
+# sshd reads this when PermitUserEnvironment=yes. Format: KEY=VALUE (no export).
+cat > /root/.ssh/environment <<SSHENV
+PATH=/opt/maestro/bin:${PATH}
+JAVA_HOME=${JAVA_HOME}
+MAESTRO_CLI_NO_ANALYTICS=true
+MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
+PHONE_HOST=${PHONE_HOST}
+PLATFORM=${PLATFORM}
+SSHENV
+
 # Start sshd
 /usr/sbin/sshd
 log "sshd started."
@@ -62,6 +73,7 @@ if [ "$PLATFORM" = "android" ]; then
   # Append ANDROID_SERIAL to SSH env so remote sessions see it
   echo "export ANDROID_SERIAL=\"${PHONE_HOST}:5555\"" >> /etc/profile.d/smithr.sh
   echo "export ANDROID_SERIAL=\"${PHONE_HOST}:5555\"" >> /root/.bashrc
+  echo "ANDROID_SERIAL=${PHONE_HOST}:5555" >> /root/.ssh/environment
 fi
 
 # Verify Maestro is available

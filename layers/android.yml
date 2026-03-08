@@ -86,6 +86,25 @@ services:
         ipv4_address: ${SMITHR_ANDROID_IP:-10.21.0.30}
     restart: unless-stopped
 
+  android-worker:
+    image: smithr-phone-worker:latest
+    container_name: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_RUNE:-fe}-worker
+    depends_on:
+      android:
+        condition: service_healthy
+    environment:
+      PHONE_HOST: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_RUNE:-fe}
+      PLATFORM: android
+    volumes:
+      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
+      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
+      - ${SSH_PUBKEY_PATH:-~/.ssh/id_ed25519.pub}:/root/.ssh/authorized_keys.mount:ro,z
+    labels:
+      smithr.worker-for: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_RUNE:-fe}
+    networks:
+      default:
+    restart: unless-stopped
+
 networks:
   default:
     external: true

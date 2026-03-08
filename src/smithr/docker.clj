@@ -270,8 +270,9 @@
 (defn- attach-workers!
   "Look up worker containers (labelled smithr.worker-for=<phone-container>)
    and attach their SSH endpoint to the corresponding phone resource's connection map.
-   Workers provide near-side SSH access for colocated tool execution."
-  [client network-name]
+   Workers provide near-side SSH access for colocated tool execution.
+   Only matches workers to resources on the same host (Docker network IPs are host-local)."
+  [client network-name host-label]
   (try
     (let [workers (-> client
                       (.listContainersCmd)
@@ -286,9 +287,10 @@
                                  (.getIpAddress))
               running?   (= "running" (.getState w))]
           (when (and worker-for worker-ip running?)
-            (when-let [resource (first (filter #(= (:container %) worker-for)
+            (when-let [resource (first (filter #(and (= (:container %) worker-for)
+                                                     (= (:host %) host-label))
                                                (state/resources)))]
-              (log/info "Attaching worker" worker-for "→" worker-ip ":22 to" (:id resource))
+              (log/info "Attaching worker" worker-for "→" worker-ip ":22 to" (:id resource) "on" host-label)
               (state/upsert-resource!
                 (update resource :connection assoc
                         :worker-ssh-host worker-ip
@@ -310,7 +312,7 @@
         (when-let [resource (safe-inspect client id host-label network-name host-address)]
           (log/info "Discovered resource:" (:id resource) "status:" (:status resource))
           (state/upsert-resource! resource))))
-    (attach-workers! client network-name)
+    (attach-workers! client network-name host-label)
     (log/info "Scan complete on" host-label "- found" (count containers) "managed containers")))
 
 ;; ---------------------------------------------------------------------------
@@ -354,7 +356,7 @@
             (let [[_ {:keys [client network-name]}]
                   (first (filter (fn [[k _]] (= k host-label)) @docker-clients))]
               (when client
-                (attach-workers! client network-name)))
+                (attach-workers! client network-name host-label)))
             (catch Exception e
               (log/warn "Failed to attach worker on start:" (.getMessage e)))))))
     (when (and managed?

@@ -8,7 +8,8 @@ RUN apk add --no-cache \
   && ssh-keygen -A \
   && mkdir -p /root/.ssh \
   && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
-  && echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config
+  && echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config \
+  && echo 'PermitUserEnvironment yes' >> /etc/ssh/sshd_config
 
 # Maestro CLI — baked from /srv/shared/images at build time.
 # The tarball contains maestro/bin/maestro + maestro/lib/*.jar.
