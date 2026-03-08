@@ -3,18 +3,17 @@
 
 # Physical Android phone proxy — exposes a USB-connected phone as a Smithr resource.
 #
-# The phone must have ADB over TCP enabled:
-#   adb -s <serial> tcpip <port>
+# USB mode: The container gets /dev/bus/usb mounted and runs ADB over USB transport.
+# All ADB data flows through USB (not WiFi), eliminating WiFi latency.
 #
 # Uses smithr-adb-proxy image (alpine + socat + android-tools) so the
 # healthcheck can verify actual ADB connectivity, not just TCP open.
 #
 # Environment Variables:
 #   SMITHR_PHYSICAL_RUNE    - Younger Futhark rune suffix (default: thurs)
-#   SMITHR_PHYSICAL_IP      - Container IP on smithr-network (default: 10.21.0.50)
-#   SMITHR_PHYSICAL_ADB_HOST - Phone's WiFi IP (required)
-#   SMITHR_PHYSICAL_ADB_PORT - Phone's ADB TCP port (default: 5557)
-#   SMITHR_PHYSICAL_MODEL   - Human-readable label (default: physical)
+#   SMITHR_PHYSICAL_IP      - Container IP on smithr-network (default: 10.21.0.53)
+#   SMITHR_PHYSICAL_SERIAL  - USB device serial number (required)
+#   SMITHR_PHYSICAL_MODEL   - Human-readable label (default: OPPO A53)
 
 services:
   smithr-physical-android:
@@ -22,22 +21,10 @@ services:
     build:
       context: ./images/adb-proxy
     image: smithr-adb-proxy:latest
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        # Start socat to bridge ADB TCP from container :5555 to phone WiFi
-        socat TCP-LISTEN:5555,fork,reuseaddr \
-          TCP:$$SMITHR_PHYSICAL_ADB_HOST:$${SMITHR_PHYSICAL_ADB_PORT:-5557} &
-        SOCAT_PID=$$!
-        # Start ADB daemon and connect through the local socat bridge
-        sleep 1
-        adb start-server
-        adb connect localhost:5555
-        # Keep alive — wait on socat
-        wait $$SOCAT_PID
     environment:
-      SMITHR_PHYSICAL_ADB_HOST: ${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}
-      SMITHR_PHYSICAL_ADB_PORT: ${SMITHR_PHYSICAL_ADB_PORT:-5557}
+      USB_SERIAL: ${SMITHR_PHYSICAL_SERIAL:?Must set SMITHR_PHYSICAL_SERIAL}
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     restart: unless-stopped
     volumes:
       - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
@@ -55,7 +42,7 @@ services:
       smithr.resource.device-name: "${SMITHR_PHYSICAL_MODEL:-OPPO A53}"
       smithr.resource.model: "${SMITHR_PHYSICAL_MODEL:-OPPO A53}"
     healthcheck:
-      test: ["CMD-SHELL", "adb -s localhost:5555 shell getprop ro.build.display.id"]
+      test: ["CMD-SHELL", "/healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 6

@@ -191,6 +191,11 @@
         bridge-port (find-free-port)]
     (log/info "Starting Android bridge:" serial
               "adb-forward:" fwd-port "socat:" bridge-port)
+    ;; Enable TCP mode so the forward target (device:5555) is reachable.
+    ;; Without this, adb forward tunnels to port 5555 but nothing listens there.
+    (shell/sh "adb" "-s" serial "tcpip" "5555")
+    (Thread/sleep 2000) ;; wait for ADB daemon restart
+    (shell/sh "adb" "-s" serial "wait-for-device")
     (let [{:keys [exit]} (shell/sh "adb" "-s" serial
                                    "forward"
                                    (str "tcp:" fwd-port)
@@ -285,6 +290,7 @@
         labels (cond-> ["--label" "smithr.managed=true"
                         "--label" "smithr.resource.type=phone"
                         "--label" (str "smithr.resource.platform=" platform)
+                        "--label" (str "smithr.resource.pool=" platform)
                         "--label" "smithr.resource.substrate=physical"
                         "--label" (str "smithr.resource.model=" (:model device))
                         "--label" (str "smithr.resource.device-name=" (:device-name device))
@@ -435,6 +441,55 @@
       (catch Exception _ nil))))
 
 ;; ---------------------------------------------------------------------------
+;; Near-side worker containers (Maestro + ADB colocated with phone)
+;; ---------------------------------------------------------------------------
+
+(defn- worker-image-available?
+  "Check if the smithr-phone-worker Docker image exists."
+  []
+  (zero? (:exit (shell/sh "docker" "image" "inspect" "smithr-phone-worker:latest"))))
+
+(defn- create-worker-container!
+  "Create a near-side worker container for a physical Android device.
+   The worker runs Maestro + ADB on smithr-network, connected to the bridge's
+   ADB server. CI invokes Maestro here instead of through the SSH tunnel."
+  [bridge-cname device]
+  (let [worker-name (str bridge-cname "-worker")
+        home-dir (System/getProperty "user.home")
+        ssh-pubkey (first (filter #(.isFile %)
+                            [(java.io.File. (str home-dir "/.ssh/id_ed25519.pub"))
+                             (java.io.File. (str home-dir "/.ssh/id_rsa.pub"))]))
+        cmd (cond-> ["docker" "run" "-d"
+                     "--name" worker-name
+                     "--network" "smithr-network"
+                     "--restart" "unless-stopped"
+                     "-e" (str "PHONE_HOST=" bridge-cname)
+                     "-e" (str "PLATFORM=" (:platform device))
+                     "-v" (str home-dir "/.android:/root/.android:ro,z")]
+              ssh-pubkey
+              (into ["-v" (str (.getAbsolutePath ssh-pubkey)
+                               ":/root/.ssh/authorized_keys.mount:ro,z")])
+              true
+              (into ["--label" (str "smithr.worker-for=" bridge-cname)
+                     "smithr-phone-worker:latest"]))]
+    (if (wrapper-container-exists? worker-name)
+      (log/debug "Worker already exists:" worker-name)
+      (let [{:keys [exit err]} (apply shell/sh cmd)]
+        (if (zero? exit)
+          (log/info "Created worker container:" worker-name)
+          (log/warn "Failed to create worker:" worker-name err))))))
+
+(defn- remove-worker-container!
+  "Remove the worker container associated with a bridge container."
+  [bridge-cname]
+  (let [worker-name (str bridge-cname "-worker")]
+    (when (wrapper-container-exists? worker-name)
+      (let [{:keys [exit]} (shell/sh "docker" "rm" "-f" worker-name)]
+        (if (zero? exit)
+          (log/info "Removed worker container:" worker-name)
+          (log/debug "Worker container removal skipped:" worker-name))))))
+
+;; ---------------------------------------------------------------------------
 ;; Scan + register (with wrapper containers)
 ;; ---------------------------------------------------------------------------
 
@@ -477,6 +532,7 @@
                                (shell/sh "docker" "inspect" cname "--format"
                                          "{{index .Config.Labels \"smithr.resource.platform\"}}")]
                            (when (zero? lexit) (str/trim lout)))]
+            (remove-worker-container! cname)
             (remove-wrapper-container! cname)
             ;; Also remove from Smithr state (Docker events may not fire during startup)
             (when platform
@@ -546,7 +602,11 @@
                 ;; still points to the dead bridge port — must recreate.
                 (when (wrapper-container-exists? cname)
                   (remove-wrapper-container! cname))
-                (when (create-wrapper-container! host-label device (:bridge-port bridge))
+                (when-let [created-cname (create-wrapper-container! host-label device (:bridge-port bridge))]
+                  ;; Create near-side worker for Android physical devices
+                  (when (and (= (:platform device) "android")
+                             (worker-image-available?))
+                    (create-worker-container! created-cname device))
                   ;; Apply CI-friendly settings, save originals for teardown
                   (let [originals (case (:platform device)
                                    "android" (configure-android-for-ci!
@@ -575,7 +635,9 @@
                          (:original-settings bridge))
                 (restore-android-settings! dk (:original-settings bridge)))
               (stop-bridge! dk bridge)
-              (when cname (remove-wrapper-container! cname))
+              (when cname
+                (remove-worker-container! cname)
+                (remove-wrapper-container! cname))
               (swap! device-bridges dissoc dk))))))
     (count devices)))
 
@@ -627,5 +689,6 @@
       (restore-android-settings! dk (:original-settings bridge)))
     (stop-bridge! dk bridge)
     (when-let [cname (:container-name bridge)]
+      (remove-worker-container! cname)
       (remove-wrapper-container! cname)))
   (reset! device-bridges {}))
