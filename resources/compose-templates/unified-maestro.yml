@@ -81,7 +81,7 @@ services:
       start_period: 30s
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
-      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_key:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/smithr_worker}:/root/.ssh/id_key:ro,z
     networks:
       - internal
 

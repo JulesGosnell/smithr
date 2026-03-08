@@ -98,7 +98,7 @@ services:
     volumes:
       - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
       - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
-      - ${SSH_PUBKEY_PATH:-~/.ssh/id_ed25519.pub}:/root/.ssh/authorized_keys.mount:ro,z
+      - ${SSH_PUBKEY_PATH:-~/.ssh/smithr_worker.pub}:/root/.ssh/authorized_keys.mount:ro,z
     labels:
       smithr.worker-for: ${SMITHR_PREFIX:-smithr}-android-${SMITHR_ANDROID_RUNE:-fe}
     networks:

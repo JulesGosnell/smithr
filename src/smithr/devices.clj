@@ -457,7 +457,8 @@
   (let [worker-name (str bridge-cname "-worker")
         home-dir (System/getProperty "user.home")
         ssh-pubkey (first (filter #(.isFile %)
-                            [(java.io.File. (str home-dir "/.ssh/id_ed25519.pub"))
+                            [(java.io.File. (str home-dir "/.ssh/smithr_worker.pub"))
+                             (java.io.File. (str home-dir "/.ssh/id_ed25519.pub"))
                              (java.io.File. (str home-dir "/.ssh/id_rsa.pub"))]))
         cmd (cond-> ["docker" "run" "-d"
                      "--name" worker-name

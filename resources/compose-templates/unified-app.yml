@@ -124,7 +124,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
-      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_key:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/smithr_worker}:/root/.ssh/id_key:ro,z
       - ${FLOWS_DIR:-.}:/flows:ro,z
     networks:
       - internal
