@@ -36,9 +36,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defn upsert-resource!
-  "Insert or update a resource in the state."
+  "Insert or update a resource in the state.
+   Preserves existing worker-ssh-* connection data when new resource doesn't have it,
+   since worker attachment happens separately from container inspection."
   [resource]
-  (swap! state assoc-in [:resources (:id resource)] resource))
+  (swap! state update-in [:resources (:id resource)]
+         (fn [existing]
+           (if (and existing
+                    (get-in existing [:connection :worker-ssh-host])
+                    (not (get-in resource [:connection :worker-ssh-host])))
+             (update resource :connection merge
+                     (select-keys (:connection existing)
+                                  [:worker-ssh-host :worker-ssh-port]))
+             resource))))
 
 (defn remove-resource!
   "Remove a resource from the state."
