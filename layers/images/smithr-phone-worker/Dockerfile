@@ -7,6 +7,7 @@ RUN apk add --no-cache \
     openssh-server openssh-client bash socat android-tools rsync python3 \
   && ssh-keygen -A \
   && mkdir -p /root/.ssh \
+  && sed -i 's/^AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config \
   && echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config \
   && echo 'PubkeyAuthentication yes' >> /etc/ssh/sshd_config \
   && echo 'PermitUserEnvironment yes' >> /etc/ssh/sshd_config

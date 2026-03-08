@@ -38,8 +38,9 @@
   "Map a resource type+platform to a provisioning template key.
    e.g. {:type :phone :platform :android} -> :android-phone"
   [type platform]
-  (when-let [mapping (:type-mapping (prov-config))]
-    (get mapping (str (name type) ":" (name platform)))))
+  (when (and type platform)
+    (when-let [mapping (:type-mapping (prov-config))]
+      (get mapping (str (name type) ":" (name platform))))))
 
 (defn can-provision?
   "Check if a template exists for this type+platform combination."

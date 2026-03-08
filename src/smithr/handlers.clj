@@ -162,19 +162,23 @@
                     (seq server-ports) (assoc :server-ports (vec server-ports))
                     (seq reverse-ports) (assoc :reverse-ports (vec reverse-ports)))]
     (log/info "Lease request:" params)
-    (try
-      (if-let [result (lease/acquire! params)]
-        (json-response 201 (serialize-lease result))
-        (conflict (str "No available " (:type params) ":" (:platform params) " resource")))
-      (catch clojure.lang.ExceptionInfo e
-        (let [data (ex-data e)]
-          (if (:lease-id data)
-            ;; Workspace already leased
-            (conflict (str "Workspace '" (:workspace data) "' is already leased"))
-            ;; Invalid workspace name
-            {:status 400
-             :body   {:error "bad_request"
-                      :message (.getMessage e)}}))))))
+    (if (or (nil? (:type params)) (nil? (:platform params)))
+      {:status 400
+       :body   {:error "bad_request"
+                :message (str "Missing required field(s):"
+                              (when (nil? (:type params)) " type")
+                              (when (nil? (:platform params)) " platform"))}}
+      (try
+        (if-let [result (lease/acquire! params)]
+          (json-response 201 (serialize-lease result))
+          (conflict (str "No available " (:type params) ":" (:platform params) " resource")))
+        (catch clojure.lang.ExceptionInfo e
+          (let [data (ex-data e)]
+            (if (:lease-id data)
+              (conflict (str "Workspace '" (:workspace data) "' is already leased"))
+              {:status 400
+               :body   {:error "bad_request"
+                        :message (.getMessage e)}})))))))
 
 (defn unlease
   "DELETE /api/leases/:id"

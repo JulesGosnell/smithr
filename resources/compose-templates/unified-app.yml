@@ -20,6 +20,7 @@
 #   APP_FILE        — filename inside APP_PATH (default: app-release.apk for Android)
 #   BUNDLE_ID       — app package/bundle ID (required)
 #   API_URL         — override api-config.json (optional)
+#   SERVER_PORT     — bridge server:PORT into device localhost:PORT (optional)
 #   SSH_USER        — SSH user on worker (default: root for Android, smithr for iOS)
 #   SSH_KEY_PATH    — host path to SSH private key (default: ~/.ssh/id_rsa)
 #   LOGIN_FLOW      — Maestro flow for login (optional)
@@ -113,6 +114,20 @@ services:
           esac
         fi
 
+        # ── Server bridge (Android only) ────────────────────
+        # Bridge compose "server" service into device via adb reverse.
+        # SSH reverse tunnel: worker:PORT ← sidecar → server:PORT
+        # adb reverse:        device localhost:PORT → worker:PORT
+        SERVER_PORT="$${SERVER_PORT:-}"
+        if [ -n "$$SERVER_PORT" ] && [ "$$PLATFORM" = "android" ]; then
+          log "Server bridge: server:$$SERVER_PORT → device localhost:$$SERVER_PORT"
+          ssh $$SSH_OPTS -R $$SERVER_PORT:server:$$SERVER_PORT -N $$SSH_USER@phone &
+          TUNNEL_PID=$$!
+          sleep 2
+          $$SSH "adb reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT"
+          log "Server bridge ready."
+        fi
+
         touch /tmp/app-installed
         log "Ready."
 
@@ -122,6 +137,7 @@ services:
       BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
       APP_FILE: ${APP_FILE:-}
       API_URL: ${API_URL:-}
+      SERVER_PORT: ${SERVER_PORT:-}
       SSH_USER: ${SSH_USER:-root}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]
