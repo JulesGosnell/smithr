@@ -22,27 +22,44 @@ services:
     build:
       context: ./images/adb-proxy
     image: smithr-adb-proxy:latest
-    entrypoint: ["socat"]
-    command: >-
-      TCP-LISTEN:5555,fork,reuseaddr
-      TCP:${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}:${SMITHR_PHYSICAL_ADB_PORT:-5557}
-    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        # Start socat to bridge ADB TCP from container :5555 to phone WiFi
+        socat TCP-LISTEN:5555,fork,reuseaddr \
+          TCP:$$SMITHR_PHYSICAL_ADB_HOST:$${SMITHR_PHYSICAL_ADB_PORT:-5557} &
+        SOCAT_PID=$$!
+        # Start ADB daemon and connect through the local socat bridge
+        sleep 1
+        adb start-server
+        adb connect localhost:5555
+        # Keep alive — wait on socat
+        wait $$SOCAT_PID
+    environment:
+      SMITHR_PHYSICAL_ADB_HOST: ${SMITHR_PHYSICAL_ADB_HOST:?Must set SMITHR_PHYSICAL_ADB_HOST}
+      SMITHR_PHYSICAL_ADB_PORT: ${SMITHR_PHYSICAL_ADB_PORT:-5557}
+    restart: unless-stopped
+    volumes:
+      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
+      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
     networks:
       smithr-network:
-        ipv4_address: "${SMITHR_PHYSICAL_IP:-10.21.0.50}"
+        ipv4_address: "${SMITHR_PHYSICAL_IP:-10.21.0.53}"
     labels:
       smithr.managed: "true"
       smithr.resource.type: "phone"
       smithr.resource.platform: "android"
       smithr.resource.pool: "android"
       smithr.resource.substrate: "physical"
-      smithr.resource.model: "${SMITHR_PHYSICAL_MODEL:-OPPO A15}"
+      smithr.resource.serial: "${SMITHR_PHYSICAL_SERIAL:-}"
+      smithr.resource.device-name: "${SMITHR_PHYSICAL_MODEL:-OPPO A53}"
+      smithr.resource.model: "${SMITHR_PHYSICAL_MODEL:-OPPO A53}"
     healthcheck:
-      test: ["CMD-SHELL", "adb connect localhost:5555 && adb -s localhost:5555 shell getprop ro.build.display.id"]
+      test: ["CMD-SHELL", "adb -s localhost:5555 shell getprop ro.build.display.id"]
       interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 5s
+      retries: 6
+      start_period: 15s
 
 networks:
   smithr-network:
