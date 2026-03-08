@@ -31,7 +31,11 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        apk add --no-cache openssh-client rsync >/dev/null 2>&1
+        # Retry apk add — DNS may not be ready immediately on container start
+        for _i in 1 2 3 4 5; do
+          apk add --no-cache openssh-client rsync >/dev/null 2>&1 && break
+          sleep 2
+        done
 
         SSH_USER="$${SSH_USER:-root}"
         SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
@@ -57,6 +61,9 @@ services:
         $$SSH "mkdir -p /tmp/flows" 2>/dev/null
         scp $$SSH_OPTS -r /flows/* $$SSH_USER@phone:/tmp/flows/
 
+        # Kill stale Maestro driver processes and clean ADB forwards
+        $$SSH "pkill -f 'java.*maestro' 2>/dev/null; adb forward --remove-all 2>/dev/null; sleep 1" || true
+
         # Run Maestro on worker
         echo "[maestro] Running: maestro test /tmp/flows/$$FLOW $$@"
         $$SSH "maestro test /tmp/flows/$$FLOW $$*"
@@ -69,6 +76,11 @@ services:
         SCRIPT
         chmod +x /run-test.sh
 
+        # Verify SSH is available before marking ready
+        if ! command -v ssh >/dev/null 2>&1; then
+          echo "[maestro] ERROR: openssh-client failed to install" >&2
+          exit 1
+        fi
         touch /tmp/maestro-ready
         echo "[maestro] Sidecar ready. Run tests via: docker exec <container> /run-test.sh <flow>.yaml"
         exec sleep infinity

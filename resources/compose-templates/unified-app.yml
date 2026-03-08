@@ -37,7 +37,15 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        apk add --no-cache openssh-client rsync >/dev/null 2>&1
+        # Retry apk add — DNS may not be ready immediately on container start
+        for _i in 1 2 3 4 5; do
+          apk add --no-cache openssh-client rsync >/dev/null 2>&1 && break
+          sleep 2
+        done
+        if ! command -v ssh >/dev/null 2>&1; then
+          echo "[unified-app] ERROR: openssh-client failed to install" >&2
+          exit 1
+        fi
         log() { echo "[unified-app] $$*" >&2; }
 
         SSH_TARGET="phone:22"
