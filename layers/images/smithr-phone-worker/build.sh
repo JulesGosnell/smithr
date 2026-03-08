@@ -17,24 +17,16 @@ IMAGE="smithr-phone-worker:latest"
 
 log() { echo "[build] $*" >&2; }
 
-# Copy Maestro artifacts into build context
+# Copy Maestro tarball into build context (vanilla 2.2.0, no patched JARs needed)
 log "Copying Maestro tarball..."
 cp "${SHARED}/maestro-2.2.0-smithr.tar.gz" "${SCRIPT_DIR}/maestro.tar.gz"
-
-log "Copying patched smithr jars..."
-cp "${SHARED}/maestro-cli-2.1.0-smithr.jar" "${SCRIPT_DIR}/maestro-cli-smithr.jar"
-cp "${SHARED}/maestro-client-smithr.jar" "${SCRIPT_DIR}/maestro-client-smithr.jar"
-cp "${SHARED}/maestro-utils-smithr.jar" "${SCRIPT_DIR}/maestro-utils-smithr.jar"
-cp "${SHARED}/maestro-ios-driver-smithr.jar" "${SCRIPT_DIR}/maestro-ios-driver-smithr.jar"
 
 # Build
 log "Building ${IMAGE}..."
 docker build -t "${IMAGE}" "${SCRIPT_DIR}"
 
 # Clean up build context artifacts (large, shouldn't persist)
-rm -f "${SCRIPT_DIR}/maestro.tar.gz" "${SCRIPT_DIR}/maestro-cli-smithr.jar" \
-      "${SCRIPT_DIR}/maestro-client-smithr.jar" "${SCRIPT_DIR}/maestro-utils-smithr.jar" \
-      "${SCRIPT_DIR}/maestro-ios-driver-smithr.jar"
+rm -f "${SCRIPT_DIR}/maestro.tar.gz"
 log "Cleaned up build context."
 
 # Optional push
