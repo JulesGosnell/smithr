@@ -40,30 +40,32 @@ services:
         fi
 
         # Create the run-test.sh script
+        # NOTE: $$ escaping required — Docker Compose interpolates $ at YAML level
+        # before the shell sees the heredoc quoting.
         cat > /run-test.sh << 'SCRIPT'
         #!/bin/sh
         set -e
-        FLOW="$1"
+        FLOW="$$1"
         shift
-        SSH_USER="${SSH_USER:-root}"
+        SSH_USER="$${SSH_USER:-root}"
         SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
-        [ -f /root/.ssh/id_key ] && SSH_OPTS="$SSH_OPTS -i /root/.ssh/id_key"
-        SSH="ssh $SSH_OPTS $SSH_USER@phone"
+        [ -f /root/.ssh/id_key ] && SSH_OPTS="$$SSH_OPTS -i /root/.ssh/id_key"
+        SSH="ssh $$SSH_OPTS $$SSH_USER@phone"
 
         # SCP flow files to worker
         echo "[maestro] Copying flows to worker..."
-        $SSH "mkdir -p /tmp/flows" 2>/dev/null
-        scp $SSH_OPTS -r /flows/* $SSH_USER@phone:/tmp/flows/
+        $$SSH "mkdir -p /tmp/flows" 2>/dev/null
+        scp $$SSH_OPTS -r /flows/* $$SSH_USER@phone:/tmp/flows/
 
         # Run Maestro on worker
-        echo "[maestro] Running: maestro test /tmp/flows/$FLOW $@"
-        $SSH "maestro test /tmp/flows/$FLOW $*"
-        EXIT=$?
+        echo "[maestro] Running: maestro test /tmp/flows/$$FLOW $$@"
+        $$SSH "maestro test /tmp/flows/$$FLOW $$*"
+        EXIT=$$?
 
         # Copy artifacts back
-        scp $SSH_OPTS -r $SSH_USER@phone:/tmp/maestro-results/* /results/ 2>/dev/null || true
+        scp $$SSH_OPTS -r $$SSH_USER@phone:/tmp/maestro-results/* /results/ 2>/dev/null || true
 
-        exit $EXIT
+        exit $$EXIT
         SCRIPT
         chmod +x /run-test.sh
 
