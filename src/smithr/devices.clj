@@ -587,7 +587,14 @@
               (remove-wrapper-container! current-cname)
               (when (create-wrapper-container! host-label device (:bridge-port existing))
                 (swap! device-bridges assoc dk
-                       (assoc existing :container-name desired-cname)))))
+                       (assoc existing :container-name desired-cname))))
+            ;; Recreate worker if missing (bridge alive but worker deleted)
+            (let [cname (or current-cname desired-cname)]
+              (when (and (= (:platform device) "android")
+                         (worker-image-available?)
+                         (not (wrapper-container-exists? (str cname "-worker"))))
+                (log/info "Worker missing for" cname "- recreating")
+                (create-worker-container! cname device))))
           ;; Bridge missing or dead — (re)create
           (do (when existing
             (log/info "Bridge dead for" dk "— recreating")
