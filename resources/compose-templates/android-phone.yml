@@ -1,6 +1,23 @@
 # Copyright 2026 Jules Gosnell
 # SPDX-License-Identifier: Apache-2.0
 
+#
+# Android phone proxy (near-side architecture)
+#
+# Leases an Android phone and tunnels SSH to the colocated worker
+# container. Tools (Maestro, ADB) run on the worker, not on the client.
+#
+# Usage:
+#   curl -s http://localhost:7070/api/compose/android-phone > phone.yml
+#   SMITHR_LESSEE="ci-123" docker compose -f phone.yml -p test up -d
+#
+# Env vars:
+#   SMITHR_LESSEE      — who owns this lease (default: anonymous)
+#   SMITHR_TTL         — lease duration in seconds (default: 3600)
+#   SMITHR_SUBSTRATE   — emulated | physical (optional filter)
+#   SMITHR_MODEL       — specific device model (optional filter)
+#   SMITHR_PREFER_HOST — prefer a specific host (optional)
+#
 services:
   android-phone:
     image: {{REGISTRY}}/smithr/proxy:latest
@@ -18,11 +35,12 @@ services:
       SMITHR_RESOURCE_TYPE: phone
       SMITHR_PLATFORM: android
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
-      SMITHR_PORTS: "5555"
+      SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
       SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
       SMITHR_MODEL: ${SMITHR_MODEL:-}
       SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
+      SMITHR_TUNNEL_PROTOCOL: ssh
     networks:
       - smithr-network
       - internal

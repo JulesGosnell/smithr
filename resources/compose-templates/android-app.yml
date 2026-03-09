@@ -2,108 +2,124 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# Android app lifecycle sidecar
+# Android app lifecycle sidecar (near-side architecture)
 #
-# Manages app install/uninstall on an Android device:
+# Manages app install/uninstall on an Android device via SSH into the
+# colocated worker container. All ADB commands run on the worker.
+#
 #   up:   install APK → inject config → server bridge → HEALTHY
 #   down: force-stop → uninstall
 #
 # Login/logout lifecycle is handled by the maestro sidecar, not this container.
 # This keeps concerns separated: app sidecar owns the binary, maestro owns the session.
 #
-# Compose with android-phone, server, and maestro templates:
+# Compose with android-phone, server, and android-maestro templates:
 #
 #   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
 #   curl -s http://localhost:7070/api/compose/android-app > /tmp/app.yml
 #   curl -s http://localhost:7070/api/compose/server > /tmp/server.yml
-#   curl -s http://localhost:7070/api/compose/maestro > /tmp/maestro.yml
-#   APP_PATH=/path/to/apk-dir FLOWS_DIR=/path/to/flows \
+#   curl -s http://localhost:7070/api/compose/android-maestro > /tmp/maestro.yml
+#   APP_PATH=/path/to/apk-dir BUNDLE_ID=com.example.app \
 #     docker compose -f /tmp/phone.yml -f /tmp/server.yml \
 #                    -f /tmp/app.yml -f /tmp/maestro.yml -p test up -d
 #
 # Env vars:
-#   APP_PATH        — host dir containing the APK (required, mounted at /app)
-#   APP_FILE        — APK filename inside APP_PATH (default: app-release.apk)
-#   BUNDLE_ID       — Android package name (required)
-#   API_URL         — override api-config.json for test server (optional)
-#   SERVER_SERVICE  — compose service name for server bridge (optional)
-#   SERVER_PORT     — server port to bridge into device (default: 3000)
+#   APP_PATH     — host dir containing the APK (required, mounted at /app)
+#   APP_FILE     — APK filename inside APP_PATH (default: app-release.apk)
+#   BUNDLE_ID    — Android package name (required)
+#   API_URL      — override api-config.json for test server (optional)
+#   SERVER_PORT  — bridge server:PORT into device localhost:PORT (optional)
+#   SSH_KEY_PATH — host path to SSH private key (default: ~/.ssh/smithr_worker)
 #
 services:
   app:
-    image: ${MAESTRO_IMAGE:-maestro:latest}
+    image: alpine:3.19
     depends_on:
       android-phone:
         condition: service_healthy
-      server:
-        condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
+    entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # Retry apk add — DNS may not be ready immediately on container start
+        for _i in 1 2 3 4 5; do
+          apk add --no-cache openssh-client >/dev/null 2>&1 && break
+          sleep 2
+        done
+        if ! command -v ssh >/dev/null 2>&1; then
+          echo "[android-app] ERROR: openssh-client failed to install" >&2
+          exit 1
+        fi
+
         T0=$$(date +%s)
         log() { echo "[android-app] [$$(( $$(date +%s) - T0 ))s] $$*"; }
-        ADB="adb -s $$ADB_TARGET"
+
+        SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=10"
+        [ -f /root/.ssh/id_key ] && SSH_OPTS="$$SSH_OPTS -i /root/.ssh/id_key"
+        SSH="ssh $$SSH_OPTS root@android-phone"
+
+        # Wait for SSH to be available on worker (via phone proxy)
+        log "Waiting for SSH on android-phone:22..."
+        for i in $$(seq 1 60); do
+          $$SSH echo ok >/dev/null 2>&1 && break
+          sleep 2
+        done
 
         # ── Teardown (SIGTERM/INT) ──────────────────────────────
         teardown() {
             log "Teardown starting..."
             log "Force-stopping $$BUNDLE_ID..."
-            $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
+            $$SSH "adb shell am force-stop $$BUNDLE_ID" 2>/dev/null || true
             log "Uninstalling $$BUNDLE_ID..."
-            $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
+            $$SSH "adb uninstall $$BUNDLE_ID" 2>/dev/null || true
             log "Teardown complete."
             exit 0
         }
         trap teardown TERM INT
 
-        # ── Connect ADB ────────────────────────────────────────
-        log "Connecting ADB to $$ADB_TARGET..."
-        for i in $$(seq 1 60); do
-          if adb connect "$$ADB_TARGET" 2>/dev/null | grep -q "connected"; then
-            break
-          fi
-          sleep 2
-        done
-        $$ADB wait-for-device
-        log "ADB connected."
-
         # ── Switch to Simple Keyboard (if installed) ─────────────
         # Gboard's clipboard popup breaks Maestro text input on physical
         # devices and appops deny doesn't stick on OPPO/ColorOS.
         # Simple Keyboard has no clipboard features at all.
-        if $$ADB shell ime set rkr.simplekeyboard.inputmethod/.latin.LatinIME 2>/dev/null | grep -q "selected"; then
+        if $$SSH "adb shell ime set rkr.simplekeyboard.inputmethod/.latin.LatinIME" 2>/dev/null | grep -q "selected"; then
             log "Switched to Simple Keyboard."
         else
             log "Simple Keyboard not installed, using default IME."
         fi
 
         # ── Server bridge ──────────────────────────────────────
-        if [ -n "$$SERVER_SERVICE" ]; then
-            log "Server bridge: $$SERVER_SERVICE:$$SERVER_PORT → device localhost:$$SERVER_PORT"
-            socat TCP-LISTEN:$$SERVER_PORT,fork,reuseaddr TCP:$$SERVER_SERVICE:$$SERVER_PORT &
-            sleep 1
-            $$ADB reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT
+        # SSH reverse tunnel: worker:PORT ← sidecar → server:PORT
+        # adb reverse:        device localhost:PORT → worker:PORT
+        if [ -n "$$SERVER_PORT" ]; then
+            log "Server bridge: server:$$SERVER_PORT → device localhost:$$SERVER_PORT"
+            ssh $$SSH_OPTS -R $$SERVER_PORT:server:$$SERVER_PORT -N root@android-phone &
+            TUNNEL_PID=$$!
+            sleep 2
+            $$SSH "adb reverse tcp:$$SERVER_PORT tcp:$$SERVER_PORT"
             log "Server bridge ready."
         fi
 
         # ── Install APK ───────────────────────────────────────
-        # Two-stage: push file to device, then install from device storage.
-        # Streamed `adb install` fails through cross-host SSH tunnels.
-        # Plain `pm install` fails on some devices with extractNativeLibs=false.
-        # The `cat | pm install -S` approach uses the streaming installer API
-        # (same code path as `adb install`) but with data already on-device.
-        log "APK: /app/$$APP_FILE ($$(du -h "/app/$$APP_FILE" 2>/dev/null | cut -f1))"
+        # Two-stage: SCP to worker, adb push to device, then pm install -S.
+        # The cat|pm install -S approach uses the streaming installer API
+        # (same code path as adb install) but with data already on-device,
+        # avoiding issues with extractNativeLibs=false on some devices.
+        APP_FILE="$${APP_FILE:-app-release.apk}"
+        log "APK: /app/$$APP_FILE"
+
         log "Uninstalling stale app..."
-        $$ADB shell am force-stop "$$BUNDLE_ID" 2>/dev/null || true
-        $$ADB uninstall "$$BUNDLE_ID" 2>/dev/null || true
+        $$SSH "adb shell am force-stop $$BUNDLE_ID; adb uninstall $$BUNDLE_ID" 2>/dev/null || true
         sleep 1
-        APK_SIZE=$$(stat -c%s "/app/$$APP_FILE")
+
+        log "Copying APK to worker..."
+        scp $$SSH_OPTS "/app/$$APP_FILE" root@android-phone:/tmp/app.apk
+        APK_SIZE=$$($$SSH "stat -c%s /tmp/app.apk")
+
         INSTALL_OK=false
         for attempt in 1 2 3; do
             log "Push attempt $$attempt..."
-            if $$ADB push "/app/$$APP_FILE" /data/local/tmp/app.apk; then
+            if $$SSH "adb push /tmp/app.apk /data/local/tmp/app.apk"; then
                 log "Push complete. Installing (cat|pm install -S $$APK_SIZE)..."
-                INSTALL_OUT=$$($$ADB shell "cat /data/local/tmp/app.apk | pm install -S $$APK_SIZE" 2>&1)
+                INSTALL_OUT=$$($$SSH "adb shell 'cat /data/local/tmp/app.apk | pm install -S $$APK_SIZE'" 2>&1)
                 log "pm install output: $$INSTALL_OUT"
                 if echo "$$INSTALL_OUT" | grep -q "Success"; then
                     INSTALL_OK=true
@@ -116,7 +132,8 @@ services:
             log "Retrying in 3s..."
             sleep 3
         done
-        $$ADB shell rm -f /data/local/tmp/app.apk 2>/dev/null || true
+        $$SSH "rm -f /tmp/app.apk; adb shell rm -f /data/local/tmp/app.apk" 2>/dev/null || true
+
         if [ "$$INSTALL_OK" != "true" ]; then
             log "FATAL: APK install failed after 3 attempts"
             exit 1
@@ -126,9 +143,7 @@ services:
         # ── Inject api-config.json ─────────────────────────────
         if [ -n "$$API_URL" ]; then
             log "Injecting api-config.json: $$API_URL"
-            echo "{\"apiUrl\": \"$$API_URL\"}" > /tmp/api-config.json
-            $$ADB push /tmp/api-config.json \
-              /sdcard/Android/data/$$BUNDLE_ID/files/api-config.json
+            $$SSH "echo '{\"apiUrl\": \"$$API_URL\"}' > /tmp/api-config.json && adb push /tmp/api-config.json /sdcard/Android/data/$$BUNDLE_ID/files/api-config.json && rm /tmp/api-config.json"
             log "Config injected."
         fi
 
@@ -139,12 +154,10 @@ services:
         # Stay alive — sleep in background so trap fires promptly
         while true; do sleep 60 & wait $$!; done
     environment:
-      ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
       BUNDLE_ID: ${BUNDLE_ID:?BUNDLE_ID must be set}
       APP_FILE: ${APP_FILE:-app-release.apk}
       API_URL: ${API_URL:-}
-      SERVER_SERVICE: ${SERVER_SERVICE:-}
-      SERVER_PORT: ${SERVER_PORT:-3000}
+      SERVER_PORT: ${SERVER_PORT:-}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/app-installed"]
       interval: 5s
@@ -154,8 +167,7 @@ services:
     stop_grace_period: 30s
     volumes:
       - ${APP_PATH:?APP_PATH must be set}:/app:ro,z
-      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
-      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
+      - ${SSH_KEY_PATH:-~/.ssh/smithr_worker}:/root/.ssh/id_key:ro,z
     networks:
       - internal
 
