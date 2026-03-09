@@ -151,23 +151,8 @@ case "$SMITHR_SUBSTRATE" in
       log "WARNING: No driver apps on bridge — assuming pre-installed on device"
     fi
 
-    # Start iproxy BEFORE XCTest runner. iproxy listens passively on bridge:22087
-    # and only establishes USB forwarding when a client connects. Starting it first
-    # avoids USB contention with pymobiledevice3's DVT connection during XCTest startup.
-    log "Starting iproxy (device:22087 → bridge:22087)..."
-    remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/tmp/iproxy.log 2>&1 &"
-    sleep 1
-
-    log "Starting XCTest runner ($XCTEST_BUNDLE) on bridge..."
-    remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
-    sleep 2
-
-    # Maestro connects directly to port 22087 (via MAESTRO_OPTS in run-test.sh).
-    # No socat needed — iproxy forwards device:22087 → bridge:22087 directly.
-
-    # Wait for XCTest HTTP server to respond on bridge:22087.
-    # Write a health check script on the bridge — inline python through SSH
-    # has quoting issues that cause silent failures.
+    # Write the health check script on the bridge once (reused across retries).
+    # Inline python through SSH has quoting issues that cause silent failures.
     remote "cat > /tmp/xctest-health.py << 'HEALTHPY'
 import urllib.request, sys
 try:
@@ -178,18 +163,41 @@ except Exception as e:
     print(f'ERR: {e}', file=sys.stderr)
     sys.exit(1)
 HEALTHPY"
-    log "Waiting for XCTest HTTP server on bridge:22087..."
+
+    # Start iproxy + XCTest runner with retry. The XCTest HTTP server on the
+    # device sometimes fails to start on the first attempt (intermittent
+    # pymobiledevice3/DVT issue). Retry up to 3 times before giving up.
     XCTEST_READY=false
-    for i in $(seq 1 15); do
-      if remote "python3 /tmp/xctest-health.py" >/dev/null 2>&1; then
-        log "XCTest HTTP server responding on bridge:22087"
-        XCTEST_READY=true
-        break
-      fi
+    for attempt in 1 2 3; do
+      # Kill stale processes before each attempt
+      remote "pymobiledevice3 developer dvt pkill --rsd $RSD_IPV6 $RSD_PORT_VAL --bundle $XCTEST_RUNNER_BUNDLE_ID" 2>/dev/null || true
+      remote "pkill -f 'pymobiledevice3.*xcuitest'" 2>/dev/null || true
+      remote "pkill -f 'iproxy.*22087'" 2>/dev/null || true
+      sleep 1
+
+      # Start iproxy BEFORE XCTest runner. iproxy listens passively on bridge:22087
+      # and only establishes USB forwarding when a client connects.
+      log "Starting iproxy + XCTest runner (attempt $attempt/3)..."
+      remote "nohup iproxy -u $DEVICE_UDID 22087:22087 </dev/null >/tmp/iproxy.log 2>&1 &"
+      sleep 1
+
+      remote "nohup /start-xctest.sh $XCTEST_BUNDLE </dev/null >/tmp/xctest.log 2>&1 &"
       sleep 2
+
+      # Wait for XCTest HTTP server to respond on bridge:22087.
+      log "Waiting for XCTest HTTP server on bridge:22087..."
+      for i in $(seq 1 15); do
+        if remote "python3 /tmp/xctest-health.py" >/dev/null 2>&1; then
+          log "XCTest HTTP server responding on bridge:22087"
+          XCTEST_READY=true
+          break 2
+        fi
+        sleep 2
+      done
+      log "WARNING: XCTest HTTP server not responding after 30s (attempt $attempt/3)"
     done
     if [ "$XCTEST_READY" != "true" ]; then
-      log "FATAL: XCTest HTTP server not responding after 30s"
+      log "FATAL: XCTest HTTP server not responding after 3 attempts"
       EXIT_CODE=1
       exit 1
     fi
