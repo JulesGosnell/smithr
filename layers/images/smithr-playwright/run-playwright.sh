@@ -18,4 +18,5 @@ shift
 
 cd /app/apps/web
 
-exec pnpm exec playwright test "$SPEC" --project=chromium "$@"
+export NODE_PATH=/opt/pw/node_modules
+exec /opt/pw/node_modules/.bin/playwright test "$SPEC" --project=chromium "$@"

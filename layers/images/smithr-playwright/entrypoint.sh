@@ -22,24 +22,9 @@ for i in $(seq 1 120); do
   sleep 1
 done
 
-# ── Install dependencies if needed ──────────────────────────
-# Use /tmp for pnpm store so root-owned files don't leak onto the host mount.
-# --no-frozen-lockfile because CI=true defaults to frozen mode but the
-# monorepo lockfile may have patchedDependencies mismatches.
-if [ -d /app/apps/web ]; then
-  cd /app
-  # Check for the actual playwright binary, not just .pnpm dir — stale volumes
-  # may have an incomplete install that tricks a directory-only check.
-  if [ ! -x /app/node_modules/.bin/playwright ]; then
-    log "Installing dependencies..."
-    pnpm install --no-frozen-lockfile --store-dir /tmp/pnpm-store 2>&1 | tail -10
-    log "Dependencies installed."
-  else
-    log "Dependencies already installed, skipping."
-  fi
-fi
-
 # ── Ready ────────────────────────────────────────────────────
+# @playwright/test is baked into the image at /node_modules/ —
+# no runtime install needed.
 touch /tmp/playwright-ready
 log "Ready. Run tests via: docker exec <container> /usr/local/bin/run-playwright.sh <spec>"
 
