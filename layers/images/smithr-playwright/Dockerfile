@@ -12,7 +12,7 @@ RUN mkdir -p /opt/pw && cd /opt/pw && npm init -y > /dev/null 2>&1 \
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY run-playwright.sh /usr/local/bin/run-playwright.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run-playwright.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/run-playwright.sh
 
 # Pre-create mount point so named volume inherits correct ownership
 RUN mkdir -p /app && chown pwuser:pwuser /app
