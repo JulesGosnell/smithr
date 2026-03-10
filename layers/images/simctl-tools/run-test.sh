@@ -22,11 +22,18 @@ shift
 EXTRA_ARGS="$*"
 
 SIDECAR_NAME="maestro"
-SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 REMOTE_FLOWS_DIR="${REMOTE_FLOWS_DIR:-/tmp/e2e-flows}"
 
 # Maestro home for physical substrate (volume-mounted at runtime)
 MAESTRO_HOME="${MAESTRO_HOME:-/opt/maestro}"
+
+# Source auto-detected values from maestro-sidecar.sh.
+# When called via docker exec, env vars like SMITHR_SUBSTRATE and SSH_TARGET
+# are not in the Docker environment (they're set by the sidecar at runtime).
+if [ -f /tmp/maestro-env ]; then
+  . /tmp/maestro-env
+fi
+SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 
 . /opt/scripts/ssh-common.sh
 . /opt/scripts/common-funcs.sh

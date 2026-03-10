@@ -35,6 +35,15 @@ fi
 export SSH_KEY="${SSH_KEY:-/root/.ssh/id_key}"
 export SMITHR_SUBSTRATE
 
+# Persist auto-detected values for run-test.sh (called via docker exec).
+# docker exec doesn't inherit shell-exported vars — only Docker env vars.
+cat > /tmp/maestro-env << EOF
+export SMITHR_SUBSTRATE="$SMITHR_SUBSTRATE"
+export SSH_TARGET="$SSH_TARGET"
+export SSH_USER="$SSH_USER"
+export SSH_KEY="$SSH_KEY"
+EOF
+
 . /opt/scripts/ssh-common.sh
 . /opt/scripts/common-funcs.sh
 

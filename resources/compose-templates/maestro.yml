@@ -39,6 +39,7 @@ services:
       app:
         condition: service_healthy
     environment:
+      SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
       LOGIN_FLOW: ${LOGIN_FLOW:-}
       LOGOUT_FLOW: ${LOGOUT_FLOW:-}
       BUNDLE_ID: ${BUNDLE_ID:-}
