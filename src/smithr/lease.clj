@@ -856,7 +856,7 @@
                                                    (substrate-pred %)
                                                    (model-pred %)
                                                    (not (shared-lock-held? (:id %)))))
-                                     (sort-by :id))))]
+                                     (sort-by :id)))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)
