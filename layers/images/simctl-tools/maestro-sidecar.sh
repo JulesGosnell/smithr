@@ -33,6 +33,7 @@ else
   exit 1
 fi
 export SSH_KEY="${SSH_KEY:-/root/.ssh/id_key}"
+export SMITHR_SUBSTRATE
 
 . /opt/scripts/ssh-common.sh
 . /opt/scripts/common-funcs.sh
