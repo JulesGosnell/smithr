@@ -44,6 +44,9 @@ SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 . /opt/scripts/ssh-common.sh
 . /opt/scripts/common-funcs.sh
 
+# Diagnostic logging — confirms env detection worked correctly.
+echo "[$SIDECAR_NAME] substrate=$SMITHR_SUBSTRATE target=$SSH_HOST:$SSH_PORT user=$SSH_USER key=${SSH_KEY:+(set)} flow=$FLOW_FILE"
+
 # Auto-forward env vars listed in MAESTRO_VARS as Maestro -e flags.
 # This bridges the gap between the sidecar container (where compose env
 # vars live) and the remote Maestro process (VM/bridge via SSH).

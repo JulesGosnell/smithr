@@ -63,7 +63,7 @@ XCTEST_RUNNER_BUNDLE_ID="${XCTEST_RUNNER_BUNDLE_ID:-care.artha.maestro-driver-te
 XCTEST_BUNDLE="${XCTEST_BUNDLE_ID:-$XCTEST_RUNNER_BUNDLE_ID}"
 
 # Wait for SSH
-log "Substrate: $SMITHR_SUBSTRATE"
+log "Substrate: $SMITHR_SUBSTRATE | target: $SSH_HOST:$SSH_PORT | user: $SSH_USER | key: ${SSH_KEY:+(set)}"
 wait_for_ssh
 
 # Teardown handler — clean up XCTest runner on bridge.
