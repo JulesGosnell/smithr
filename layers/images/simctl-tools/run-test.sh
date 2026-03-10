@@ -21,6 +21,12 @@ FLOW_FILE="${1:?Usage: run-test.sh <flow-file> [extra-args...]}"
 shift
 EXTRA_ARGS="$*"
 
+# If FLOW_FILE is a relative path, assume it's relative to /flows (the mount point).
+# Without this, dirname returns "." which expands to the container root.
+if [ "${FLOW_FILE#/}" = "$FLOW_FILE" ]; then
+  FLOW_FILE="/flows/$FLOW_FILE"
+fi
+
 SIDECAR_NAME="maestro"
 REMOTE_FLOWS_DIR="${REMOTE_FLOWS_DIR:-/tmp/e2e-flows}"
 
