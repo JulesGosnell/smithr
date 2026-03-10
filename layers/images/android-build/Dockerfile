@@ -68,6 +68,7 @@ RUN dnf install -y nodejs npm docker-cli docker-compose && dnf clean all \
 
 # Android SDK command-line tools
 ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
 ENV PATH="${PATH}:${ANDROID_HOME}/cmdline-tools/bin:${ANDROID_HOME}/platform-tools"
 
 ARG CMD_TOOLS_VERSION=11076708
@@ -134,6 +135,7 @@ RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSIO
 
 # Export env vars in global profile (SSH sessions don't inherit Docker ENV)
 RUN echo 'export ANDROID_HOME=/opt/android-sdk' >> /etc/profile.d/smithr-env.sh \
+    && echo 'export ANDROID_SDK_ROOT=/opt/android-sdk' >> /etc/profile.d/smithr-env.sh \
     && echo 'export JAVA_HOME=/usr/lib/jvm/java-21-openjdk' >> /etc/profile.d/smithr-env.sh \
     && echo 'export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright' >> /etc/profile.d/smithr-env.sh \
     && echo 'export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/bin:$ANDROID_HOME/platform-tools"' >> /etc/profile.d/smithr-env.sh \

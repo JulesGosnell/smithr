@@ -548,6 +548,10 @@ components:
         tunnel_port:
           type: integer
           description: Smithr-managed SSH tunnel port (allocated on lease)
+        tunnel_host:
+          type: string
+          description: LAN IP of the Smithr host where tunnel ports are accessible
+          example: "192.168.0.73"
         vnc_port:
           type: integer
           description: Smithr-managed VNC tunnel port (allocated on lease, if resource has VNC)

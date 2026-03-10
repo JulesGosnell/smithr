@@ -26,6 +26,17 @@
   "Startup timestamp captured at load time."
   (java.time.Instant/now))
 
+(def ^:private lan-ip
+  "LAN IP of this host, resolved at load time. Used in lease responses so
+   clients (especially containers) can reach tunnel ports without resolving hostnames."
+  (try
+    (let [sock (java.net.DatagramSocket.)]
+      (.connect sock (java.net.InetAddress/getByName "8.8.8.8") 53)
+      (let [ip (.getHostAddress (.getLocalAddress sock))]
+        (.close sock)
+        ip))
+    (catch Exception _ nil)))
+
 ;; ---------------------------------------------------------------------------
 ;; Response helpers
 ;; ---------------------------------------------------------------------------
@@ -82,7 +93,8 @@
       (update :acquired-at serialize-instant)
       (update :expires-at serialize-instant)
       (cond->
-        (:lease-type l) (update :lease-type name))
+        (:lease-type l) (update :lease-type name)
+        lan-ip (assoc :tunnel-host lan-ip))
       kw->underscore))
 
 (defn- serialize-host [h]
