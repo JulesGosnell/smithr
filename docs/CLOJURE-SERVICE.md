@@ -111,7 +111,7 @@ Events are filtered by label `smithr.managed=true`. Exec events are skipped (too
 Client: POST /api/leases {type: "phone", platform: "android", ttl_seconds: 300}
   ↓
 acquire! → swap! state atom:
-  1. Find first :warm resource matching type+platform (prefer prefer_host)
+  1. Find first :warm resource matching type+platform
   2. Atomically mark :leased, create lease entry
   3. Start SSH tunnel (ssh -N -L, allocate port from 17000+)
   4. Wait for tunnel port to accept connections (up to 10s)

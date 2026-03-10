@@ -18,7 +18,6 @@ SMITHR_RESOURCE_TYPE="${SMITHR_RESOURCE_TYPE:-}"
 SMITHR_PLATFORM="${SMITHR_PLATFORM:-}"
 SMITHR_LEASE_TYPE="${SMITHR_LEASE_TYPE:-phone}"
 SMITHR_WORKSPACE="${SMITHR_WORKSPACE:-}"
-SMITHR_PREFER_HOST="${SMITHR_PREFER_HOST:-}"
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-}"
 SMITHR_MODEL="${SMITHR_MODEL:-}"
 SMITHR_TUNNEL_PROTOCOL="${SMITHR_TUNNEL_PROTOCOL:-}"
@@ -185,9 +184,6 @@ do_lease() {
 
   if [[ -n "$SMITHR_WORKSPACE" ]]; then
     body=$(echo "$body" | jq --arg ws "$SMITHR_WORKSPACE" '. + {workspace: $ws}')
-  fi
-  if [[ -n "$SMITHR_PREFER_HOST" ]]; then
-    body=$(echo "$body" | jq --arg h "$SMITHR_PREFER_HOST" '. + {prefer_host: $h}')
   fi
   if [[ -n "$SMITHR_SUBSTRATE" ]]; then
     body=$(echo "$body" | jq --arg s "$SMITHR_SUBSTRATE" '. + {substrate: $s}')

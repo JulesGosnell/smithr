@@ -171,7 +171,6 @@ automatic SSH tunnel routing.
 | `SMITHR_LESSEE` | `anonymous` | Who owns this lease (for tracking) |
 | `SMITHR_TTL` | `3600` | Lease duration in seconds |
 | `SMITHR_WORKSPACE` | — | Named persistent workspace (build leases) |
-| `SMITHR_PREFER_HOST` | — | Prefer a specific host for the lease |
 
 ## Running Smithr
 

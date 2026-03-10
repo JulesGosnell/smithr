@@ -144,7 +144,6 @@
   (let [body      (:body-params request)
         workspace (or (:workspace body) (get body "workspace"))
         server-ports (or (:server_ports body) (get body "server_ports"))
-        prefer-host (or (:prefer_host body) (get body "prefer_host"))
         reverse-ports (or (:reverse_ports body) (get body "reverse_ports"))
         substrate (or (:substrate body) (get body "substrate"))
         model (or (:model body) (get body "model"))
@@ -155,7 +154,6 @@
                            :lessee      (or (:lessee body) (get body "lessee") "anonymous")
                            :lease-type  (keyword (or (:lease_type body) (get body "lease_type") "phone"))}
                     workspace (assoc :workspace workspace)
-                    prefer-host (assoc :prefer-host prefer-host)
                     substrate (assoc :substrate substrate)
                     model (assoc :model model)
                     tunnel-protocol (assoc :tunnel-protocol tunnel-protocol)

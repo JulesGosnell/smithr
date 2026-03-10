@@ -16,7 +16,6 @@
 #   SMITHR_LESSEE      — Who owns this lease (default: anonymous)
 #   SMITHR_TTL         — Lease TTL in seconds (default: 3600)
 #   SMITHR_PORTS       — Ports to tunnel (default: 3000)
-#   SMITHR_PREFER_HOST — Prefer a specific host (optional)
 #
 services:
   server:
@@ -38,7 +37,6 @@ services:
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: ${SMITHR_PORTS:-3000}
       SMITHR_TTL: ${SMITHR_TTL:-3600}
-      SMITHR_PREFER_HOST: ${SMITHR_PREFER_HOST:-}
     networks:
       - smithr-network
       - internal

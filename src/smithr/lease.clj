@@ -789,7 +789,7 @@
    Build leases create a per-user macOS account and SSH tunnel.
    Phone leases get exclusive VM access (same as legacy behavior)."
   [{:keys [type platform ttl-seconds lessee lease-type workspace server-ports
-           prefer-host reverse-ports substrate model retried? tunnel-protocol]
+           reverse-ports substrate model retried? tunnel-protocol]
     :or   {ttl-seconds 1800
            lessee      "anonymous"
            lease-type  :phone}}]
@@ -847,7 +847,7 @@
                                                          (and (= (:status %) :shared)
                                                               (< (count (:active-leases % #{}))
                                                                  (:max-slots % 10))))))
-                                       (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))
+                                       (sort-by :id)))
                                 ;; Phone: warm + no shared lock held (cross-host safe)
                                 (->> (vals (:resources s))
                                      (filter #(and (= (:status %) :warm)
@@ -856,7 +856,7 @@
                                                    (substrate-pred %)
                                                    (model-pred %)
                                                    (not (shared-lock-held? (:id %)))))
-                                     (sort-by (juxt #(if (= (:host %) prefer-host) 0 1) :id))))]
+                                     (sort-by :id))))]
                (if-let [resource (first candidates)]
                  (let [lease (cond-> {:id          lease-id
                                       :resource-id (:id resource)
@@ -901,7 +901,7 @@
             (acquire! {:type type :platform platform
                        :ttl-seconds ttl-seconds :lessee lessee
                        :lease-type lease-type :workspace workspace
-                       :server-ports server-ports :prefer-host prefer-host
+                       :server-ports server-ports
                        :reverse-ports reverse-ports
                        :substrate substrate :model model
                        :retried? true}))

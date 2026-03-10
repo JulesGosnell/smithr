@@ -133,7 +133,7 @@ Events filtered by label `smithr.managed=true`.
 |--------|------|-------------|
 | GET | `/api/resources` | List resources (filter: type, platform, status, host) |
 | GET | `/api/resources/{id}` | Get single resource |
-| POST | `/api/leases` | Acquire lease (body: type, platform, lease_type, ttl_seconds, lessee, workspace, server_ports, prefer_host) |
+| POST | `/api/leases` | Acquire lease (body: type, platform, lease_type, ttl_seconds, lessee, workspace, server_ports) |
 | DELETE | `/api/leases/{id}` | Release lease |
 | GET | `/api/leases` | List active leases (filter: lessee) |
 | GET | `/api/leases/{id}` | Get single lease |

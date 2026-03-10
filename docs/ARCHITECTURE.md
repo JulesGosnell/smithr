@@ -921,7 +921,6 @@ curl -s $SMITHR_API/api/compose/android-phone > phone.yml
 curl -s $SMITHR_API/api/compose/maestro > maestro.yml
 
 SMITHR_LESSEE="artha-e2e" \
-SMITHR_PREFER_HOST="$SERVER_HOST" \
 SERVER_SERVICE="server" \
 FLOWS_DIR="$FLOWS_DIR" \
   docker compose -f server.yml -f phone.yml -f maestro.yml \
@@ -949,11 +948,9 @@ App localhost:3000
 
 ### Cross-Host Transparency
 
-The `SMITHR_PREFER_HOST` hint tells Smithr to lease a server resource on
-the same host where it was adopted — avoiding unnecessary cross-host
-tunneling. But if resources are on different hosts, Smithr's SSH tunnel
-infrastructure routes traffic automatically. The E2E scripts don't need
-to know which host anything runs on.
+If resources are on different hosts, Smithr's SSH tunnel infrastructure
+routes traffic automatically. The E2E scripts don't need to know which
+host anything runs on.
 
 ## Configuration System
 
