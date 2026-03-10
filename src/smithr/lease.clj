@@ -9,6 +9,7 @@
             [clojure.tools.logging :as log]
             [clojure.java.shell :as shell]
             [smithr.state :as state]
+            [smithr.store :as store]
             [smithr.docker :as docker]
             [smithr.macos :as macos]
             [smithr.linux :as linux]
@@ -519,71 +520,43 @@
      :delete-user!  macos/delete-user!}))
 
 ;; ---------------------------------------------------------------------------
-;; Shared filesystem lease locks
+;; Distributed lock for cross-host phone lease coordination
 ;; ---------------------------------------------------------------------------
-;; Phone leases use atomic mkdir on /srv/shared/smithr/leases/<resource-id>/
-;; as a cross-host lock. Both Smithr instances see the same NFS mount, so mkdir is
-;; the coordination primitive — no proxying or shared database needed.
+;; Phone leases require exclusive access across the cluster. The lock
+;; implementation is pluggable via the smithr.store/DistributedLock protocol.
+;; Default: DiskLock (atomic mkdir on NFS). See smithr.store.disk.
 
-(def ^:private shared-lease-dir "/srv/shared/smithr/leases")
+(defonce ^:private dist-lock (atom nil))
 
-(defn- resource-id->lock-path
-  "Convert resource ID to a filesystem-safe lock directory path.
-   e.g. 'megalodon:android:smithr-android-fe' -> '/srv/shared/smithr/leases/megalodon--android--smithr-android-fe'"
-  [resource-id]
-  (str shared-lease-dir "/"
-       (clojure.string/replace (str resource-id) ":" "--")))
+(defn init-lock!
+  "Initialize the distributed lock backend. Called once at startup from core.clj."
+  [lock]
+  (reset! dist-lock lock))
 
 (defn- try-acquire-shared-lock!
-  "Atomically acquire a shared filesystem lock for a phone resource.
-   Returns true if lock was acquired, false if already held.
-   Writes lessee info into the lock directory for debugging."
+  "Acquire an exclusive lock for a phone resource via the DistributedLock backend."
   [resource-id lessee lease-id]
-  (let [lock-path (resource-id->lock-path resource-id)
-        lock-dir  (java.io.File. lock-path)]
-    (if (.mkdir lock-dir)
-      (do
-        ;; Lock acquired — write lessee info for debugging
-        (try
-          (spit (str lock-path "/lessee") (str lessee "\n" lease-id "\n" (Instant/now)))
-          (catch Exception e
-            (log/warn "Failed to write lessee info:" (.getMessage e))))
-        (log/info "Shared lock acquired:" resource-id "by" lessee)
-        true)
-      (do
-        (log/debug "Shared lock busy:" resource-id)
-        false))))
+  (store/try-lock! @dist-lock resource-id {:lessee lessee :lease-id lease-id}))
 
 (defn- unlease-shared-lock!
-  "Unlease a shared filesystem lock for a phone resource."
+  "Release an exclusive lock for a phone resource."
   [resource-id]
-  (let [lock-path (resource-id->lock-path resource-id)
-        lock-dir  (java.io.File. lock-path)]
-    (when (.exists lock-dir)
-      ;; Remove contents first, then directory
-      (doseq [f (.listFiles lock-dir)]
-        (.delete f))
-      (.delete lock-dir)
-      (log/info "Shared lock unleased:" resource-id))))
+  (store/unlock! @dist-lock resource-id))
 
 (defn- shared-lock-held?
-  "Check if a shared filesystem lock is held for a phone resource."
+  "Check if an exclusive lock is held for a phone resource."
   [resource-id]
-  (.isDirectory (java.io.File. (resource-id->lock-path resource-id))))
+  (store/locked? @dist-lock resource-id))
 
 (defn cleanup-stale-shared-locks!
-  "Remove any shared locks that don't correspond to active leases.
+  "Remove any locks that don't correspond to active leases.
    Called on startup to clean up after crashes."
   []
-  (let [lease-dir (java.io.File. shared-lease-dir)]
-    (when (.exists lease-dir)
-      (doseq [lock-dir (.listFiles lease-dir)]
-        (when (.isDirectory lock-dir)
-          (let [resource-id (clojure.string/replace (.getName lock-dir) "--" ":")]
-            (when-not (some (fn [[_ l]] (= (:resource-id l) resource-id))
-                           (:leases @state/state))
-              (log/info "Cleaning stale shared lock:" resource-id)
-              (unlease-shared-lock! resource-id))))))))
+  (when @dist-lock
+    (store/cleanup-locks! @dist-lock
+      (fn [lock-id]
+        (some (fn [[_ l]] (= (:resource-id l) lock-id))
+              (:leases @state/state))))))
 
 (defn- valid-workspace-name?
   "Validate workspace name: alphanumeric + hyphens, 3-31 chars, starts with letter."

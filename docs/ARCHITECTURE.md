@@ -349,9 +349,8 @@ Smithr uses composable Docker Compose "layers" that can be combined:
 | iOS Simulator | `layers/ios.yml` | iOS Simulator sidecar (boots inside Xcode VM) |
 | Physical Phone | `layers/physical-phone.yml` | ADB proxy for USB-connected Android phones |
 | Metro | `layers/metro.yml` | React Native Metro bundler |
-| Maestro Sidecar | compose template `maestro` | Persistent Maestro test runner (Android) |
+| Maestro Sidecar | compose template `maestro` | Platform-agnostic Maestro test runner (auto-detects Android/iOS) |
 | iOS App Sidecar | compose template `ios-app` | App install/uninstall via SSH + simctl |
-| iOS Maestro Sidecar | compose template `ios-maestro` | Maestro test runner via SSH into macOS VM |
 | Smithr Service | `layers/server.yml` | Clojure control plane (port 7070) |
 
 ### Project Layers
@@ -678,11 +677,12 @@ The sidecar SSHes into the macOS VM to execute Maestro remotely.
 ```bash
 # Download templates
 curl -s http://localhost:7070/api/compose/ios-phone > ios.yml
-curl -s http://localhost:7070/api/compose/ios-maestro > ios-maestro.yml
+curl -s http://localhost:7070/api/compose/ios-app > ios-app.yml
+curl -s http://localhost:7070/api/compose/maestro > maestro.yml
 
-# Start — Maestro sidecar waits for phone proxy (SSH tunnel)
+# Start — Maestro sidecar auto-detects iOS phone, SSHes into macOS VM
 SMITHR_LESSEE="ci-123" SSH_KEY_PATH=~/.ssh/id_macos FLOWS_DIR=/path/to/flows \
-  docker compose -f ios.yml -f ios-maestro.yml -p test up -d
+  docker compose -f ios.yml -f ios-app.yml -f maestro.yml -p test up -d
 
 # Run tests via docker exec (Maestro runs ON the macOS VM via SSH)
 docker exec test-maestro-1 /run-test.sh /flows/login.yaml

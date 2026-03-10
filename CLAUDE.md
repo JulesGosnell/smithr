@@ -82,15 +82,11 @@ docker compose -f macos-build.yml -p my-build down
 | `macos-build` | macOS + Xcode VM | `localhost:22` (SSH) | iOS/macOS builds |
 | `android-build` | Fedora + Android SDK | `localhost:22` (SSH) | Android builds, E2E |
 | `sandbox` | Fedora + Claude Code | `localhost:22` (SSH) | Dev sandboxes (Karls) |
-| `phone` | Android or iOS phone | `localhost:22` (SSH) | Unified near-side phone proxy |
 | `server` | Adopted server | `localhost:3000` | E2E tests against an API server |
 | `adopt-proxy` | External container | configurable | Adopt + tunnel any container |
 | `android-app` | Android app sidecar | — | App install/config lifecycle |
 | `ios-app` | iOS app sidecar | — | App install/config lifecycle |
-| `maestro` | Maestro test runner | — | Android E2E test orchestration |
-| `ios-maestro` | iOS Maestro sidecar | — | iOS E2E test orchestration |
-| `unified-app` | Near-side app sidecar | — | Platform-aware app lifecycle |
-| `unified-maestro` | Near-side Maestro | — | Platform-aware test orchestration |
+| `maestro` | Maestro test runner | — | E2E test orchestration (auto-detects platform) |
 | `metro` | Metro JS bundler | `localhost:8081` | Hot-reload dev ([docs](docs/METRO-HOT-RELOAD.md)) |
 
 ### Environment variables

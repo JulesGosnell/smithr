@@ -2,106 +2,51 @@
 # SPDX-License-Identifier: Apache-2.0
 
 #
-# Maestro test runner sidecar (Android)
+# Maestro test runner sidecar (platform-agnostic)
 #
-# Manages the test lifecycle on an Android device:
-#   up:   connect ADB → run login flow → HEALTHY
-#   down: run logout flow → exit
+# Auto-detects whether the compose stack contains an Android or iOS phone
+# and runs Maestro tests accordingly. Same interface for both platforms.
 #
-# The android-app sidecar handles APK install, config injection, and server
-# bridge. This container handles the Maestro test lifecycle: login on startup,
-# test body via docker exec, logout on shutdown.
-#
-# Usage:
-#   docker exec <project>-maestro-1 maestro --device $ADB_TARGET test /flows/<flow>.yaml
-#
-# Compose with android-phone, android-app, and server templates:
+# Compose with a phone proxy and app sidecar:
 #
 #   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
 #   curl -s http://localhost:7070/api/compose/android-app > /tmp/app.yml
 #   curl -s http://localhost:7070/api/compose/maestro > /tmp/maestro.yml
-#   docker compose -f /tmp/phone.yml -f /tmp/app.yml -f /tmp/maestro.yml -p test up -d
+#   SSH_KEY_PATH=~/.ssh/smithr_worker \
+#     docker compose -f /tmp/phone.yml -f /tmp/app.yml -f /tmp/maestro.yml \
+#     -p test up -d
+#
+# Run tests:
+#   docker exec test-maestro-1 /run-test.sh /flows/<flow>.yaml [-e KEY=VAL ...]
 #
 # Env vars:
-#   ADB_TARGET   — ADB connection target (default: android-phone:5555)
-#   DRIVER_PORT  — Maestro driver port (default: 7102, avoids collision with app sidecar)
-#   FLOWS_DIR    — Host path to Maestro flow files (default: current dir)
-#   LOGIN_FLOW   — Maestro login flow file (default: /flows/login.yaml)
-#   LOGOUT_FLOW  — Maestro logout flow file (default: /flows/logout.yaml)
-#   BUNDLE_ID    — App package name (required for login/logout flows)
-#   EMAIL        — Login email (required for login flow)
-#   PASSWORD     — Login password (default: Demo123!)
+#   FLOWS_DIR      — host path to Maestro flow files (default: current dir)
+#   SSH_KEY_PATH   — host path to SSH private key (required)
+#   LOGIN_FLOW     — login flow file path (default: empty = no auto-login)
+#   LOGOUT_FLOW    — logout flow file path (default: empty = no auto-logout)
+#   BUNDLE_ID      — app package name
+#   EMAIL          — login email
+#   PASSWORD       — login password
+#   ORG_SLUG       — organization slug
+#   MAESTRO_EXTRA  — extra args to pass to Maestro (optional)
+#   MAESTRO_VARS   — space-separated env var names to auto-forward as Maestro -e flags
 #
 services:
   maestro:
-    image: ${MAESTRO_IMAGE:-maestro:latest}
+    image: smithr-simctl-tools:latest
+    entrypoint: ["/maestro-sidecar.sh"]
     depends_on:
       app:
         condition: service_healthy
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        T0=$$(date +%s)
-        log() { echo "[maestro] [$$(( $$(date +%s) - T0 ))s] $$*"; }
-
-        # ── Teardown (SIGTERM/INT) ──────────────────────────────
-        teardown() {
-            log "Teardown starting..."
-            if [ -n "$$LOGOUT_FLOW" ] && [ -f "$$LOGOUT_FLOW" ]; then
-                log "Running logout flow: $$LOGOUT_FLOW"
-                maestro --device "$$ADB_TARGET" test \
-                  -e APP_ID="$$BUNDLE_ID" \
-                  "$$LOGOUT_FLOW" 2>&1 || true
-                log "Logout complete."
-            fi
-            log "Teardown complete."
-            exit 0
-        }
-        trap teardown TERM INT
-
-        # ── Connect ADB ────────────────────────────────────────
-        log "Connecting ADB to $$ADB_TARGET..."
-        for i in $$(seq 1 60); do
-          if adb connect "$$ADB_TARGET" 2>/dev/null | grep -q "connected"; then
-            break
-          fi
-          sleep 2
-        done
-        adb -s "$$ADB_TARGET" wait-for-device
-        log "ADB connected."
-
-        # ── Login ──────────────────────────────────────────────
-        if [ -n "$$LOGIN_FLOW" ] && [ -f "$$LOGIN_FLOW" ]; then
-            log "Running login flow: $$LOGIN_FLOW"
-            if ! maestro --device "$$ADB_TARGET" test \
-              -e APP_ID="$$BUNDLE_ID" \
-              -e EMAIL="$$EMAIL" -e PASSWORD="$$PASSWORD" \
-              "$$LOGIN_FLOW"; then
-                log "FATAL: Login flow failed"
-                exit 1
-            fi
-            log "Login complete."
-        fi
-
-        # ── Ready ──────────────────────────────────────────────
-        touch /tmp/maestro-ready
-        log "Ready. App logged in."
-        log "Run tests via: docker exec <container> maestro --device $$ADB_TARGET test /flows/<flow>.yaml"
-
-        # Stay alive — sleep in background so trap fires promptly
-        while true; do sleep 60 & wait $$!; done
     environment:
-      ADB_TARGET: ${ADB_TARGET:-android-phone:5555}
+      LOGIN_FLOW: ${LOGIN_FLOW:-}
+      LOGOUT_FLOW: ${LOGOUT_FLOW:-}
       BUNDLE_ID: ${BUNDLE_ID:-}
-      LOGIN_FLOW: ${LOGIN_FLOW:-/flows/login.yaml}
-      LOGOUT_FLOW: ${LOGOUT_FLOW:-/flows/logout.yaml}
       EMAIL: ${EMAIL:-}
-      PASSWORD: ${PASSWORD:-Demo123!}
-      DRIVER_PORT: ${DRIVER_PORT:-7102}
-      MAESTRO_OPTS: "-Dmaestro.driver.port=${DRIVER_PORT:-7102}"
-      MAESTRO_CLI_NO_ANALYTICS: "true"
-      MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: "true"
-      JAVA_TOOL_OPTIONS: ""
+      PASSWORD: ${PASSWORD:-}
+      ORG_SLUG: ${ORG_SLUG:-}
+      MAESTRO_EXTRA: ${MAESTRO_EXTRA:-}
+      MAESTRO_VARS: ${MAESTRO_VARS:-EMAIL PASSWORD APP_ID ORG_SLUG}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/maestro-ready"]
       interval: 5s
@@ -111,8 +56,7 @@ services:
     stop_grace_period: 60s
     volumes:
       - ${FLOWS_DIR:-.}:/flows:ro,z
-      - ${ADB_KEY_PATH:-~/.android/adbkey}:/root/.android/adbkey:ro,z
-      - ${ADB_KEY_PATH:-~/.android/adbkey}.pub:/root/.android/adbkey.pub:ro,z
+      - ${SSH_KEY_PATH:?SSH_KEY_PATH is required}:/root/.ssh/id_key:ro,z
     networks:
       - internal
 

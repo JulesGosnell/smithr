@@ -13,6 +13,7 @@
             [smithr.provision :as provision]
             [smithr.devices :as devices]
             [smithr.templates :as templates]
+            [smithr.store.disk :as disk-store]
             [smithr.api :as api])
   (:gen-class))
 
@@ -23,9 +24,14 @@
   [config]
   (log/info "Starting Smithr resource pool manager")
 
+  ;; Initialize store backends (NFS-backed for production)
+  (let [dist-lock (disk-store/create-lock "/srv/shared/smithr/leases")
+        template-kv (disk-store/create-kv "/srv/shared/smithr/templates")]
+    (lease/init-lock! dist-lock)
+    (templates/init-kv! template-kv))
+
   ;; Clean up stale tunnels and shared locks from previous sessions
   (lease/cleanup-stale-tunnels!)
-  (.mkdirs (java.io.File. "/srv/shared/smithr/leases"))
   (lease/cleanup-stale-shared-locks!)
 
   ;; Initialize provisioning config (opt-in — no-op if absent)

@@ -1,11 +1,11 @@
 # Copyright 2026 Jules Gosnell
 # SPDX-License-Identifier: Apache-2.0
 
-# common-funcs.sh — Shared utility functions for iOS sidecars.
+# common-funcs.sh — Shared utility functions for sidecars.
 # Source this file to get logging, SSH wait, and readiness helpers.
 #
 # Expects:
-#   SIDECAR_NAME — prefix for log messages (e.g., "ios-app", "ios-maestro")
+#   SIDECAR_NAME — prefix for log messages (e.g., "ios-app", "maestro")
 #
 # Provides:
 #   log()             — timestamped log with sidecar name prefix
@@ -33,4 +33,20 @@ wait_for_ssh() {
 # Usage: mark_ready /tmp/app-installed
 mark_ready() {
     touch "$1"
+}
+
+# Build Maestro -e flags from MAESTRO_VARS.
+# MAESTRO_VARS is a space-separated list of env var names to forward.
+# Only non-empty vars are included. Uses printenv for safe variable lookup.
+# Usage: FLAGS=$(maestro_env_flags)
+#        maestro test $FLAGS /flows/test.yaml
+maestro_env_flags() {
+    local flags=""
+    for var in ${MAESTRO_VARS:-}; do
+        local val=$(printenv "$var" 2>/dev/null || true)
+        if [ -n "$val" ]; then
+            flags="$flags -e $var=$val"
+        fi
+    done
+    echo "$flags"
 }

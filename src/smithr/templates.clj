@@ -5,101 +5,95 @@
   "Dynamic template management — publish, serve, and provision from
    user-uploaded compose templates.
 
-   Templates are stored on shared disk (/srv/shared/smithr/templates/)
-   so both Smithr instances see them. Each template is a directory:
-     <name>/
-       meta.edn   — {:ports [3000], :type \"server\", :platform \"artha\"}
-       compose.yml — the service compose (for provisioning)
+   Storage is pluggable via the smithr.store/SharedKV protocol.
+   Default: DiskKV (NFS) for cross-host visibility.
+   Memory: MemoryKV for single-instance / testing.
 
    The proxy compose YAML is auto-generated from metadata."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [smithr.store :as store]))
 
-(def ^:private templates-dir "/srv/shared/smithr/templates")
+(defonce ^:private kv (atom nil))
 
-;; In-memory cache, refreshed from disk
-(defonce ^:private templates (atom {}))
+;; Legacy disk path — used only for one-time migration from old format
+(def ^:private legacy-templates-dir "/srv/shared/smithr/templates")
+
+(defn init-kv!
+  "Initialize the SharedKV backend for templates. Called once at startup."
+  [shared-kv]
+  (reset! kv shared-kv))
 
 ;; ---------------------------------------------------------------------------
-;; Disk I/O
+;; Migration from legacy disk format (meta.edn + compose.yml → data.edn)
 ;; ---------------------------------------------------------------------------
 
-(defn- template-path [name]
-  (str templates-dir "/" name))
+(defn- migrate-legacy-templates!
+  "One-time migration: if old-format templates exist (meta.edn + compose.yml)
+   but data.edn does not, write the combined value via the KV store."
+  []
+  (let [dir (io/file legacy-templates-dir)]
+    (when (.isDirectory dir)
+      (doseq [d (.listFiles dir)]
+        (when (.isDirectory d)
+          (let [name (.getName d)
+                meta-file (io/file d "meta.edn")
+                compose-file (io/file d "compose.yml")
+                data-file (io/file d "data.edn")]
+            (when (and (.exists meta-file) (.exists compose-file)
+                       (not (.exists data-file)))
+              (try
+                (let [meta (edn/read-string (slurp meta-file))
+                      compose (slurp compose-file)]
+                  (store/kv-put! @kv name (assoc meta :name name :compose compose))
+                  (log/info "Migrated legacy template:" name))
+                (catch Exception e
+                  (log/warn "Failed to migrate template" name ":" (.getMessage e)))))))))))
 
-(defn- load-template-from-disk
-  "Load a single template directory. Returns nil if invalid."
-  [name]
-  (let [dir (template-path name)
-        meta-file (io/file dir "meta.edn")
-        compose-file (io/file dir "compose.yml")]
-    (when (and (.exists meta-file) (.exists compose-file))
-      (try
-        (let [meta (edn/read-string (slurp meta-file))
-              compose (slurp compose-file)]
-          (assoc meta :name name :compose compose))
-        (catch Exception e
-          (log/warn "Failed to load template" name ":" (.getMessage e))
-          nil)))))
+;; ---------------------------------------------------------------------------
+;; Public API
+;; ---------------------------------------------------------------------------
 
 (defn load-templates!
-  "Scan templates-dir and load all templates into the atom."
+  "Load templates into the KV store. Migrates old-format templates on first run."
   []
-  (let [dir (io/file templates-dir)]
-    (when (.isDirectory dir)
-      (let [loaded (->> (.listFiles dir)
-                        (filter #(.isDirectory %))
-                        (map #(.getName %))
-                        (keep (fn [n] (when-let [t (load-template-from-disk n)] [n t])))
-                        (into {}))]
-        (reset! templates loaded)
-        (log/info "Loaded" (count loaded) "dynamic templates:"
-                  (str/join ", " (keys loaded)))))))
+  (when @kv
+    (migrate-legacy-templates!)
+    (let [names (store/kv-list-keys @kv)]
+      (log/info "Loaded" (count names) "dynamic templates:"
+                (str/join ", " names)))))
 
 (defn save-template!
-  "Write a template to disk and update the in-memory cache.
-   meta should contain :ports, :type, :platform.
+  "Publish a template. meta should contain :ports, :type, :platform.
    compose is the raw YAML string."
   [name meta compose]
-  (let [dir (template-path name)]
-    (.mkdirs (io/file dir))
-    (spit (str dir "/meta.edn") (pr-str (dissoc meta :name :compose)))
-    (spit (str dir "/compose.yml") compose)
-    (let [full (assoc meta :name name :compose compose)]
-      (swap! templates assoc name full)
-      (log/info "Published template:" name "type:" (:type meta) "platform:" (:platform meta))
-      full)))
+  (let [full (assoc meta :name name :compose compose)]
+    (store/kv-put! @kv name full)
+    (log/info "Published template:" name "type:" (:type meta) "platform:" (:platform meta))
+    full))
 
 (defn delete-template!
-  "Remove a template from disk and cache."
+  "Remove a template."
   [name]
-  (let [dir (io/file (template-path name))]
-    (when (.exists dir)
-      (doseq [f (.listFiles dir)] (.delete f))
-      (.delete dir))
-    (swap! templates dissoc name)
-    (log/info "Deleted template:" name)))
-
-;; ---------------------------------------------------------------------------
-;; Lookup
-;; ---------------------------------------------------------------------------
+  (store/kv-delete! @kv name)
+  (log/info "Deleted template:" name))
 
 (defn get-template
   "Look up a dynamic template by name."
   [name]
-  (get @templates name))
+  (store/kv-get @kv name))
 
 (defn list-templates
   "Return all dynamic templates (without compose YAML for listing)."
   []
-  (mapv (fn [[_ t]] (dissoc t :compose)) @templates))
+  (mapv #(dissoc % :compose) (store/kv-list-vals @kv)))
 
 (defn template-names
   "Return the set of dynamic template names."
   []
-  (set (keys @templates)))
+  (set (store/kv-list-keys @kv)))
 
 ;; ---------------------------------------------------------------------------
 ;; Proxy compose generation

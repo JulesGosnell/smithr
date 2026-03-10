@@ -2,19 +2,37 @@
 # Copyright 2026 Jules Gosnell
 # SPDX-License-Identifier: Apache-2.0
 #
-# iOS Maestro sidecar — persistent container for running Maestro tests.
+# Maestro sidecar — persistent container for running Maestro tests.
+# Platform-agnostic: auto-detects Android or iOS from the compose stack.
 # Stays alive as a sidecar; run tests via:
 #
 #   docker exec <container> /run-test.sh <flow-file>
 #
 # Substrate dispatch:
-#   simulated (default) — SSH into macOS VM, verify Maestro is installed there
-#   physical            — SSH into bridge, set up port-forward for XCTest (22087)
+#   android             — SSH into worker, run Maestro there
+#   simulated (default) — SSH into macOS VM, run Maestro there
+#   physical            — SSH into bridge, set up XCTest port-forward (22087)
 #
 set -e
 
-SIDECAR_NAME="ios-maestro"
-SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
+SIDECAR_NAME="maestro"
+
+# Auto-detect platform from DNS. ALWAYS runs — even when SMITHR_SUBSTRATE
+# is pre-set — to resolve SSH_TARGET and SSH_USER correctly.
+# SMITHR_SUBSTRATE is only overridden if not already set.
+if nslookup android-phone >/dev/null 2>&1; then
+  # Android: normalize substrate to "android" regardless of client value
+  SMITHR_SUBSTRATE="android"
+  export SSH_TARGET="${SSH_TARGET:-android-phone:22}"
+  export SSH_USER="${SSH_USER:-root}"
+elif nslookup ios-phone >/dev/null 2>&1; then
+  : "${SMITHR_SUBSTRATE:=simulated}"
+  export SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
+else
+  echo "[$SIDECAR_NAME] ERROR: No phone service found (android-phone or ios-phone)" >&2
+  exit 1
+fi
+export SSH_KEY="${SSH_KEY:-/root/.ssh/id_key}"
 
 . /opt/scripts/ssh-common.sh
 . /opt/scripts/common-funcs.sh
@@ -24,6 +42,10 @@ LOGOUT_FLOW="${LOGOUT_FLOW:-}"
 BUNDLE_ID="${BUNDLE_ID:-}"
 EMAIL="${EMAIL:-}"
 PASSWORD="${PASSWORD:-}"
+ORG_SLUG="${ORG_SLUG:-}"
+# APP_ID alias for BUNDLE_ID — Maestro flows use ${APP_ID}
+# Must be exported so maestro_env_flags (printenv) can read it.
+export APP_ID="${BUNDLE_ID:-}"
 
 # Maestro XCTest driver bundle IDs — defaults are Artha; override via env vars.
 MAESTRO_DRIVER_BUNDLE_ID="${MAESTRO_DRIVER_BUNDLE_ID:-care.artha.maestro-driver}"
@@ -46,7 +68,8 @@ teardown() {
   # Logout (best effort — app may already be gone if app sidecar tore down first)
   if [ -n "$LOGOUT_FLOW" ] && [ -f "$LOGOUT_FLOW" ]; then
     log "Running logout flow: $LOGOUT_FLOW"
-    /run-test.sh "$LOGOUT_FLOW" -e APP_ID="$BUNDLE_ID" 2>&1 || true
+    LOGOUT_FLAGS=$(maestro_env_flags 2>/dev/null || echo "-e APP_ID=$BUNDLE_ID")
+    /run-test.sh "$LOGOUT_FLOW" $LOGOUT_FLAGS 2>&1 || true
     log "Logout complete."
   fi
   if [ "$SMITHR_SUBSTRATE" = "physical" ]; then
@@ -82,6 +105,17 @@ teardown() {
 trap teardown TERM INT EXIT
 
 case "$SMITHR_SUBSTRATE" in
+  android)
+    # Android: verify Maestro is installed on the worker
+    log "Checking Maestro on worker..."
+    if remote "which maestro" >/dev/null 2>&1; then
+      MAESTRO_VERSION=$(remote "maestro --version" 2>/dev/null || echo "unknown")
+      log "Maestro $MAESTRO_VERSION found on worker."
+    else
+      log "WARNING: Maestro not found on worker. Tests will fail."
+    fi
+    ;;
+
   physical)
     # Physical: set up XCTest runner + Maestro on the bridge container.
     # Same pattern as simulated (Maestro on macOS VM) — Maestro runs where
@@ -265,8 +299,8 @@ esac
 # Login (if flow provided)
 if [ -n "$LOGIN_FLOW" ] && [ -f "$LOGIN_FLOW" ]; then
   log "Running login flow: $LOGIN_FLOW"
-  if ! /run-test.sh "$LOGIN_FLOW" \
-    -e EMAIL="$EMAIL" -e PASSWORD="$PASSWORD" -e APP_ID="$BUNDLE_ID"; then
+  ENV_FLAGS=$(maestro_env_flags)
+  if ! /run-test.sh "$LOGIN_FLOW" $ENV_FLAGS; then
     log "FATAL: Login flow failed"
     EXIT_CODE=1
     exit 1

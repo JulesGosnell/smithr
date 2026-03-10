@@ -13,12 +13,12 @@
 # Login/logout lifecycle is handled by the maestro sidecar, not this container.
 # This keeps concerns separated: app sidecar owns the binary, maestro owns the session.
 #
-# Compose with android-phone, server, and android-maestro templates:
+# Compose with android-phone, server, and maestro templates:
 #
 #   curl -s http://localhost:7070/api/compose/android-phone > /tmp/phone.yml
 #   curl -s http://localhost:7070/api/compose/android-app > /tmp/app.yml
 #   curl -s http://localhost:7070/api/compose/server > /tmp/server.yml
-#   curl -s http://localhost:7070/api/compose/android-maestro > /tmp/maestro.yml
+#   curl -s http://localhost:7070/api/compose/maestro > /tmp/maestro.yml
 #   APP_PATH=/path/to/apk-dir BUNDLE_ID=com.example.app \
 #     docker compose -f /tmp/phone.yml -f /tmp/server.yml \
 #                    -f /tmp/app.yml -f /tmp/maestro.yml -p test up -d

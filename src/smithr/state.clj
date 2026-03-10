@@ -2,17 +2,23 @@
 ;; SPDX-License-Identifier: Apache-2.0
 
 (ns smithr.state
-  "Atom-based state management for resources, leases, and hosts.
-   All state mutations happen via swap! for atomicity.")
+  "State management for resources, leases, and hosts.
+   All state mutations happen via swap! for atomicity.
+
+   The `state` var is a MemoryStateStore that implements IDeref + IAtom,
+   so existing @state and (swap! state f) calls work unchanged.
+   See smithr.store for the protocol definitions."
+  (:require [smithr.store.memory :as mem]))
 
 (defonce state
-  (atom {:resources  {}   ;; resource-id -> Resource
-         :leases     {}   ;; lease-id -> Lease
-         :hosts      {}   ;; host-label -> Host
-         :workspaces {}   ;; workspace-name -> Workspace
-         :adopts     {}   ;; adopt-id -> Adopt
-         :events     []}  ;; vec of event maps, newest last
-         ))
+  (mem/create-state-store
+    {:resources  {}   ;; resource-id -> Resource
+     :leases     {}   ;; lease-id -> Lease
+     :hosts      {}   ;; host-label -> Host
+     :workspaces {}   ;; workspace-name -> Workspace
+     :adopts     {}   ;; adopt-id -> Adopt
+     :events     []}  ;; vec of event maps, newest last
+     ))
 
 ;; ---------------------------------------------------------------------------
 ;; Host operations

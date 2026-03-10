@@ -1,14 +1,14 @@
 # Copyright 2026 Jules Gosnell
 # SPDX-License-Identifier: Apache-2.0
 
-# ssh-common.sh — Shared SSH connection setup for iOS sidecars.
+# ssh-common.sh — Shared SSH connection setup for sidecars.
 # Source this file to get SSH variables and the remote() function.
 #
 # Expects these env vars to be set (or uses defaults):
 #   SSH_TARGET        — host:port (default: ios-phone:22)
 #   SSH_KEY           — path to SSH key (optional)
 #   SSH_USER          — SSH user (default: substrate-dependent)
-#   SMITHR_SUBSTRATE  — simulated | physical (default: simulated)
+#   SMITHR_SUBSTRATE  — android | simulated | physical (default: simulated)
 #
 # Provides:
 #   SSH_HOST, SSH_PORT, KEY_OPT, COMMON_OPTS, SSH_OPTS, SCP_OPTS
@@ -18,9 +18,10 @@ SSH_TARGET="${SSH_TARGET:-ios-phone:22}"
 SSH_KEY="${SSH_KEY:-}"
 SMITHR_SUBSTRATE="${SMITHR_SUBSTRATE:-simulated}"
 
-# Default SSH_USER based on substrate (simulated → macOS VM user, physical → bridge root)
+# Default SSH_USER based on substrate
 if [ -z "$SSH_USER" ]; then
   case "$SMITHR_SUBSTRATE" in
+    android)  SSH_USER="root" ;;
     physical) SSH_USER="root" ;;
     *)        SSH_USER="smithr" ;;
   esac
