@@ -270,7 +270,9 @@
         children (children-of (:container resource) all-resources)
         leases (leases-for-resource (:id resource))
         connection (:connection resource)
-        vnc-port (:vnc_port connection)
+        ;; Prefer tunneled VNC port from active lease, fall back to resource's direct port
+        lease-vnc-port (some-> (first leases) :connection :vnc_port)
+        vnc-port (or lease-vnc-port (:vnc_port connection))
         ;; Find workspaces for this resource
         ws-list (filter #(= (:resource_id %) (:id resource)) @state/workspaces)
         ;; For exclusive phone lease

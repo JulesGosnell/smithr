@@ -196,6 +196,15 @@
         (log/error "Failed to start socat bridge on port" tunnel-port ":" (.getMessage e))
         nil))))
 
+(defn- vnc-internal-port
+  "Container-internal VNC port for each platform. Returns nil if VNC not supported."
+  [platform]
+  (case platform
+    :android 5900
+    :macos   5999
+    :sandbox 5901
+    nil))
+
 (defn- compute-tunnel-target
   "Determine the target host:port for an SSH tunnel based on resource platform.
    iOS sidecars route to parent macOS VM. Returns [target-host target-port]."
@@ -271,8 +280,10 @@
    tunnel-port: local port to listen on.
    final-hop, final-fwd-host, final-fwd-port: resolved routing targets.
    extra-ssh-args: additional SSH args (e.g. -i, -p for reverse-port routing).
-   reverse-flags: -R flag pairs for reverse port forwarding."
-  [tunnel-port final-hop final-fwd-host final-fwd-port extra-ssh-args reverse-flags reverse-ports]
+   reverse-flags: -R flag pairs for reverse port forwarding.
+   vnc-flags: optional -L flags for VNC port tunneling."
+  [tunnel-port final-hop final-fwd-host final-fwd-port extra-ssh-args reverse-flags reverse-ports
+   & {:keys [vnc-flags]}]
   (let [exit-on-fail (if (seq reverse-ports) "no" "yes")]
     (vec (concat ["ssh" "-N"
                   "-o" "StrictHostKeyChecking=no"
@@ -283,6 +294,7 @@
                   "-o" "ServerAliveCountMax=3"]
                  extra-ssh-args
                  ["-L" (str "0.0.0.0:" tunnel-port ":" final-fwd-host ":" final-fwd-port)]
+                 vnc-flags
                  reverse-flags
                  [final-hop]))))
 
@@ -294,7 +306,10 @@
 
    For build leases, optional reverse-ports adds -R flags to the same SSH
    session so the remote container can reach Smithr tunnel ports directly.
-   Format: [{:bind port-on-remote, :target tunnel-port-on-localhost}]"
+   Format: [{:bind port-on-remote, :target tunnel-port-on-localhost}]
+
+   If the resource has a VNC port, a second -L flag is added to tunnel VNC
+   through the same SSH process. The VNC tunnel port is returned as :vnc-port."
   [lease-id resource & {:keys [reverse-ports]}]
   (let [tunnel-port (allocate-tunnel-port!)
         [target-host target-port] (compute-tunnel-target resource)
@@ -321,10 +336,30 @@
             [hop fwd-host fwd-port []])
         target-str (str final-fwd-host ":" final-fwd-port " via " final-hop)
         reverse-flags (compute-reverse-flags lease-id reverse-ports)
+        ;; VNC tunnel: add second -L flag if resource has a VNC port
+        resource-vnc-port (get-in resource [:connection :vnc-port])
+        vnc-tunnel-port (when resource-vnc-port (allocate-tunnel-port!))
+        vnc-fwd-port (when resource-vnc-port
+                       ;; Determine if we're accessing the container directly (via
+                       ;; Docker network or SSH jump) vs through host port mapping.
+                       ;; Direct access → use container internal VNC port.
+                       ;; Host port mapping (remote) → use host-mapped VNC port.
+                       (let [hop-host (if (clojure.string/includes? (str final-hop) "@")
+                                       (second (clojure.string/split (str final-hop) #"@" 2))
+                                       (str final-hop))
+                             direct? (or (docker-network-ip? final-fwd-host)
+                                         (docker-network-ip? hop-host))]
+                         (if direct?
+                           (or (vnc-internal-port (:platform resource)) resource-vnc-port)
+                           resource-vnc-port)))
+        vnc-flags (when (and vnc-tunnel-port vnc-fwd-port)
+                    ["-L" (str "0.0.0.0:" vnc-tunnel-port ":" final-fwd-host ":" vnc-fwd-port)])
         cmd (build-ssh-command tunnel-port final-hop final-fwd-host final-fwd-port
-                               extra-ssh-args reverse-flags reverse-ports)]
+                               extra-ssh-args reverse-flags reverse-ports
+                               :vnc-flags vnc-flags)]
     (log/info "Starting SSH tunnel on port" tunnel-port "for lease" lease-id
               "→" target-str
+              (when vnc-tunnel-port (str "vnc:" vnc-tunnel-port))
               (when (seq reverse-ports)
                 (str "with " (count reverse-ports) " reverse port(s)")))
     (try
@@ -336,11 +371,13 @@
                                 :resource-id (:id resource)
                                 :target      target-str
                                 :started-at  (Instant/now)}
+                         vnc-tunnel-port (assoc :vnc-port vnc-tunnel-port)
                          (seq reverse-ports) (assoc :reverse-ports reverse-ports))]
         (swap! tunnels assoc lease-id tunnel-info)
         ;; Wait for tunnel port to actually accept connections (up to 10s)
         (if (await-port-ready tunnel-port 10000)
-          (do (log/info "SSH tunnel ready: port" tunnel-port "→" target-str "pid" (.pid proc))
+          (do (log/info "SSH tunnel ready: port" tunnel-port "→" target-str "pid" (.pid proc)
+                        (when vnc-tunnel-port (str "vnc:" vnc-tunnel-port)))
               tunnel-info)
           (do (if (.isAlive proc)
                 (log/error "SSH tunnel process alive but port" tunnel-port
@@ -611,6 +648,8 @@
                                   :ssh-host    ssh-host
                                   :ssh-port    (or ssh-port 10022)
                                   :home-dir    (:home-dir user-info)}
+                           (:vnc-port tunnel)
+                           (assoc :vnc-port (:vnc-port tunnel))
                            (seq reverse-ports) (assoc :reverse-ports
                                                       (into {} (map (fn [{:keys [bind target]}]
                                                                      [(str bind) target])
@@ -729,6 +768,8 @@
             (let [port-results (when (seq server-ports)
                                  (future (setup-server-ports! lease-id resource (:port tunnel) server-ports)))
                   connection (cond-> {:tunnel-port (:port tunnel)}
+                               (:vnc-port tunnel)
+                               (assoc :vnc-port (:vnc-port tunnel))
                                near-side? (assoc :tunnel-protocol "ssh"
                                                  :worker-ssh-host worker-ssh-host)
                                (seq server-ports) (assoc :server-ports server-ports)

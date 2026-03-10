@@ -548,6 +548,9 @@ components:
         tunnel_port:
           type: integer
           description: Smithr-managed SSH tunnel port (allocated on lease)
+        vnc_port:
+          type: integer
+          description: Smithr-managed VNC tunnel port (allocated on lease, if resource has VNC)
         ssh_user:
           type: string
           description: SSH username for the tunnel
