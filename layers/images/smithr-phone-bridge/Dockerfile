@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        asn1crypto==1.5.1 certbuilder==0.14.2 construct==2.10.70 \
        hyperframe==6.0.1 oscrypto==1.3.0 PyNaCl==1.5.0 qh3==1.0.4 \
        srptools==1.0.1 \
-       "py-tuntap-abi3 @ git+https://github.com/dryark/py-tuntap-abi3.git" \
+       "pytun-pmd3>=2.0.0" \
        pymobiledevice3==7.7.2
 
 COPY entrypoint.sh /entrypoint.sh
