@@ -932,6 +932,70 @@
                                 server-ports tunnel-protocol))))))
 
 ;; ---------------------------------------------------------------------------
+;; Wait estimate
+;; ---------------------------------------------------------------------------
+
+(defn wait-estimate
+  "Compute an estimated wait time for a resource matching the given filters.
+   Pure read-only computation over the current state atom.
+   Returns a map with wait metadata, or nil if resources are available now."
+  [{:keys [type platform lease-type substrate model]
+    :or   {lease-type :phone}}]
+  (let [s          @state/state
+        now        (Instant/now)
+        type-kw    (keyword type)
+        platform-kw (keyword platform)
+        lease-type (keyword lease-type)
+        substrate-pred (if substrate #(= (:substrate %) substrate) (constantly true))
+        model-pred     (if model #(= (:model %) model) (constantly true))
+        ;; All resources matching the filters (regardless of status)
+        matching   (->> (vals (:resources s))
+                        (filter #(and (= (:type %) type-kw)
+                                      (= (:platform %) platform-kw)
+                                      (substrate-pred %)
+                                      (model-pred %))))
+        total      (count matching)
+        ;; Find which are available right now
+        available  (if (= lease-type :build)
+                     (filter #(or (= (:status %) :warm)
+                                  (and (= (:status %) :shared)
+                                       (< (count (:active-leases % #{}))
+                                          (:max-slots % 10))))
+                             matching)
+                     (filter #(and (= (:status %) :warm)
+                                   (not (shared-lock-held? (:id %))))
+                             matching))
+        available-count (count available)]
+    (if (pos? available-count)
+      ;; Resources available now — no wait needed
+      {:wait_estimate_seconds 0
+       :resources_total       total
+       :resources_available   available-count
+       :resources_busy        (- total available-count)
+       :active_leases         0}
+      ;; All busy — find earliest expiry among leases on matching resources
+      (let [matching-ids  (set (map :id matching))
+            active-leases (->> (vals (:leases s))
+                               (filter #(matching-ids (:resource-id %))))
+            lease-count   (count active-leases)
+            earliest      (when (seq active-leases)
+                            (->> active-leases
+                                 (map :expires-at)
+                                 (filter some?)
+                                 sort
+                                 first))
+            wait-secs     (if earliest
+                            (max 0 (.getSeconds (Duration/between now earliest)))
+                            ;; No local lease info (cross-host) — conservative estimate
+                            1800)]
+        {:wait_estimate_seconds wait-secs
+         :earliest_expiry       (when earliest (str earliest))
+         :resources_total       total
+         :resources_available   0
+         :resources_busy        total
+         :active_leases         lease-count}))))
+
+;; ---------------------------------------------------------------------------
 ;; Unlease
 ;; ---------------------------------------------------------------------------
 

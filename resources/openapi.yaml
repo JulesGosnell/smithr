@@ -116,10 +116,15 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: No matching resource available or workspace already leased
+          headers:
+            Retry-After:
+              description: Suggested retry delay in seconds based on earliest lease expiry
+              schema:
+                type: integer
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/WaitEstimate"
 
   /api/leases/{id}:
     get:
@@ -279,6 +284,61 @@ paths:
           description: Adopt removed and tunnels destroyed
         "404":
           description: Adopt not found
+
+  /api/wait-estimate:
+    get:
+      operationId: getWaitEstimate
+      summary: Estimate wait time for a resource type
+      description: |
+        Returns an estimated wait time before a resource matching the given
+        filters becomes available. Useful for dashboards, CLIs, and proxy
+        sidecars to make informed retry decisions.
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [phone, vm, server]
+          description: Resource type
+        - name: platform
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [android, ios, macos]
+          description: Resource platform
+        - name: lease_type
+          in: query
+          schema:
+            type: string
+            enum: [phone, build]
+            default: phone
+          description: Lease type (phone=exclusive, build=shared)
+        - name: substrate
+          in: query
+          schema:
+            type: string
+            enum: [emulated, simulated, virtual, physical]
+          description: Optional substrate filter
+        - name: model
+          in: query
+          schema:
+            type: string
+          description: Optional device model filter
+      responses:
+        "200":
+          description: Wait estimate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WaitEstimate"
+        "400":
+          description: Missing required parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/hosts:
     get:
@@ -852,6 +912,40 @@ components:
               substrate:
                 type: string
                 enum: [physical]
+
+    WaitEstimate:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Present only in 409 responses
+        message:
+          type: string
+          description: Human-readable message (present only in 409 responses)
+        wait_estimate_seconds:
+          type: integer
+          description: Estimated seconds until a resource becomes available (0 if available now)
+          example: 120
+        earliest_expiry:
+          type: string
+          format: date-time
+          description: When the earliest active lease expires (null if resources available)
+        resources_total:
+          type: integer
+          description: Total matching resources across all hosts
+          example: 2
+        resources_available:
+          type: integer
+          description: Resources available right now (present when > 0)
+          example: 0
+        resources_busy:
+          type: integer
+          description: Resources currently leased or at capacity
+          example: 2
+        active_leases:
+          type: integer
+          description: Number of active leases on matching resources
+          example: 2
 
     Error:
       type: object

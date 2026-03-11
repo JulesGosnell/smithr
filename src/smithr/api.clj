@@ -37,6 +37,7 @@
     ["/catalogue" {:get {:handler h/catalogue}}]
     ["/provision" {:post {:handler h/provision-resource}}]
     ["/scan/devices" {:get {:handler h/scan-devices}}]
+    ["/wait-estimate" {:get {:handler h/wait-estimate}}]
     ["/compose/:template" {:get {:handler h/serve-compose-template}}]
     ["/templates"
      {:get  {:handler h/list-published-templates}

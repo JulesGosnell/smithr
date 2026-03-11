@@ -1,0 +1,4 @@
+[submodule "vendor/py_ios_rsd_tunnel"]
+	path = vendor/py_ios_rsd_tunnel
+	url = https://github.com/JulesGosnell/py_ios_rsd_tunnel.git
+	branch = linux-support

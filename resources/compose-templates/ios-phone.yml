@@ -20,6 +20,7 @@ services:
       SMITHR_LESSEE: ${SMITHR_LESSEE:-anonymous}
       SMITHR_PORTS: "22"
       SMITHR_TTL: ${SMITHR_TTL:-3600}
+      SMITHR_MAX_WAIT: ${SMITHR_MAX_WAIT:-300}
       SMITHR_SUBSTRATE: ${SMITHR_SUBSTRATE:-}
     networks:
       - smithr-network

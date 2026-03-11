@@ -181,7 +181,15 @@
       (try
         (if-let [result (lease/acquire! params)]
           (json-response 201 (serialize-lease result))
-          (conflict (str "No available " (:type params) ":" (:platform params) " resource")))
+          ;; No resource available — enrich 409 with wait estimate
+          (let [estimate (lease/wait-estimate params)
+                retry-after (or (:wait_estimate_seconds estimate) 30)
+                body (merge {:error "conflict"
+                             :message (str "No available " (:type params) ":" (:platform params) " resource")}
+                            estimate)]
+            {:status  409
+             :headers {"Retry-After" (str retry-after)}
+             :body    body}))
         (catch clojure.lang.ExceptionInfo e
           (let [data (ex-data e)]
             (if (:lease-id data)
@@ -492,5 +500,28 @@
     (if (templates/get-template tname)
       (do (templates/delete-template! tname)
           {:status 204 :body nil})
-      (not-found (str "Template not found: " tname))))
-)
+      (not-found (str "Template not found: " tname)))))
+
+;; ---------------------------------------------------------------------------
+;; Wait estimate handler
+;; ---------------------------------------------------------------------------
+
+(defn wait-estimate
+  "GET /api/wait-estimate — estimate wait time for a resource type."
+  [request]
+  (let [params     (:query-params request)
+        type-f     (get params "type")
+        platform-f (get params "platform")
+        lease-type (get params "lease_type" "phone")
+        substrate  (get params "substrate")
+        model      (get params "model")]
+    (if (or (nil? type-f) (nil? platform-f))
+      {:status 400
+       :body   {:error "bad_request"
+                :message "Missing required query parameters: type, platform"}}
+      (let [estimate (lease/wait-estimate {:type type-f
+                                            :platform platform-f
+                                            :lease-type (keyword lease-type)
+                                            :substrate substrate
+                                            :model model})]
+        (json-response estimate)))))

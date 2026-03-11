@@ -12,6 +12,7 @@ SMITHR_TTL="${SMITHR_TTL:-3600}"
 SMITHR_GATEWAY="${SMITHR_GATEWAY:-10.21.0.1}"
 SMITHR_RETRY_MAX="${SMITHR_RETRY_MAX:-5}"
 SMITHR_RETRY_DELAY="${SMITHR_RETRY_DELAY:-3}"
+SMITHR_MAX_WAIT="${SMITHR_MAX_WAIT:-300}"
 
 # Lease mode vars
 SMITHR_RESOURCE_TYPE="${SMITHR_RESOURCE_TYPE:-}"
@@ -101,8 +102,26 @@ api_call() {
         return 0
         ;;
       409)
-        log "resource unavailable (409), retrying in ${SMITHR_RETRY_DELAY}s..."
-        sleep "$SMITHR_RETRY_DELAY"
+        # Parse wait estimate from enriched 409 response
+        local wait_est retry_after msg
+        wait_est=$(echo "$response" | jq -r '.wait_estimate_seconds // empty' 2>/dev/null)
+        msg=$(echo "$response" | jq -r '.message // empty' 2>/dev/null)
+        local busy=$(echo "$response" | jq -r '.resources_busy // empty' 2>/dev/null)
+        local total=$(echo "$response" | jq -r '.resources_total // empty' 2>/dev/null)
+
+        if [[ -n "$wait_est" && "$wait_est" != "null" ]]; then
+          log "resource unavailable: ${msg:-no resources} (${busy:-?}/${total:-?} busy, est wait ${wait_est}s)"
+          if (( wait_est > SMITHR_MAX_WAIT )); then
+            die "estimated wait ${wait_est}s exceeds SMITHR_MAX_WAIT=${SMITHR_MAX_WAIT}s — failing fast"
+          fi
+          # Use server estimate + small jitter (1-5s)
+          retry_after=$(( wait_est + (RANDOM % 5) + 1 ))
+          log "retrying in ${retry_after}s (server estimate + jitter)..."
+          sleep "$retry_after"
+        else
+          log "resource unavailable (409), retrying in ${SMITHR_RETRY_DELAY}s..."
+          sleep "$SMITHR_RETRY_DELAY"
+        fi
         ;;
       *)
         log "API error: HTTP $http_code"
