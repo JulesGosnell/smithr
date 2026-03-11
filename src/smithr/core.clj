@@ -54,6 +54,13 @@
         own-host (get-in config [:gc :own-host])]
     (log/info "Connected to" (count connected) "of" (count (:hosts config)) "Docker hosts")
 
+    ;; Recover surviving bridge containers from before restart
+    (when own-host
+      (try
+        (devices/recover-existing-bridges!)
+        (catch Exception e
+          (log/debug "Bridge recovery skipped:" (.getMessage e)))))
+
     ;; Initial device scan
     (when own-host
       (try

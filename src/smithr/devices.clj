@@ -185,10 +185,11 @@
 (defn- start-android-bridge!
   "Start adb forward + socat for a physical Android device.
    adb forward binds localhost only, socat makes it reachable on 0.0.0.0.
+   If fixed-port is provided, reuse that port (for recovery after restart).
    Returns {:fwd-port N :bridge-port M :bridge-process Process} or nil."
-  [serial]
+  [serial & {:keys [fixed-port]}]
   (let [fwd-port (find-free-port)
-        bridge-port (find-free-port)]
+        bridge-port (or fixed-port (find-free-port))]
     (log/info "Starting Android bridge:" serial
               "adb-forward:" fwd-port "socat:" bridge-port)
     ;; Enable TCP mode so the forward target (device:5555) is reachable.
@@ -223,9 +224,10 @@
 
 (defn- start-ios-bridge!
   "Start iproxy for a physical iOS device.
+   If fixed-port is provided, reuse that port (for recovery after restart).
    Returns {:bridge-port N :bridge-process Process} or nil."
-  [udid]
-  (let [bridge-port (find-free-port)]
+  [udid & {:keys [fixed-port]}]
+  (let [bridge-port (or fixed-port (find-free-port))]
     (log/info "Starting iOS bridge:" udid "iproxy port:" bridge-port)
     (try
       (let [cmd ["iproxy" "-u" udid (str bridge-port ":62078")]
@@ -558,6 +560,62 @@
         (log/info "Removing stale physical resource from state:" (:id r))
         (state/remove-resource! (:id r))))))
 
+(defn- kill-process-on-port!
+  "Kill the host-side process listening on the given TCP port.
+   Uses fuser to find the PID, then kills it. Skips container processes."
+  [port]
+  (let [{:keys [out exit]} (shell/sh "fuser" (str port "/tcp"))]
+    (when (zero? exit)
+      (doseq [pid-str (remove str/blank? (str/split (str/trim out) #"\s+"))]
+        (when-let [pid (parse-long pid-str)]
+          ;; Skip container processes: check if /proc/PID/cgroup mentions docker
+          (let [{cg-out :out} (shell/sh "cat" (str "/proc/" pid "/cgroup"))]
+            (when-not (re-find #"docker|containerd" (str cg-out))
+              (log/info "Killing orphan bridge process on port" port "pid" pid)
+              (try
+                (let [ph (java.lang.ProcessHandle/of pid)]
+                  (when (.isPresent ph)
+                    (.destroyForcibly (.get ph))))
+                (catch Exception _)))))))))
+
+(defn recover-existing-bridges!
+  "Recover device-bridges state from surviving wrapper containers after restart.
+   Kills orphan bridge processes from the previous instance, then restarts
+   host-side bridges on the SAME ports the containers expect. Populates
+   device-bridges so that register-devices! sees them as alive and skips
+   recreation."
+  []
+  (let [{:keys [out exit]}
+        (shell/sh "docker" "ps"
+                  "--filter" "label=smithr.resource.substrate=physical"
+                  "--filter" "status=running"
+                  "--format" "{{.Names}}\t{{.Label \"smithr.resource.platform\"}}\t{{.Label \"smithr.resource.connect-port\"}}\t{{.Label \"smithr.resource.serial\"}}\t{{.Label \"smithr.resource.udid\"}}")]
+    (when (zero? exit)
+      (doseq [line (remove str/blank? (str/split-lines out))]
+        (let [[cname platform port-str serial udid] (str/split line #"\t")
+              port (when (and port-str (not (str/blank? port-str)))
+                     (parse-long port-str))
+              dk (or (when (seq serial) serial)
+                     (when (seq udid) udid))]
+          (when (and dk port (not (get @device-bridges dk)))
+            (log/info "Recovering bridge for" cname "(" dk ") on port" port)
+            ;; Kill orphan host-side process holding this port from previous instance
+            (kill-process-on-port! port)
+            (Thread/sleep 200)
+            (let [bridge (case platform
+                           "android" (start-android-bridge! dk :fixed-port port)
+                           "ios"     (start-ios-bridge! dk :fixed-port port)
+                           nil)]
+              (if bridge
+                (do (swap! device-bridges assoc dk
+                           (assoc bridge
+                                  :container-name cname
+                                  :platform platform))
+                    (log/info "Recovered bridge for" cname "pid"
+                              (.pid ^Process (:bridge-process bridge))))
+                (log/warn "Failed to recover bridge for" cname
+                          "- will be recreated")))))))))
+
 (defn register-devices!
   "Scan for physical devices, create host bridges and wrapper containers.
    The wrapper containers carry smithr labels on smithr-network, so
@@ -595,36 +653,55 @@
                          (not (wrapper-container-exists? (str cname "-worker"))))
                 (log/info "Worker missing for" cname "- recreating")
                 (create-worker-container! cname device))))
-          ;; Bridge missing or dead — (re)create
+          ;; Bridge missing or dead — try to reuse existing container
           (do (when existing
             (log/info "Bridge dead for" dk "— recreating")
             (stop-bridge! dk existing))
-          (let [bridge (case (:platform device)
-                         "android" (start-android-bridge! (:serial device))
-                         "ios"     (start-ios-bridge! (:udid device))
+          (let [cname (container-name-for device)
+                ;; Check if a healthy wrapper container already exists
+                ;; and read its expected bridge port from the label
+                existing-port (when (wrapper-container-exists? cname)
+                                (let [{:keys [out exit]}
+                                      (shell/sh "docker" "inspect" cname
+                                                "--format"
+                                                "{{index .Config.Labels \"smithr.resource.connect-port\"}}")]
+                                  (when (zero? exit)
+                                    (parse-long (str/trim out)))))
+                ;; Restart bridge on the existing port if container is alive,
+                ;; otherwise use a fresh port
+                bridge (case (:platform device)
+                         "android" (start-android-bridge! (:serial device)
+                                     :fixed-port existing-port)
+                         "ios"     (start-ios-bridge! (:udid device)
+                                     :fixed-port existing-port)
                          nil)]
             (when bridge
-              (let [cname (container-name-for device)]
-                ;; Remove stale wrapper container so it gets recreated with
-                ;; the new bridge port. After Smithr restart, the old container
-                ;; still points to the dead bridge port — must recreate.
-                (when (wrapper-container-exists? cname)
-                  (remove-wrapper-container! cname))
-                (when-let [created-cname (create-wrapper-container! host-label device (:bridge-port bridge))]
-                  ;; Create near-side worker for Android physical devices
-                  (when (and (= (:platform device) "android")
-                             (worker-image-available?))
-                    (create-worker-container! created-cname device))
-                  ;; Apply CI-friendly settings, save originals for teardown
-                  (let [originals (case (:platform device)
-                                   "android" (configure-android-for-ci!
-                                               (:serial device))
-                                   nil)]
+              (if (and existing-port (= (:bridge-port bridge) existing-port))
+                ;; Container survived — just update bridge state, no recreation
+                (do (log/info "Reattached to existing container" cname
+                              "on port" existing-port)
                     (swap! device-bridges assoc dk
                            (assoc bridge
                                   :container-name cname
-                                  :platform (:platform device)
-                                  :original-settings originals)))))))))))
+                                  :platform (:platform device))))
+                ;; Bridge port changed or no existing container — recreate
+                (do (when (wrapper-container-exists? cname)
+                      (remove-wrapper-container! cname))
+                    (when-let [created-cname (create-wrapper-container! host-label device (:bridge-port bridge))]
+                      ;; Create near-side worker for Android physical devices
+                      (when (and (= (:platform device) "android")
+                                 (worker-image-available?))
+                        (create-worker-container! created-cname device))
+                      ;; Apply CI-friendly settings, save originals for teardown
+                      (let [originals (case (:platform device)
+                                       "android" (configure-android-for-ci!
+                                                   (:serial device))
+                                       nil)]
+                        (swap! device-bridges assoc dk
+                               (assoc bridge
+                                      :container-name cname
+                                      :platform (:platform device)
+                                      :original-settings originals))))))))))))
     ;; Remove unplugged devices
     (doseq [[dk bridge] current-bridges]
       (when-not (contains? scanned-keys dk)
