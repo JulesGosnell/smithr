@@ -15,6 +15,9 @@
  :compose {:project "smithr"
            :network "smithr-network"}
 
+ :store {:backend :hazelcast
+         :members ["megalodon" "prognathodon"]}
+
  :tunnel {:key-path "/ssh-key/macos-ssh-key"
           :base-port 17000}
 

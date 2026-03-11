@@ -13,7 +13,7 @@
             [smithr.provision :as provision]
             [smithr.devices :as devices]
             [smithr.templates :as templates]
-            [smithr.store.disk :as disk-store]
+            [smithr.store :as store]
             [smithr.api :as api])
   (:gen-class))
 
@@ -24,11 +24,14 @@
   [config]
   (log/info "Starting Smithr resource pool manager")
 
-  ;; Initialize store backends (NFS-backed for production)
-  (let [dist-lock (disk-store/create-lock "/srv/shared/smithr/leases")
-        template-kv (disk-store/create-kv "/srv/shared/smithr/templates")]
-    (lease/init-lock! dist-lock)
-    (templates/init-kv! template-kv))
+  ;; Initialize store backends from config
+  (let [store-config (get config :store {:backend :disk})
+        own-host     (get-in config [:gc :own-host] "smithr")
+        {:keys [lock kv shutdown-fn]} (store/create-from-config store-config own-host)]
+    (lease/init-lock! lock)
+    (templates/init-kv! kv)
+    (swap! system assoc :store-shutdown-fn shutdown-fn)
+    (log/info "Store backend:" (name (:backend store-config))))
 
   ;; Clean up stale tunnels and shared locks from previous sessions
   (lease/cleanup-stale-tunnels!)
@@ -76,11 +79,11 @@
                                               :host  host
                                               :join? false})]
         (log/info "Smithr listening on" (str host ":" port))
-        (reset! system {:config         config
-                        :connections    connected
-                        :gc-future      gc-future
-                        :metrics-future metrics-future
-                        :server         server})
+        (swap! system merge {:config         config
+                             :connections    connected
+                             :gc-future      gc-future
+                             :metrics-future metrics-future
+                             :server         server})
         server))))
 
 (defn stop!
@@ -101,6 +104,11 @@
     (try (devices/shutdown-bridges!)
          (catch Exception e
            (log/debug "Device bridge shutdown:" (.getMessage e))))
+    ;; Shutdown store backend (Hazelcast, etc.)
+    (when-let [shutdown-fn (:store-shutdown-fn sys)]
+      (try (shutdown-fn)
+           (catch Exception e
+             (log/debug "Store shutdown:" (.getMessage e)))))
     ;; Close Docker event subscriptions
     (doseq [conn (:connections sys)]
       (when-let [sub (:subscription conn)]

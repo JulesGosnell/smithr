@@ -80,3 +80,51 @@
    Usage: (create-store my-state-store my-lock my-kv)"
   [state-store distributed-lock shared-kv]
   (->Store state-store distributed-lock shared-kv))
+
+;; ---------------------------------------------------------------------------
+;; Factory — config-driven store construction
+;; ---------------------------------------------------------------------------
+;; Uses requiring-resolve to avoid circular dependencies (backend namespaces
+;; already require smithr.store for protocol access).
+;;
+;; Config shape:
+;;   {:backend :hazelcast :members ["megalodon" "prognathodon"]}
+;;   {:backend :disk :lock-dir "/srv/shared/smithr/leases"
+;;                   :kv-dir  "/srv/shared/smithr/templates"}
+;;   {:backend :memory}   ;; testing only
+;;
+;; Returns {:lock <DistributedLock> :kv <SharedKV> :shutdown-fn <fn>}
+;; shutdown-fn is a zero-arg function to call on system stop (no-op for disk/memory).
+
+(defn create-from-config
+  "Create a store backend from a config map.
+   instance-name labels this node (used by Hazelcast cluster).
+   Returns {:lock <DistributedLock>, :kv <SharedKV>, :shutdown-fn <fn>}."
+  [store-config instance-name]
+  (case (get store-config :backend :disk)
+    :hazelcast
+    (let [create-instance (requiring-resolve 'smithr.store.hazelcast/create-instance)
+          create-lock     (requiring-resolve 'smithr.store.hazelcast/create-lock)
+          create-kv       (requiring-resolve 'smithr.store.hazelcast/create-kv)
+          shutdown         (requiring-resolve 'smithr.store.hazelcast/shutdown-instance)
+          members         (get store-config :members [])
+          hz              (create-instance instance-name members)]
+      {:lock        (create-lock hz)
+       :kv          (create-kv hz)
+       :shutdown-fn #(shutdown hz)})
+
+    :disk
+    (let [create-lock (requiring-resolve 'smithr.store.disk/create-lock)
+          create-kv   (requiring-resolve 'smithr.store.disk/create-kv)
+          lock-dir    (get store-config :lock-dir "/srv/shared/smithr/leases")
+          kv-dir      (get store-config :kv-dir "/srv/shared/smithr/templates")]
+      {:lock        (create-lock lock-dir)
+       :kv          (create-kv kv-dir)
+       :shutdown-fn (fn [])})
+
+    :memory
+    (let [create-lock (requiring-resolve 'smithr.store.memory/create-lock)
+          create-kv   (requiring-resolve 'smithr.store.memory/create-kv)]
+      {:lock        (create-lock)
+       :kv          (create-kv)
+       :shutdown-fn (fn [])})))
