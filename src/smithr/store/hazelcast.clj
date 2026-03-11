@@ -36,20 +36,27 @@
 (defn create-instance
   "Create an embedded Hazelcast instance with TCP/IP discovery.
    members is a seq of host addresses (e.g. [\"192.168.0.73\" \"192.168.0.74\"]).
-   instance-name labels this node in cluster logs."
-  [instance-name members]
+   instance-name labels this node in cluster logs.
+   bind-interface is an optional IP pattern to bind to (e.g. \"192.168.0.*\")."
+  [instance-name members & {:keys [bind-interface]}]
   (let [config (doto (Config.)
                  (.setInstanceName instance-name)
                  (.setClusterName "smithr"))
         network-config (.getNetworkConfig config)
         join-config (.getJoin network-config)]
+    ;; Bind to specific interface if provided (avoids loopback)
+    (when bind-interface
+      (doto (.getInterfaces network-config)
+        (.setEnabled true)
+        (.addInterface bind-interface)))
     ;; Disable multicast, use explicit TCP/IP members
     (-> join-config .getMulticastConfig (.setEnabled false))
     (let [tcp-config (doto (.getTcpIpConfig join-config)
                        (.setEnabled true))]
       (doseq [member members]
         (.addMember tcp-config member)))
-    (log/info "Starting Hazelcast" instance-name "with members:" members)
+    (log/info "Starting Hazelcast" instance-name "with members:" members
+              (when bind-interface (str "bind:" bind-interface)))
     (Hazelcast/newHazelcastInstance config)))
 
 (defn shutdown-instance

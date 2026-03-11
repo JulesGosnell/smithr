@@ -16,7 +16,8 @@
            :network "smithr-network"}
 
  :store {:backend :hazelcast
-         :members ["megalodon" "prognathodon"]}
+         :members ["192.168.0.73" "192.168.0.75"]
+         :bind-interface "192.168.0.*"}
 
  :tunnel {:key-path "/ssh-key/macos-ssh-key"
           :base-port 17000}

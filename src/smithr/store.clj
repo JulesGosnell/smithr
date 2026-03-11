@@ -108,7 +108,9 @@
           create-kv       (requiring-resolve 'smithr.store.hazelcast/create-kv)
           shutdown         (requiring-resolve 'smithr.store.hazelcast/shutdown-instance)
           members         (get store-config :members [])
-          hz              (create-instance instance-name members)]
+          bind-iface      (get store-config :bind-interface)
+          hz              (create-instance instance-name members
+                                           :bind-interface bind-iface)]
       {:lock        (create-lock hz)
        :kv          (create-kv hz)
        :shutdown-fn #(shutdown hz)})
