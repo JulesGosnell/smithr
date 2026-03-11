@@ -543,7 +543,7 @@ Resources carry a `substrate` label indicating their backing technology:
 1. **Enable Developer Mode**: Settings > Privacy & Security > Developer Mode > On (restart required)
 2. **Trust the host computer** when prompted on first USB connection
 3. **Verify detection**: `idevice_id -l` should show the device UDID
-4. **Install py_ios_rsd_tunnel**: Clone JulesGosnell/py_ios_rsd_tunnel (branch `linux-support`)
+4. **Install py_ios_rsd_tunnel**: `git submodule update --init vendor/py_ios_rsd_tunnel` (branch `linux-support`)
 5. **Build smithr-tunnel SUID binary**: Compile `bin/smithr-tunnel.c`, set SUID root, drops to real user + ambient `CAP_NET_ADMIN`
 6. **Deploy phone-bridge**: Use `layers/physical-iphone.yml` — handles lockdown + RSD tunnel
 7. Smithr auto-discovers via `register-devices!`

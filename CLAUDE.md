@@ -95,6 +95,7 @@ docker compose -f macos-build.yml -p my-build down
 |----------|---------|-------------|
 | `SMITHR_LESSEE` | `anonymous` | Who owns this lease (for tracking) |
 | `SMITHR_TTL` | `3600` | Lease duration in seconds |
+| `SMITHR_MAX_WAIT` | `300` | Max wait for resource (proxy fails fast if estimate exceeds) |
 | `SMITHR_WORKSPACE` | — | Named persistent workspace (build leases) |
 
 ## Architecture Overview
@@ -166,6 +167,8 @@ smithr/
 │   ├── smithr                 ← Bash CLI
 │   └── smithr-registry        ← Registry management
 ├── mocks/                     ← Mock email (Resend) + SMS (Twilio) for E2E
+├── vendor/
+│   └── py_ios_rsd_tunnel/     ← Git submodule: RSD tunnel for iOS devices
 ├── docs/                      ← Extended documentation
 └── tls/                       ← Inter-host Docker TLS certificates
 ```
@@ -205,6 +208,7 @@ Listens on port **7070**. Dashboard at `http://localhost:7070/`.
 | GET | `/api/catalogue` | Provisionable resource types and active resources |
 | POST | `/api/provision` | Auto-provision a resource from a template |
 | GET | `/api/scan/devices` | Scan for connected USB devices |
+| GET | `/api/wait-estimate` | Estimated wait time for a resource type |
 | GET | `/api/compose/{template}` | Compose YAML for proxy sidecar |
 | GET | `/api/templates` | List published compose templates |
 | POST | `/api/templates` | Publish a compose template |

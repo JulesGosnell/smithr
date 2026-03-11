@@ -146,8 +146,8 @@ tunnels **on demand** — no always-on daemon needed.
 
 ```bash
 pip3 install --user pymobiledevice3    # for developer service clients
-cd /tmp && git clone https://github.com/JulesGosnell/py_ios_rsd_tunnel.git
-pip3 install --user -r /tmp/py_ios_rsd_tunnel/requirements.txt
+cd ~/src/smithr && git submodule update --init vendor/py_ios_rsd_tunnel
+pip3 install --user -r vendor/py_ios_rsd_tunnel/requirements.txt
 ```
 
 ### Build the SUID tunnel helper
@@ -167,7 +167,7 @@ sudo chmod u+s bin/smithr-tunnel
 
 ```bash
 # Start a tunnel (no sudo needed)
-cd /tmp/py_ios_rsd_tunnel
+cd ~/src/smithr/vendor/py_ios_rsd_tunnel
 ~/src/smithr/bin/smithr-tunnel tunnel -u <UDID>
 # Should print: { "ipv6": "<addr>", "port": <port> }
 

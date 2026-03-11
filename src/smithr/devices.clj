@@ -337,7 +337,7 @@
                   ios? (into ["--cap-add" "net_admin"
                               "--device" "/dev/net/tun"
                               "-v" "/var/run/usbmuxd:/var/run/usbmuxd:z"
-                              "-v" "/tmp/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z"
+                              "-v" (str (System/getProperty "user.dir") "/vendor/py_ios_rsd_tunnel:/opt/py_ios_rsd_tunnel:ro,z")
                               "-v" "/srv/shared/images/maestro:/opt/maestro:ro,z"
                               "-v" "/srv/shared/images/maestro-driver-signed:/opt/driver-apps:z"])
                   true (into labels)
