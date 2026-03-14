@@ -167,10 +167,14 @@
 
 (defn ensure-user!
   "Ensure a macOS user exists and is properly set up (for workspace builds).
-   Creates the user if it doesn't exist, repairs if partially created.
+   Creates the user if it doesn't exist, returns info if it does.
    Same contract as linux.clj ensure-user!."
   [resource username]
-  (create-named-user! resource username))
+  (if (user-exists? resource username)
+    (do
+      (log/info "Workspace user" username "already exists on" (:id resource))
+      {:macos-user username :home-dir (str "/Users/" username)})
+    (create-named-user! resource username)))
 
 (defn kill-user-processes!
   "Kill all processes owned by a user on a macOS VM.
