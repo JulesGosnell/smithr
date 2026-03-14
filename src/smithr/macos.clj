@@ -11,6 +11,8 @@
             [clojure.string :as str]
             [smithr.ssh :as ssh]))
 
+(declare sync-runtime-map!)
+
 (defn build-username
   "Generate a macOS username for a build lease.
    Uses first 8 characters of the lease ID for uniqueness."
@@ -144,6 +146,9 @@
       (if (= 0 (:exit result))
         (let [home-dir (str/trim (:out result))]
           (log/info "Created macOS user" username "on" (:id resource) "home:" home-dir)
+          ;; Belt-and-braces: sync-runtime-map! even though create-user-cmd
+          ;; includes it inline — see sync-runtime-map! docs for why this matters
+          (sync-runtime-map! resource username)
           {:macos-user username :home-dir home-dir})
         (do
           (log/error "Failed to create macOS user" username
@@ -165,12 +170,51 @@
                    "on" (:id resource) ":" (:err result))
         nil))))
 
+(defn sync-runtime-map!
+  "Sync CoreSimulator RuntimeMap.plist to a build user's home directory.
+   ┌─────────────────────────────────────────────────────────────────┐
+   │ CRITICAL: Without this, iOS builds fail with                   │
+   │ 'iOS 18.2 is not installed'. This has broken CI 7+ times.     │
+   │ DO NOT remove or bypass this call.                             │
+   │ See docs/IOS-RUNTIME-FIX.md for full explanation.              │
+   └─────────────────────────────────────────────────────────────────┘
+   Xcode 16.2 ships SDK 22C146 but only runtime 22D8075 (iOS 18.3) exists.
+   RuntimeMap.plist tells xcodebuild to use 22D8075 for SDK 22C146.
+   Must exist in EVERY build user's ~/Library/Developer/CoreSimulator/."
+  [resource username]
+  (let [result (ssh-exec-raw! resource
+                 (str "SMITHR_CORESIM=/Users/smithr/Library/Developer/CoreSimulator; "
+                      "SYS_CORESIM=/Library/Developer/CoreSimulator; "
+                      "RTMAP=''; "
+                      "if [ -f \"$SMITHR_CORESIM/RuntimeMap.plist\" ]; then RTMAP=\"$SMITHR_CORESIM/RuntimeMap.plist\"; "
+                      "elif [ -f \"$SYS_CORESIM/RuntimeMap.plist\" ]; then RTMAP=\"$SYS_CORESIM/RuntimeMap.plist\"; fi; "
+                      "if [ -n \"$RTMAP\" ]; then "
+                        "sudo mkdir -p /Users/" username "/Library/Developer/CoreSimulator"
+                        " && sudo cp \"$RTMAP\" /Users/" username "/Library/Developer/CoreSimulator/"
+                        " && sudo chown -R " username ":staff /Users/" username "/Library"
+                        " && echo SYNCED; "
+                      "else echo NO_SOURCE; fi"))]
+    (when (= 0 (:exit result))
+      (let [out (str/trim (:out result))]
+        (if (= out "SYNCED")
+          (log/info "RuntimeMap synced for" username "on" (:id resource))
+          (log/warn "No RuntimeMap source found on" (:id resource) "- iOS builds may fail"))))))
+
 (defn ensure-user!
   "Ensure a macOS user exists and is properly set up (for workspace builds).
-   Always runs create-user-cmd which is idempotent — it checks existence,
-   repairs missing SSH keys/home dirs, and syncs RuntimeMap.plist."
+   Runs the idempotent create-user-cmd, then explicitly syncs RuntimeMap.
+   The RuntimeMap sync is critical for iOS builds — see sync-runtime-map! docs."
   [resource username]
-  (create-named-user! resource username))
+  (if-let [info (create-named-user! resource username)]
+    (do
+      (sync-runtime-map! resource username)
+      info)
+    ;; create-named-user! failed — still try RuntimeMap sync in case the user
+    ;; exists but create-user-cmd returned non-zero for some other reason
+    (when (user-exists? resource username)
+      (log/warn "create-user-cmd failed but user" username "exists — syncing RuntimeMap anyway")
+      (sync-runtime-map! resource username)
+      {:macos-user username :home-dir (str "/Users/" username)})))
 
 (defn kill-user-processes!
   "Kill all processes owned by a user on a macOS VM.
