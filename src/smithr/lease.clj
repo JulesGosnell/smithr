@@ -512,12 +512,14 @@
    macOS uses dscl-based scripts, Linux uses useradd/userdel."
   [resource]
   (if (#{:android-build :sandbox} (:platform resource))
-    {:ensure-user!  linux/ensure-user!
-     :create-user!  linux/create-user!
-     :delete-user!  linux/delete-user!}
-    {:ensure-user!  macos/ensure-user!
-     :create-user!  macos/create-user!
-     :delete-user!  macos/delete-user!}))
+    {:ensure-user!          linux/ensure-user!
+     :create-user!          linux/create-user!
+     :delete-user!          linux/delete-user!
+     :kill-user-processes!  linux/kill-user-processes!}
+    {:ensure-user!          macos/ensure-user!
+     :create-user!          macos/create-user!
+     :delete-user!          macos/delete-user!
+     :kill-user-processes!  macos/kill-user-processes!}))
 
 ;; ---------------------------------------------------------------------------
 ;; Distributed lock for cross-host phone lease coordination
@@ -1033,14 +1035,24 @@
       ;; Clean up outside the atom swap
       (when (= (:lease-type lease) :build)
         (if (:workspace lease)
-          ;; Workspace lease: mark workspace idle, keep user
+          ;; Workspace lease: mark workspace idle, kill processes, keep user
           (do
             (swap! state/state
                    (fn [s]
                      (-> s
                          (assoc-in [:workspaces (:workspace lease) :status] :idle)
                          (assoc-in [:workspaces (:workspace lease) :lease-id] nil))))
-            (log/info "Workspace" (:workspace lease) "returned to idle"))
+            (log/info "Workspace" (:workspace lease) "returned to idle")
+            ;; Kill user processes to free memory (disk state preserved)
+            (when-let [build-user (:macos-user lease)]
+              (let [resource (state/resource (:resource-id lease))]
+                (when resource
+                  (future
+                    (try
+                      (let [{kill! :kill-user-processes!} (platform-user-ops resource)]
+                        (kill! resource build-user))
+                      (catch Exception e
+                        (log/warn "Failed to kill processes for" build-user ":" (.getMessage e)))))))))
           ;; Ephemeral build: delete user
           (when-let [macos-user (:macos-user lease)]
             (let [resource (state/resource (:resource-id lease))]

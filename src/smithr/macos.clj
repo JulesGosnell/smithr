@@ -172,6 +172,17 @@
   [resource username]
   (create-named-user! resource username))
 
+(defn kill-user-processes!
+  "Kill all processes owned by a user on a macOS VM.
+   Used on workspace unlease to free memory while preserving disk state."
+  [resource username]
+  (log/info "Killing processes for" username "on" (:id resource))
+  (let [result (ssh-exec-raw! resource
+                 (str "sudo pkill -u " username " 2>/dev/null; echo done"))]
+    (when (= 0 (:exit result))
+      (log/info "Killed processes for" username "on" (:id resource)))
+    (= 0 (:exit result))))
+
 (defn delete-user!
   "Delete a macOS user account and home directory.
    Handles process cleanup and both RAM disk and /Users paths.

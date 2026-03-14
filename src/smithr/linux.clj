@@ -103,6 +103,17 @@
                        "on" (:id resource) ":" (:err result))
             nil))))))
 
+(defn kill-user-processes!
+  "Kill all processes owned by a user on a Linux container.
+   Used on workspace unlease to free memory while preserving disk state."
+  [resource username]
+  (log/info "Killing processes for" username "on" (:id resource))
+  (let [result (ssh-exec-raw! resource
+                 (str "sudo pkill -u " username " 2>/dev/null; echo done"))]
+    (when (= 0 (:exit result))
+      (log/info "Killed processes for" username "on" (:id resource)))
+    (= 0 (:exit result))))
+
 (defn delete-user!
   "Delete a Linux user account and home directory.
    Times out after 30 seconds to prevent hanging on unresponsive containers."
