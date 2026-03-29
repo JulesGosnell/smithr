@@ -116,7 +116,14 @@ trap teardown TERM INT EXIT
 
 case "$SMITHR_SUBSTRATE" in
   android)
-    # Android: verify Maestro is installed on the worker
+    # Android: clean up stale state and verify Maestro on the worker.
+    # Previous failed runs can leave orphaned Java/Maestro processes holding
+    # port 7001 (gRPC driver). pkill -f 'java.*maestro' misses processes
+    # whose cmdline is truncated (shows as bare [java]), so kill ALL java
+    # processes — nothing else on the worker uses Java.
+    log "Cleaning stale Maestro/Java processes on worker..."
+    remote "pkill -9 java 2>/dev/null; adb forward --remove-all 2>/dev/null; sleep 1" || true
+
     log "Checking Maestro on worker..."
     if remote "which maestro" >/dev/null 2>&1; then
       MAESTRO_VERSION=$(remote "maestro --version" 2>/dev/null || echo "unknown")

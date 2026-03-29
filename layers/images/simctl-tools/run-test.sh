@@ -73,8 +73,10 @@ case "$SMITHR_SUBSTRATE" in
     FLOW_BASENAME=$(basename "$FLOW_FILE")
     REMOTE_FLOW="$REMOTE_FLOWS_DIR/$FLOW_BASENAME"
 
-    # Kill stale Maestro driver processes and clean ADB forwards
-    remote "pkill -f 'java.*maestro' 2>/dev/null; adb forward --remove-all 2>/dev/null; sleep 1" || true
+    # Kill stale Maestro driver processes and clean ADB forwards.
+    # Use 'pkill -9 java' — bare [java] processes evade 'pkill -f java.*maestro'
+    # because their cmdline is truncated. Nothing else on the worker uses Java.
+    remote "pkill -9 java 2>/dev/null; adb forward --remove-all 2>/dev/null; sleep 1" || true
 
     echo "[$SIDECAR_NAME] Running: maestro test $MAESTRO_EXTRA $REMOTE_FLOW"
     remote "maestro test $MAESTRO_EXTRA $REMOTE_FLOW"
