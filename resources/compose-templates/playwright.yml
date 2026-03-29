@@ -39,7 +39,7 @@ services:
       test: ["CMD", "test", "-f", "/tmp/playwright-ready"]
       interval: 5s
       timeout: 3s
-      retries: 60
+      retries: 120
       start_period: 30s
     stop_grace_period: 30s
     volumes:

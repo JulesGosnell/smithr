@@ -28,9 +28,9 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-SSH_PORT=50922
+SSH_PORT=${WDA_SSH_PORT:-50922}
 SSH_USER=smithr
-SSH_HOST=localhost
+SSH_HOST=${WDA_SSH_HOST:-localhost}
 SSH_OPTS="-o StrictHostKeyChecking=no -o PasswordAuthentication=no -o ConnectTimeout=10"
 SSH_CMD="ssh $SSH_OPTS -p $SSH_PORT $SSH_USER@$SSH_HOST"
 SCP_CMD="scp $SSH_OPTS -P $SSH_PORT"
@@ -263,6 +263,9 @@ extract_entitlements "\$TESTS_PROFILE" /tmp/tests-ent.plist
 echo "  [1/4] Signing maestro-driver-ios.app..."
 cp "\$DRIVER_PROFILE" "\$DRIVER_APP/embedded.mobileprovision"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${NEW_DRIVER_BUNDLE}" "\$DRIVER_APP/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName maestro-driver" "\$DRIVER_APP/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string maestro-driver" "\$DRIVER_APP/Info.plist" 2>/dev/null || \
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName maestro-driver" "\$DRIVER_APP/Info.plist"
 codesign --force --sign "\$SIGN_HASH" \\
   --keychain "\$KEYCHAIN" \\
   --entitlements /tmp/driver-ent.plist \\
@@ -292,6 +295,9 @@ done
 echo "  [4/4] Signing maestro-driver-iosUITests-Runner.app..."
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ${NEW_TESTS_BUNDLE}" \\
   "\$RUNNER_APP/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName maestro-driver-tests" "\$RUNNER_APP/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string maestro-driver-tests" "\$RUNNER_APP/Info.plist" 2>/dev/null || \\
+  /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName maestro-driver-tests" "\$RUNNER_APP/Info.plist"
 cp "\$TESTS_PROFILE" "\$RUNNER_APP/embedded.mobileprovision"
 codesign --force --sign "\$SIGN_HASH" \\
   --keychain "\$KEYCHAIN" \\

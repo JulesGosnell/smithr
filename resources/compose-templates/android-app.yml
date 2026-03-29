@@ -64,6 +64,29 @@ services:
           sleep 2
         done
 
+        # ── Wait for ADB device to be online ─────────────────
+        # Physical devices can report "offline" after USB glitches.
+        # Cycle adb reconnect until the device responds.
+        log "Waiting for ADB device to come online..."
+        for i in $$(seq 1 30); do
+          ADB_STATE=$$($$SSH "adb get-state" 2>&1 || true)
+          if [ "$$ADB_STATE" = "device" ]; then
+            log "ADB device online."
+            break
+          fi
+          if [ $$i -eq 1 ] || [ $$(( i % 5 )) -eq 0 ]; then
+            log "ADB state: $$ADB_STATE (attempt $$i/30, reconnecting...)"
+            $$SSH "adb reconnect" 2>/dev/null || true
+          fi
+          sleep 3
+        done
+        # Final check
+        ADB_STATE=$$($$SSH "adb get-state" 2>&1 || true)
+        if [ "$$ADB_STATE" != "device" ]; then
+          log "FATAL: ADB device not online after 90s (state: $$ADB_STATE)"
+          exit 1
+        fi
+
         # ── Teardown (SIGTERM/INT) ──────────────────────────────
         teardown() {
             log "Teardown starting..."
@@ -115,7 +138,7 @@ services:
         APK_SIZE=$$($$SSH "stat -c%s /tmp/app.apk")
 
         INSTALL_OK=false
-        for attempt in 1 2 3; do
+        for attempt in $$(seq 1 10); do
             log "Push attempt $$attempt..."
             if $$SSH "adb push /tmp/app.apk /data/local/tmp/app.apk"; then
                 log "Push complete. Installing (cat|pm install -S $$APK_SIZE)..."
@@ -127,10 +150,10 @@ services:
                 fi
                 log "Install attempt $$attempt failed"
             else
-                log "Push attempt $$attempt failed"
+                log "Push attempt $$attempt failed — reconnecting ADB..."
+                $$SSH "adb reconnect" 2>/dev/null || true
             fi
-            log "Retrying in 3s..."
-            sleep 3
+            sleep 5
         done
         $$SSH "rm -f /tmp/app.apk; adb shell rm -f /data/local/tmp/app.apk" 2>/dev/null || true
 
